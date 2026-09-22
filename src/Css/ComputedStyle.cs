@@ -37,7 +37,8 @@ public sealed class ComputedStyle
     public string CaptionSide = "top";         // top | bottom
 
     // Flexbox（Display == "flex" 时生效；子项用 FlexGrow/Shrink/Basis/AlignSelf）
-    public string FlexDirection = "row";   // row | column（暂不支持 reverse）
+    public string FlexDirection = "row";   // row | column | row-reverse | column-reverse
+    public string FlexWrap = "nowrap";     // nowrap | wrap | wrap-reverse
     public string JustifyContent = "flex-start"; // flex-start|center|flex-end|space-between|space-around|space-evenly
     public string AlignItems = "stretch";  // stretch|flex-start|center|flex-end
     public float FlexGrow = 0f;
@@ -45,6 +46,18 @@ public sealed class ComputedStyle
     public CssSize FlexBasis;              // auto | 绝对 | 百分比
     public CssSize Gap;                    // 主轴/交叉轴统一间距（auto|绝对|百分比，百分比按内容宽解析）
     public string AlignSelf = "auto";      // auto|stretch|flex-start|center|flex-end
+
+    // Grid（Display == "grid" 时生效）
+    public string GridTemplateColumns = ""; // 轨道定义，如 "100px 200px auto" 或 "1fr 2fr"
+    public string GridTemplateRows = "";    // 轨道定义
+    public CssSize ColumnGap;               // 列间距
+    public CssSize RowGap;                  // 行间距
+    public int GridColumnStart = 0;         // 网格项起始列（1-based，0=auto）
+    public int GridColumnEnd = 0;           // 网格项结束列（1-based，0=auto）
+    public int GridRowStart = 0;            // 网格项起始行
+    public int GridRowEnd = 0;              // 网格项结束行
+    public int GridColumnSpan = 1;          // 跨列数
+    public int GridRowSpan = 1;             // 跨行数
 
     // 盒模型（已解析 px，供布局/绘制直接消费）
     public float MarginTop, MarginRight, MarginBottom, MarginLeft;
@@ -80,8 +93,14 @@ public sealed class ComputedStyle
     public CssSize MinWidth, MaxWidth, MinHeight, MaxHeight;
 
     // 定位
-    public string Position = "static";   // static | relative | absolute
+    public string Position = "static";   // static | relative | absolute | fixed | sticky
     public CssSize OffsetTop, OffsetRight, OffsetBottom, OffsetLeft; // % 相对包含块（Position 期解析）
+    public int ZIndex = 0;               // 层叠顺序
+    public bool HasZIndex = false;       // 是否显式设置了 z-index
+
+    // 浮动
+    public string Float = "none";        // none | left | right
+    public string Clear = "none";        // none | left | right | both
 
     // 视觉
     public SKColor Color = SKColors.Black;

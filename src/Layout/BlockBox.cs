@@ -43,6 +43,12 @@ public sealed class BlockBox
     public float THeaderHeight;          // thead 总高（含 spacing）
     public float TFooterHeight;          // tfoot 总高（含 spacing）
 
+    /// <summary>Flex 布局中间结果（仅 display:flex 盒使用）：分行信息，供 Position 复用。</summary>
+    public List<FlexLine>? FlexLines;
+
+    /// <summary>Grid 布局中间结果（仅 display:grid 盒使用）：轨道尺寸和子项放置信息。</summary>
+    public GridInfo? GridInfo;
+
     // 测量结果
     public float ContentWidth;
     public float ContentHeight;
@@ -68,4 +74,22 @@ public sealed class TCellInfo
     public BlockBox Cell = null!;
     public int Col, Span;
     public int Row, RowSpan;
+}
+
+/// <summary>Flex 布局中的一行：包含该行的子项索引、行主轴尺寸、行交叉轴尺寸。</summary>
+public sealed class FlexLine
+{
+    public List<int> ItemIndices = new(); // 该行子项在 kids 列表中的索引
+    public float MainSize;                // 该行主轴尺寸（行宽或列高）
+    public float CrossSize;               // 该行交叉轴尺寸（行高或列宽）
+}
+
+/// <summary>Grid 布局信息：轨道尺寸、间距和子项放置位置。</summary>
+public sealed class GridInfo
+{
+    public float[] ColWidths = Array.Empty<float>();
+    public float[] RowHeights = Array.Empty<float>();
+    public float ColGap;
+    public float RowGap;
+    public List<(int childIdx, int col, int row, int colSpan, int rowSpan)> Placements = new();
 }

@@ -270,6 +270,7 @@ public static class StyleResolver
 
         // Flexbox
         s.FlexDirection = CssValueParser.ParseKeyword(Raw("flex-direction"), "row");
+        s.FlexWrap = CssValueParser.ParseKeyword(Raw("flex-wrap"), "nowrap");
         s.JustifyContent = CssValueParser.ParseKeyword(Raw("justify-content"), "flex-start");
         s.AlignItems = CssValueParser.ParseKeyword(Raw("align-items"), "stretch");
         s.AlignSelf = CssValueParser.ParseKeyword(Raw("align-self"), "auto");
@@ -277,6 +278,40 @@ public static class StyleResolver
         s.FlexShrink = CssValueParser.ParseFlexNumber(Raw("flex-shrink"), 1f);
         s.FlexBasis = CssValueParser.ParseSize(Val("flex-basis"), s.FontSize);
         s.Gap = CssValueParser.ParseSize(Val("gap"), s.FontSize);
+
+        // Grid
+        s.GridTemplateColumns = Raw("grid-template-columns");
+        s.GridTemplateRows = Raw("grid-template-rows");
+        s.ColumnGap = CssValueParser.ParseSize(Val("column-gap"), s.FontSize);
+        s.RowGap = CssValueParser.ParseSize(Val("row-gap"), s.FontSize);
+        var gridColumn = Raw("grid-column");
+        var gridRow = Raw("grid-row");
+        if (!string.IsNullOrEmpty(gridColumn))
+        {
+            var parts = gridColumn.Split('/', StringSplitOptions.TrimEntries);
+            if (parts.Length >= 2)
+            {
+                s.GridColumnStart = ParseGridLine(parts[0]);
+                s.GridColumnEnd = ParseGridLine(parts[1]);
+            }
+            else if (gridColumn.StartsWith("span "))
+            {
+                s.GridColumnSpan = ParseGridSpan(gridColumn);
+            }
+        }
+        if (!string.IsNullOrEmpty(gridRow))
+        {
+            var parts = gridRow.Split('/', StringSplitOptions.TrimEntries);
+            if (parts.Length >= 2)
+            {
+                s.GridRowStart = ParseGridLine(parts[0]);
+                s.GridRowEnd = ParseGridLine(parts[1]);
+            }
+            else if (gridRow.StartsWith("span "))
+            {
+                s.GridRowSpan = ParseGridSpan(gridRow);
+            }
+        }
 
         // 尺寸约束（支持 %）
         s.MinWidth = CssValueParser.ParseSize(Val("min-width"), s.FontSize);
@@ -290,6 +325,19 @@ public static class StyleResolver
         s.OffsetRight = CssValueParser.ParseSize(Val("right"), s.FontSize);
         s.OffsetBottom = CssValueParser.ParseSize(Val("bottom"), s.FontSize);
         s.OffsetLeft = CssValueParser.ParseSize(Val("left"), s.FontSize);
+        var zIndex = Raw("z-index");
+        if (!string.IsNullOrEmpty(zIndex) && zIndex != "auto")
+        {
+            if (int.TryParse(zIndex.Trim(), out var z))
+            {
+                s.ZIndex = z;
+                s.HasZIndex = true;
+            }
+        }
+
+        // 浮动 + 清除
+        s.Float = CssValueParser.ParseKeyword(Raw("float"), "none");
+        s.Clear = CssValueParser.ParseKeyword(Raw("clear"), "none");
 
         // 文本装饰 / 排版细节
         s.TextDecoration = FirstNonEmpty(Raw("text-decoration-line"), FirstToken(Raw("text-decoration")), "none");
@@ -356,5 +404,23 @@ public static class StyleResolver
         v = (v ?? "").Trim();
         if (int.TryParse(v, out var n) && n >= 1) return n;
         return fallback;
+    }
+
+    static int ParseGridLine(string v)
+    {
+        v = (v ?? "").Trim();
+        if (int.TryParse(v, out var n) && n >= 1) return n;
+        return 0;
+    }
+
+    static int ParseGridSpan(string v)
+    {
+        v = (v ?? "").Trim();
+        if (v.StartsWith("span ", StringComparison.OrdinalIgnoreCase))
+        {
+            var num = v[5..].Trim();
+            if (int.TryParse(num, out var n) && n >= 1) return n;
+        }
+        return 1;
     }
 }

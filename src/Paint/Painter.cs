@@ -24,13 +24,33 @@ public static class Painter
                 PaintFlow(canvas, child);
     }
 
-    // absolute：收集全树里的 absolute 盒，整棵子树画在最上层
+    // absolute：收集全树里的 absolute 盒，按 z-index 排序后画在最上层
     static void PaintAbsolute(SKCanvas canvas, BlockBox box)
+    {
+        var absBoxes = new List<BlockBox>();
+        CollectAbsolute(box, absBoxes);
+
+        // 按 z-index 排序（无显式 z-index 的排前面，按文档顺序）
+        absBoxes.Sort((a, b) =>
+        {
+            bool aHas = a.Style.HasZIndex;
+            bool bHas = b.Style.HasZIndex;
+            if (!aHas && !bHas) return 0; // 保持文档顺序
+            if (!aHas) return -1;
+            if (!bHas) return 1;
+            return a.Style.ZIndex.CompareTo(b.Style.ZIndex);
+        });
+
+        foreach (var abs in absBoxes)
+            PaintFull(canvas, abs);
+    }
+
+    static void CollectAbsolute(BlockBox box, List<BlockBox> result)
     {
         foreach (var child in box.Children)
         {
-            if (child.Style.Position == "absolute") PaintFull(canvas, child);
-            else PaintAbsolute(canvas, child);
+            if (child.Style.Position == "absolute") result.Add(child);
+            else CollectAbsolute(child, result);
         }
     }
 

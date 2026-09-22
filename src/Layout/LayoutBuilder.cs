@@ -95,6 +95,8 @@ public static class LayoutBuilder
         float? myDefH = float.IsNaN(hRes) ? null : Math.Max(0, hRes - bb);
         float naturalH = s.Display == "flex"
             ? MeasureFlex(box, myDefH)
+            : s.Display == "grid"
+            ? MeasureGrid(box, myDefH)
             : MeasureBlock(box, myDefH ?? float.NaN);
         box.ContentHeight = ClampSize(myDefH ?? naturalH, s.MinHeight, s.MaxHeight, containingHeight, bb);
     }
@@ -582,6 +584,9 @@ public static class LayoutBuilder
     {
         var s = box.Style;
         bool isRow = s.FlexDirection.StartsWith("row");
+        bool isReverse = s.FlexDirection.EndsWith("reverse");
+        bool isWrap = s.FlexWrap != "nowrap";
+        bool isWrapReverse = s.FlexWrap == "wrap-reverse";
         float gap = ResolveGap(s, box.ContentWidth);
         float childCH = myDefH ?? float.NaN;
 
@@ -603,61 +608,126 @@ public static class LayoutBuilder
             decoMain[i] = MainDeco(kids[i], isRow);
         }
 
-        float[] finalMain = (float[])baseMain.Clone();
-        if (!float.IsNaN(mainAvail))
+        // 分行逻辑
+        var lines = new List<FlexLine>();
+        if (isWrap && !float.IsNaN(mainAvail))
         {
-            float used = gap * (n - 1);
-            for (int i = 0; i < n; i++) used += baseMain[i] + decoMain[i];
-            float free = mainAvail - used;
-            if (free > 0.5f)
+            // 换行模式：按可用主轴空间分组
+            var currentLine = new FlexLine();
+            float lineUsed = 0;
+            for (int i = 0; i < n; i++)
             {
-                float totalGrow = 0; for (int i = 0; i < n; i++) totalGrow += kids[i].Style.FlexGrow;
-                if (totalGrow > 0)
-                    for (int i = 0; i < n; i++) finalMain[i] = baseMain[i] + free * kids[i].Style.FlexGrow / totalGrow;
+                int idx = isReverse ? n - 1 - i : i;
+                float itemMain = baseMain[idx] + decoMain[idx];
+                float newUsed = lineUsed + (currentLine.ItemIndices.Count > 0 ? gap : 0) + itemMain;
+
+                if (currentLine.ItemIndices.Count > 0 && newUsed > mainAvail + 0.5f)
+                {
+                    lines.Add(currentLine);
+                    currentLine = new FlexLine();
+                    lineUsed = 0;
+                }
+
+                currentLine.ItemIndices.Add(idx);
+                lineUsed += (currentLine.ItemIndices.Count > 1 ? gap : 0) + itemMain;
             }
-            else if (free < -0.5f)
-            {
-                float sw = 0; for (int i = 0; i < n; i++) sw += kids[i].Style.FlexShrink * Math.Max(1, baseMain[i]);
-                if (sw > 0)
-                    for (int i = 0; i < n; i++)
-                        finalMain[i] = Math.Max(0, baseMain[i] + free * kids[i].Style.FlexShrink * Math.Max(1, baseMain[i]) / sw);
-            }
+            if (currentLine.ItemIndices.Count > 0) lines.Add(currentLine);
+            if (isWrapReverse) lines.Reverse();
+        }
+        else
+        {
+            // 不换行：所有项在一行
+            var line = new FlexLine();
+            for (int i = 0; i < n; i++) line.ItemIndices.Add(isReverse ? n - 1 - i : i);
+            lines.Add(line);
         }
 
-        // 主轴尺寸夹到 min/max（ResolveWidth 只覆盖块路径，flex 项这里补上）
-        for (int i = 0; i < n; i++)
+        // 对每行进行 flex grow/shrink 分配
+        foreach (var line in lines)
         {
-            var ms = kids[i].Style;
-            finalMain[i] = isRow
-                ? ClampSize(finalMain[i], ms.MinWidth, ms.MaxWidth, mainAvail)
-                : ClampSize(finalMain[i], ms.MinHeight, ms.MaxHeight, myDefH ?? float.NaN);
+            float[] lineBase = line.ItemIndices.Select(i => baseMain[i]).ToArray();
+            float[] lineDeco = line.ItemIndices.Select(i => decoMain[i]).ToArray();
+            float[] lineFinal = (float[])lineBase.Clone();
+
+            float lineMainAvail = isRow ? box.ContentWidth : (myDefH ?? float.NaN);
+            if (!float.IsNaN(lineMainAvail))
+            {
+                float used = gap * (line.ItemIndices.Count - 1);
+                for (int i = 0; i < line.ItemIndices.Count; i++) used += lineBase[i] + lineDeco[i];
+                float free = lineMainAvail - used;
+
+                if (free > 0.5f)
+                {
+                    float totalGrow = 0;
+                    for (int i = 0; i < line.ItemIndices.Count; i++)
+                        totalGrow += kids[line.ItemIndices[i]].Style.FlexGrow;
+                    if (totalGrow > 0)
+                        for (int i = 0; i < line.ItemIndices.Count; i++)
+                            lineFinal[i] = lineBase[i] + free * kids[line.ItemIndices[i]].Style.FlexGrow / totalGrow;
+                }
+                else if (free < -0.5f)
+                {
+                    float sw = 0;
+                    for (int i = 0; i < line.ItemIndices.Count; i++)
+                        sw += kids[line.ItemIndices[i]].Style.FlexShrink * Math.Max(1, lineBase[i]);
+                    if (sw > 0)
+                        for (int i = 0; i < line.ItemIndices.Count; i++)
+                            lineFinal[i] = Math.Max(0, lineBase[i] + free * kids[line.ItemIndices[i]].Style.FlexShrink * Math.Max(1, lineBase[i]) / sw);
+                }
+            }
+
+            // 夹到 min/max
+            for (int i = 0; i < line.ItemIndices.Count; i++)
+            {
+                var ms = kids[line.ItemIndices[i]].Style;
+                lineFinal[i] = isRow
+                    ? ClampSize(lineFinal[i], ms.MinWidth, ms.MaxWidth, lineMainAvail)
+                    : ClampSize(lineFinal[i], ms.MinHeight, ms.MaxHeight, myDefH ?? float.NaN);
+            }
+
+            // 测量交叉轴尺寸
+            bool stretchDefault = s.AlignItems == "stretch";
+            float lineCrossMax = 0;
+            for (int i = 0; i < line.ItemIndices.Count; i++)
+            {
+                var c = kids[line.ItemIndices[i]];
+                if (isRow)
+                {
+                    MeasureWithContentWidth(c, lineFinal[i], childCH);
+                    bool stretch = c.Style.AlignSelf == "stretch" || (c.Style.AlignSelf == "auto" && stretchDefault);
+                    if (stretch && !float.IsNaN(crossAvail) && lines.Count == 1 && c.Style.Height.IsAuto)
+                        c.ContentHeight = Math.Max(0, crossAvail - MainDeco(c, false));
+                    lineCrossMax = Math.Max(lineCrossMax, c.TotalHeight);
+                }
+                else
+                {
+                    MeasureWithContentWidth(c, box.ContentWidth, childCH);
+                    c.ContentHeight = lineFinal[i];
+                    lineCrossMax = Math.Max(lineCrossMax, c.TotalWidth);
+                }
+            }
+
+            line.MainSize = isRow
+                ? gap * (line.ItemIndices.Count - 1) + lineFinal.Sum()
+                : lineFinal.Sum() + gap * (line.ItemIndices.Count - 1);
+            line.CrossSize = lineCrossMax;
         }
 
-        bool stretchDefault = s.AlignItems == "stretch";
-        float crossMax = 0;
-        for (int i = 0; i < n; i++)
-        {
-            var c = kids[i];
-            if (isRow)
-            {
-                MeasureWithContentWidth(c, finalMain[i], childCH); // 宽=主轴，高=内容
-                bool stretch = c.Style.AlignSelf == "stretch" || (c.Style.AlignSelf == "auto" && stretchDefault);
-                if (stretch && !float.IsNaN(crossAvail) && c.Style.Height.IsAuto)
-                    c.ContentHeight = Math.Max(0, crossAvail - MainDeco(c, false));
-                crossMax = Math.Max(crossMax, c.TotalHeight);
-            }
-            else
-            {
-                MeasureWithContentWidth(c, box.ContentWidth, childCH); // 宽=交叉(满)，高=内容
-                c.ContentHeight = finalMain[i];                        // 主轴=高，覆盖为分配值
-                crossMax = Math.Max(crossMax, c.TotalWidth);
-            }
-        }
+        box.FlexLines = lines;
 
-        if (isRow) return crossMax;
-        float sum = gap * (n - 1);
-        for (int i = 0; i < n; i++) sum += finalMain[i] + decoMain[i];
-        return sum;
+        // 返回交叉轴总尺寸
+        if (isRow)
+        {
+            float totalCross = gap * (lines.Count - 1);
+            foreach (var line in lines) totalCross += line.CrossSize;
+            return totalCross;
+        }
+        else
+        {
+            float totalMain = gap * (lines.Count - 1);
+            foreach (var line in lines) totalMain += line.MainSize;
+            return totalMain;
+        }
     }
 
     /// <summary>子项主轴 base：flex-basis（%相对主轴可用）> 显式 width/height > 内在尺寸。</summary>
@@ -717,6 +787,220 @@ public static class LayoutBuilder
         return ww;
     }
 
+    // ── Grid ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Grid 测量：解析轨道定义 → 按 grid-column/row 放置子项（无显式位置则自动放置）→
+    /// 计算轨道宽/高（固定尺寸或 auto）→ 按轨道尺寸测子项 → 返回网格总高。
+    /// </summary>
+    static float MeasureGrid(BlockBox box, float? myDefH)
+    {
+        var s = box.Style;
+        float colGap = s.ColumnGap.Resolve(box.ContentWidth);
+        float rowGap = s.RowGap.Resolve(box.ContentWidth);
+        if (float.IsNaN(colGap)) colGap = 0;
+        if (float.IsNaN(rowGap)) rowGap = 0;
+
+        // 解析轨道定义
+        var colTracks = ParseGridTracks(s.GridTemplateColumns, box.ContentWidth);
+        var rowTracks = ParseGridTracks(s.GridTemplateRows, float.NaN);
+
+        // 如果未定义轨道，按子项数量自动创建列/行
+        if (colTracks.Count == 0)
+        {
+            int n = box.Children.Count;
+            if (n > 0)
+            {
+                float autoW = box.ContentWidth / n - colGap * (n - 1) / n;
+                for (int i = 0; i < n; i++) colTracks.Add(autoW);
+            }
+        }
+        if (rowTracks.Count == 0)
+        {
+            // 行数由子项放置决定，先假设每子项一行
+            rowTracks.Add(float.NaN); // auto 高度，后面根据内容定
+        }
+
+        // 放置子项到网格
+        var placements = new List<(int childIdx, int col, int row, int colSpan, int rowSpan)>();
+        var occupied = new HashSet<(int col, int row)>();
+        int autoCol = 0, autoRow = 0;
+
+        for (int i = 0; i < box.Children.Count; i++)
+        {
+            var cs = box.Children[i].Style;
+            int col, row, colSpan, rowSpan;
+
+            if (cs.GridColumnStart > 0 && cs.GridRowStart > 0)
+            {
+                col = cs.GridColumnStart - 1;
+                row = cs.GridRowStart - 1;
+                colSpan = cs.GridColumnEnd > 0 ? cs.GridColumnEnd - cs.GridColumnStart : cs.GridColumnSpan;
+                rowSpan = cs.GridRowEnd > 0 ? cs.GridRowEnd - cs.GridRowStart : cs.GridRowSpan;
+            }
+            else
+            {
+                // 自动放置：找下一个空位
+                col = autoCol;
+                row = autoRow;
+                colSpan = cs.GridColumnSpan;
+                rowSpan = cs.GridRowSpan;
+
+                // 确保不超出轨道数，必要时扩展
+                while (col + colSpan > colTracks.Count)
+                    colTracks.Add(float.NaN); // auto
+                while (row + rowSpan > rowTracks.Count)
+                    rowTracks.Add(float.NaN);
+            }
+
+            // 标记占用
+            for (int dc = 0; dc < colSpan; dc++)
+                for (int dr = 0; dr < rowSpan; dr++)
+                    occupied.Add((col + dc, row + dr));
+
+            placements.Add((i, col, row, colSpan, rowSpan));
+
+            // 推进自动放置位置
+            autoCol = col + colSpan;
+            if (autoCol >= colTracks.Count)
+            {
+                autoCol = 0;
+                autoRow++;
+            }
+        }
+
+        // 确保轨道数足够
+        while (rowTracks.Count <= (placements.Count > 0 ? placements.Max(p => p.row + p.rowSpan) : 0))
+            rowTracks.Add(float.NaN);
+
+        // 计算列宽：固定尺寸直接用，auto 按内容收缩
+        float[] colWidths = new float[colTracks.Count];
+        for (int c = 0; c < colTracks.Count; c++)
+        {
+            if (!float.IsNaN(colTracks[c]))
+                colWidths[c] = colTracks[c];
+            else
+            {
+                // auto：找该列所有子项的最大内容宽
+                float maxW = 0;
+                foreach (var p in placements)
+                {
+                    if (p.col == c && p.colSpan == 1)
+                    {
+                        var child = box.Children[p.childIdx];
+                        MeasureChild(child, box.ContentWidth, myDefH ?? float.NaN);
+                        maxW = Math.Max(maxW, child.TotalWidth);
+                    }
+                }
+                colWidths[c] = maxW;
+            }
+        }
+
+        // 测量所有子项
+        foreach (var p in placements)
+        {
+            var child = box.Children[p.childIdx];
+            float cellW = 0;
+            for (int dc = 0; dc < p.colSpan; dc++)
+                cellW += colWidths[p.col + dc] + (dc > 0 ? colGap : 0);
+            MeasureWithContentWidth(child, cellW, myDefH ?? float.NaN);
+        }
+
+        // 计算行高：固定尺寸直接用，auto 按内容最大高度
+        float[] rowHeights = new float[rowTracks.Count];
+        for (int r = 0; r < rowTracks.Count; r++)
+        {
+            if (!float.IsNaN(rowTracks[r]))
+                rowHeights[r] = rowTracks[r];
+            else
+            {
+                float maxH = 0;
+                foreach (var p in placements)
+                {
+                    if (p.row == r && p.rowSpan == 1)
+                    {
+                        var child = box.Children[p.childIdx];
+                        maxH = Math.Max(maxH, child.TotalHeight);
+                    }
+                }
+                rowHeights[r] = maxH;
+            }
+        }
+
+        // 存储网格信息供定位用
+        box.GridInfo = new GridInfo
+        {
+            ColWidths = colWidths,
+            RowHeights = rowHeights,
+            ColGap = colGap,
+            RowGap = rowGap,
+            Placements = placements
+        };
+
+        // 返回网格总高
+        float totalH = 0;
+        for (int r = 0; r < rowHeights.Length; r++)
+            totalH += rowHeights[r] + (r > 0 ? rowGap : 0);
+        return totalH;
+    }
+
+    static List<float> ParseGridTracks(string def, float availSize)
+    {
+        var tracks = new List<float>();
+        if (string.IsNullOrWhiteSpace(def)) return tracks;
+
+        var parts = def.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            if (part == "auto")
+                tracks.Add(float.NaN); // auto 标记
+            else
+            {
+                float px = CssValueParser.ToPixels(part, availSize);
+                tracks.Add(float.IsNaN(px) ? float.NaN : px);
+            }
+        }
+        return tracks;
+    }
+
+    static void PositionGrid(BlockBox box, float contentX, float contentY, CB cb)
+    {
+        if (box.GridInfo == null) return;
+
+        var gi = box.GridInfo;
+        float cy = contentY;
+
+        for (int r = 0; r < gi.RowHeights.Length; r++)
+        {
+            float cx = contentX;
+            for (int c = 0; c < gi.ColWidths.Length; c++)
+            {
+                // 找该格的所有子项
+                foreach (var p in gi.Placements)
+                {
+                    if (p.col == c && p.row == r)
+                    {
+                        var child = box.Children[p.childIdx];
+                        if (child.Style.Position == "absolute") { PlaceAbsolute(child, cb); continue; }
+
+                        // 计算单元格位置
+                        float cellX = cx;
+                        float cellY = cy;
+
+                        // 子项在单元格内默认左上对齐
+                        child.BorderX = cellX + child.Style.MarginLeft;
+                        child.BorderY = cellY + child.Style.MarginTop;
+
+                        // 递归定位子树
+                        PositionRec(child, child.BorderX, child.BorderY, cb);
+                    }
+                }
+                cx += gi.ColWidths[c] + gi.ColGap;
+            }
+            cy += gi.RowHeights[r] + gi.RowGap;
+        }
+    }
+
     // ── 定位 ────────────────────────────────────────────────
 
     /// <summary>包含块：最近定位祖先的 padding box；absolute 后代据此定位，relative 偏移 % 也按它解析。</summary>
@@ -764,17 +1048,77 @@ public static class LayoutBuilder
         {
             PositionFlex(box, contentX, contentY, childCb);
         }
+        else if (s.Display == "grid")
+        {
+            PositionGrid(box, contentX, contentY, childCb);
+        }
         else if (box.Lines != null)
         {
             PositionInline(box, contentX, contentY, childCb);
         }
         else
         {
+            // 块级子元素布局：处理浮动
             float cy = contentY;
+            var leftFloats = new List<(float top, float bottom, float right)>();
+            var rightFloats = new List<(float top, float bottom, float left)>();
+
             foreach (var c in box.Children)
             {
                 if (c.Style.Position == "absolute") { PlaceAbsolute(c, childCb); continue; }
-                PositionRec(c, contentX, cy, childCb);
+
+                // 处理 clear
+                if (c.Style.Clear != "none")
+                {
+                    if (c.Style.Clear == "left" || c.Style.Clear == "both")
+                        cy = Math.Max(cy, leftFloats.Where(f => f.bottom > cy).Select(f => f.bottom).DefaultIfEmpty(cy).Max());
+                    if (c.Style.Clear == "right" || c.Style.Clear == "both")
+                        cy = Math.Max(cy, rightFloats.Where(f => f.bottom > cy).Select(f => f.bottom).DefaultIfEmpty(cy).Max());
+                }
+
+                // 浮动元素
+                if (c.Style.Float != "none")
+                {
+                    PositionRec(c, contentX, cy, childCb);
+                    float cTop = cy;
+                    float cBottom = cy + c.TotalHeight;
+
+                    if (c.Style.Float == "left")
+                    {
+                        leftFloats.Add((cTop, cBottom, c.BorderX + c.TotalWidth - c.Style.MarginRight));
+                        // 浮动元素不参与后续流式布局的 cy 推进
+                    }
+                    else if (c.Style.Float == "right")
+                    {
+                        float floatX = contentX + box.ContentWidth - c.TotalWidth;
+                        PositionRec(c, floatX, cy, childCb);
+                        rightFloats.Add((cTop, cBottom, c.BorderX - c.Style.MarginLeft));
+                    }
+                    continue;
+                }
+
+                // 非浮动元素：计算可用 x 和宽度
+                float availX = contentX;
+                float availW = box.ContentWidth;
+
+                // 检查左侧浮动
+                var activeLeft = leftFloats.Where(f => f.top < cy + c.TotalHeight && f.bottom > cy).ToList();
+                if (activeLeft.Any())
+                {
+                    float maxRight = activeLeft.Max(f => f.right);
+                    availX = Math.Max(availX, maxRight);
+                    availW -= (availX - contentX);
+                }
+
+                // 检查右侧浮动
+                var activeRight = rightFloats.Where(f => f.top < cy + c.TotalHeight && f.bottom > cy).ToList();
+                if (activeRight.Any())
+                {
+                    float minLeft = activeRight.Min(f => f.left);
+                    availW -= (contentX + box.ContentWidth - minLeft);
+                }
+
+                PositionRec(c, availX, cy, childCb);
                 cy += c.TotalHeight;
             }
         }
@@ -808,6 +1152,23 @@ public static class LayoutBuilder
         float? left = OffP(s.OffsetLeft, cb.Width), right = OffP(s.OffsetRight, cb.Width);
         float? top = OffP(s.OffsetTop, cb.Height), bottom = OffP(s.OffsetBottom, cb.Height);
 
+        // 拉伸行为：如果同时设置了 left+right 且 width 为 auto，则水平拉伸
+        if (left != null && right != null && s.Width.IsAuto)
+        {
+            float stretchW = cb.Width - left.Value - right.Value;
+            float decoW = s.MarginLeft + s.MarginRight + s.BorderWidthLeft + s.BorderWidthRight + s.PaddingLeft + s.PaddingRight;
+            float bb = s.BoxSizing == "border-box" ? decoW : 0;
+            c.ContentWidth = Math.Max(0, stretchW - (s.BoxSizing == "border-box" ? decoW : 0));
+        }
+
+        // 垂直拉伸：同时设置了 top+bottom 且 height 为 auto
+        if (top != null && bottom != null && s.Height.IsAuto)
+        {
+            float stretchH = cb.Height - top.Value - bottom.Value;
+            float decoH = s.MarginTop + s.MarginBottom + s.BorderWidthTop + s.BorderWidthBottom + s.PaddingTop + s.PaddingBottom;
+            c.ContentHeight = Math.Max(0, stretchH - (s.BoxSizing == "border-box" ? decoH : 0));
+        }
+
         float mx = left != null ? cb.Left + left.Value
                : right != null ? cb.Left + cb.Width - right.Value - c.TotalWidth
                : cb.Left;
@@ -825,46 +1186,69 @@ public static class LayoutBuilder
     {
         var s = box.Style;
         bool isRow = s.FlexDirection.StartsWith("row");
+        bool isReverse = s.FlexDirection.EndsWith("reverse");
+        bool isWrapReverse = s.FlexWrap == "wrap-reverse";
         float gap = ResolveGap(s, box.ContentWidth);
         var kids = box.Children.FindAll(c => c.Style.Position != "absolute");
         int n = kids.Count;
-        if (n == 0) { PlaceAbsChildren(box, cb); return; }
+        if (n == 0 || box.FlexLines == null) { PlaceAbsChildren(box, cb); return; }
 
         float mainSize = isRow ? box.ContentWidth : box.ContentHeight;
         float crossSize = isRow ? box.ContentHeight : box.ContentWidth;
 
-        float used = gap * (n - 1);
-        foreach (var c in kids) used += isRow ? c.TotalWidth : c.TotalHeight;
-        float free = mainSize - used;
+        // 计算交叉轴起始位置和间距
+        float totalCross = gap * (box.FlexLines.Count - 1);
+        foreach (var line in box.FlexLines) totalCross += line.CrossSize;
+        float crossFree = crossSize - totalCross;
+        float crossCursor, crossBetween;
 
-        float cursor, between;
-        switch (s.JustifyContent)
-        {
-            case "center": cursor = free / 2; between = gap; break;
-            case "flex-end": case "end": cursor = free; between = gap; break;
-            case "space-between": cursor = 0; between = n > 1 ? gap + free / (n - 1) : gap; break;
-            case "space-around": between = n > 0 ? gap + free / n : gap; cursor = between / 2; break;
-            case "space-evenly": between = gap + free / (n + 1); cursor = between; break;
-            default: cursor = 0; between = gap; break;
-        }
+        // align-content 目前简化为 flex-start（默认）
+        crossCursor = 0;
+        crossBetween = gap;
 
-        foreach (var c in kids)
+        // 逐行定位
+        float crossPos = crossCursor;
+        foreach (var line in box.FlexLines)
         {
-            float cf = isRow ? c.TotalHeight : c.TotalWidth;
-            string align = c.Style.AlignSelf == "auto" ? s.AlignItems : c.Style.AlignSelf;
-            float crossOff = align switch
+            // 计算该行主轴起始位置和间距
+            float lineMainUsed = gap * (line.ItemIndices.Count - 1);
+            foreach (int idx in line.ItemIndices)
+                lineMainUsed += isRow ? kids[idx].TotalWidth : kids[idx].TotalHeight;
+            float lineFree = mainSize - lineMainUsed;
+
+            float cursor, between;
+            switch (s.JustifyContent)
             {
-                "center" => Math.Max(0, (crossSize - cf) / 2),
-                "flex-end" or "end" => Math.Max(0, crossSize - cf),
-                _ => 0, // flex-start / stretch
-            };
+                case "center": cursor = lineFree / 2; between = gap; break;
+                case "flex-end": case "end": cursor = lineFree; between = gap; break;
+                case "space-between": cursor = 0; between = line.ItemIndices.Count > 1 ? gap + lineFree / (line.ItemIndices.Count - 1) : gap; break;
+                case "space-around": between = line.ItemIndices.Count > 0 ? gap + lineFree / line.ItemIndices.Count : gap; cursor = between / 2; break;
+                case "space-evenly": between = gap + lineFree / (line.ItemIndices.Count + 1); cursor = between; break;
+                default: cursor = 0; between = gap; break;
+            }
 
-            if (isRow)
-                PositionRec(c, contentX + cursor, contentY + crossOff, cb);
-            else
-                PositionRec(c, contentX + crossOff, contentY + cursor, cb);
+            // 定位该行的每个子项
+            foreach (int idx in line.ItemIndices)
+            {
+                var c = kids[idx];
+                float cf = isRow ? c.TotalHeight : c.TotalWidth;
+                string align = c.Style.AlignSelf == "auto" ? s.AlignItems : c.Style.AlignSelf;
+                float crossOff = align switch
+                {
+                    "center" => Math.Max(0, (line.CrossSize - cf) / 2),
+                    "flex-end" or "end" => Math.Max(0, line.CrossSize - cf),
+                    _ => 0, // flex-start / stretch
+                };
 
-            cursor += (isRow ? c.TotalWidth : c.TotalHeight) + between;
+                if (isRow)
+                    PositionRec(c, contentX + cursor, contentY + crossPos + crossOff, cb);
+                else
+                    PositionRec(c, contentX + crossPos + crossOff, contentY + cursor, cb);
+
+                cursor += (isRow ? c.TotalWidth : c.TotalHeight) + between;
+            }
+
+            crossPos += line.CrossSize + crossBetween;
         }
 
         PlaceAbsChildren(box, cb);
