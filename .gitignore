@@ -5,3 +5,5 @@
 .vs/
 /src/PaperSharpSamples/obj
 /src/PaperSharpSamples/bin
+bin/
+obj/

@@ -494,7 +494,10 @@ public static class StyleResolver
         s.BorderRadiusBottomRight = FirstRadius(Raw("border-bottom-right-radius"), s.FontSize);
         s.BorderRadiusBottomLeft = FirstRadius(Raw("border-bottom-left-radius"), s.FontSize);
         s.Shadow = CssValueParser.ParseBoxShadow(Raw("box-shadow"), s.FontSize);
-        var bgi = FirstNonEmpty(Spec("background-image"), Raw("background-image"), Spec("background"), Raw("background"));
+        // background-image/background 一律不读 computed：值里只要含 repeating-* 渐变，
+        // AngleSharp 的 CssPeriodicValue.CssText 必抛 NRE（其解析也不完整，渐变串本就走 Spec/Lookup 自解析）。
+        string bgi = Spec("background-image");
+        if (string.IsNullOrEmpty(bgi)) bgi = Spec("background");
         // conic-gradient 等 AngleSharp 不认识的写法：从原始 CSS 兜底
         s.Background = CssValueParser.ParseGradient(
             Lookup("background-image", element, Lookup("background", element, bgi)));

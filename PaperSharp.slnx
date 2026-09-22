@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="src/PaperSharp/PaperSharp.csproj" />
   <Project Path="src/PaperSharpSamples/PaperSharpSamples.csproj" Id="088e984d-81bb-486c-b3eb-89242e7690f7" />
+  <Project Path="tests/PaperSharp.Tests/PaperSharp.Tests.csproj" />
 </Solution>

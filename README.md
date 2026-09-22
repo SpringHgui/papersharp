@@ -186,6 +186,24 @@ dotnet run
 
 **画到 canvas**：`src/Paint/Painter.cs`（单页）与 `PagePainter.cs`（分页）共用 `BoxPainter`（圆角/阴影/渐变/边框/opacity）+ `TextPainter`（对齐/字距/装饰线/opacity）——同一套绘制逻辑，PDF canvas 和 PNG surface canvas 通用，两条路径不会漂移。
 
+## 测试
+
+`tests/PaperSharp.Tests`（xUnit + PdfPig + PDFtoImage），三层守门：
+
+| 层 | 文件 | 守什么 |
+|---|---|---|
+| 结构 | `PdfStructureTests` | PDF 可解析（兜住 `PdfEnhancer` 手写 xref 写坏）、页数钉死、A4 尺寸、<6MB 体积预算（子集字体失效哨兵） |
+| 语义 | `PdfSemanticTests` | m5 书签树/链接注释/元数据、子集字体 ToUnicode 可读（中文能抽出来）、长文跨页有内容 |
+| 像素 | `PngGoldenTests` + `PdfRasterTests` | PNG 路径字节级 golden；PDF 经 PDFium 读回栅格与 golden 像素 diff（≤0.1%）——后者全链路验证"写出去的 PDF 别人打开长什么样" |
+
+```
+dotnet test tests/PaperSharp.Tests                      # 全量 ~30s
+dotnet test tests/PaperSharp.Tests --filter "Category!=Slow"   # 跳过 PDF 栅格（快）
+UPDATE_GOLDENS=1 dotnet test tests/PaperSharp.Tests     # 有意变更后重生成基准（评审 diff 再提交）
+```
+
+约定：**永远不比 PDF 字节**（Skia 写生成时间戳）；基准 PNG 提交在 `tests/PaperSharp.Tests/goldens/`，依赖本机字体栈，当前仅 Windows 钉基准。测试整程序集禁并行——`Renderer`/`FontManager`/`ImageLoader` 是静态可变全局态，**库当前非线程安全**（并发渲染会互相踩，列 ROADMAP）。
+
 ## 想扩展的话
 
 按对"渲任意真实网页"的价值排序（M1–M5 已完成项见上文各节）：
