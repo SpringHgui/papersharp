@@ -1,0 +1,5 @@
+/bin
+/obj
+/src/PaperSharp/obj
+/src/PaperSharp/bin
+.vs/
