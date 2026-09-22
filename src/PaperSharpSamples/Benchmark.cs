@@ -2,11 +2,12 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using SkiaSharp;
+using PaperSharp;
 using PaperSharp.Css;
 using PaperSharp.Layout;
 using PaperSharp.Paint;
 
-namespace PaperSharp;
+namespace PaperSharpSamples;
 
 /// <summary>
 /// 可复现的渲染基准测试。两种模式：

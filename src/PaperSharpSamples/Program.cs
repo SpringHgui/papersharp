@@ -1,5 +1,6 @@
 using SkiaSharp;
 using PaperSharp;
+using PaperSharpSamples;
 
 Console.WriteLine("PaperSharp · minimal HTML/CSS → PDF + PNG via SkiaSharp");
 Console.WriteLine("=====================================================");
