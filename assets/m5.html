@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>M5 语义文档</title>
+  <meta name="author" content="PaperSharp 团队">
+  <meta name="description" content="M5 里程碑验收：PDF 书签、链接注释与完整元数据">
+  <meta name="keywords" content="PDF, 书签, 链接, 元数据, PaperSharp">
+</head>
+<body>
+  <h1>M5 里程碑：PDF 语义</h1>
+  <p>本文档用于验收 PDF 的书签大纲（outline）、链接注释（/Annots /Link）与 Info 元数据。
+  用任意 PDF 阅读器打开应能在侧栏看到下面的标题树，正文中的蓝色文字可点击。</p>
+
+  <h2>1. 外部链接</h2>
+  <p>行内链接：项目主页 <a href="https://github.com/">GitHub</a>、邮件 <a href="mailto:test@example.com">mailto 邮箱</a>。
+  链接盒子覆盖文字行高区间。</p>
+  <a class="banner" href="https://skia.org/">块级链接横幅：点击整条 skia.org</a>
+
+  <h2>2. 多级标题</h2>
+  <h3>2.1 三级标题示例</h3>
+  <p>书签树应呈现 h1 → h2 → h3 的层级，中文标题以 UTF-16 写入 /Title。</p>
+  <h3>2.2 另一个三级</h3>
+  <p>同级的第二个小节，验证 /Next /Prev 兄弟指针。</p>
+
+  <h2>3. 跨页与元数据</h2>
+  <p>下面的长内容把文档推到第二页，验证书签目标分布在不同页码；
+  元数据（标题/作者/主题/关键词）来自 &lt;title&gt; 与 &lt;meta&gt; 标签。</p>
+  <div class="filler">
+    <p>填充段落 · PaperSharp 手写布局引擎把每个标题盒的页内坐标换算成 PDF 用户空间（y 轴翻转），
+    写入 /Dest [页对象 /XYZ null Y null]。</p>
+    <p>填充段落二 · 链接注释同理：/Rect 由行盒 frag 的几何换算而来，一页可挂任意多条 /Annots。</p>
+    <p>填充段落三 · 全部通过 PDF 增量更新追加，不重排 Skia 已写出的对象，字体子集与图像流原样保留。</p>
+  </div>
+  <h2>4. 收尾小节</h2>
+  <p>最后一个二级标题，出现在第二页 → 书签第二页跳转验证。</p>
+</body>
+</html>

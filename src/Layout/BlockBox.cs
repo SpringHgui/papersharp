@@ -25,9 +25,11 @@ public sealed class BlockBox
 
     /// <summary>替换元素（&lt;img&gt;）解码后的图像 + 自然尺寸。</summary>
     public SKImage? Image;
+    /// <summary>内联 &lt;svg&gt; 解析后的矢量图（PDF 中保持矢量），自然尺寸取 CullRect。</summary>
+    public SKPicture? SvgPicture;
     public float NaturalW;
     public float NaturalH;
-    public bool IsReplaced => Style.Tag == "img";
+    public bool IsReplaced => Style.Tag is "img" or "svg";
 
     /// <summary>表格布局中间结果（仅 display:table 盒使用），供 Position 复用，避免二次计算。</summary>
     public List<List<TCellInfo>>? TRows;
@@ -48,6 +50,17 @@ public sealed class BlockBox
 
     /// <summary>Grid 布局中间结果（仅 display:grid 盒使用）：轨道尺寸和子项放置信息。</summary>
     public GridInfo? GridInfo;
+
+    /// <summary>WrappedLines 每行的左缩进（环绕浮动用；无浮动时为 null）。</summary>
+    public float[]? LineLefts;
+
+    /// <summary>table-cell vertical-align：内容（文本/子盒）相对单元格内容盒顶部的额外下移。</summary>
+    public float ValignDY;
+
+    /// <summary>块容器内浮动子盒的测量期放置结果：X/YRel 相对本盒内容盒左上（供 Position 直接取用）。</summary>
+    public (int ChildIndex, float X, float YRel)[]? FloatPlacements;
+    /// <summary>本容器（含祖先链）浮动带，y 相对本盒内容顶，供定位期复现 clear。</summary>
+    public (bool IsLeft, float TopRel, float BottomRel)[]? FloatBands;
 
     // 测量结果
     public float ContentWidth;

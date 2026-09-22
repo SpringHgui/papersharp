@@ -4,7 +4,8 @@ namespace PaperSharp.Css;
 
 /// <summary>
 /// 解析 CSS 里的 @font-face 块，把 family → 字体文件登记到 FontManager。
-/// 只取 src 里第一个 url(...)，相对路径由 FontManager.BaseDir 解析。
+/// src 里的多个 url(...)（如 woff2 → woff → ttf 兜底链）按声明顺序记录，加载时逐个尝试；
+/// data: 与 local() 跳过。相对路径由 FontManager.BaseDir 解析。
 /// </summary>
 public static class FontFaceParser
 {
@@ -20,12 +21,14 @@ public static class FontFaceParser
         {
             var body = block.Groups[1].Value;
             var fam = ReFamily.Match(body);
-            var url = ReUrl.Match(body);
-            if (!fam.Success || !url.Success) continue;
+            if (!fam.Success) continue;
+            var paths = ReUrl.Matches(body).Select(u => u.Groups[1].Value.Trim().Trim('\'', '"'))
+                        .Where(p => p.Length > 0 && !p.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+            if (paths.Count == 0) continue;
 
             string family = fam.Groups[1].Value.Trim().Trim('\'', '"');
-            string path = url.Groups[1].Value.Trim().Trim('\'', '"');
-            if (string.IsNullOrEmpty(family) || string.IsNullOrEmpty(path)) continue;
+            if (string.IsNullOrEmpty(family)) continue;
 
             int weight = 400;
             var w = ReWeight.Match(body);
@@ -35,7 +38,7 @@ public static class FontFaceParser
                 weight = wv == "bold" ? 700 : wv == "normal" ? 400
                        : (int.TryParse(wv, out var n) ? n : 400);
             }
-            Layout.FontManager.RegisterFont(family, path, weight);
+            Layout.FontManager.RegisterFont(family, paths, weight);
         }
     }
 }

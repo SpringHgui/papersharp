@@ -12,28 +12,75 @@ public static class TextMeasurer
 {
     /// <summary>把文本折成若干行。maxWidth&lt;=0 时返回单空行。</summary>
     public static string[] Wrap(string text, float maxWidth, SKFont font, ComputedStyle s)
+        => Wrap(text, maxWidth, font, s, null, 0, out _);
+
+    /// <summary>带浮动环绕的折行：每行按全局 y 查询左右缩进，lefts 记录每行左缩进（无浮动时为 null）。
+    /// text-wrap: balance 时二次折行逼近等长行（有浮动环绕时跳过）。</summary>
+    public static string[] Wrap(string text, float maxWidth, SKFont font, ComputedStyle s,
+        FloatContext? fc, float topY, out float[]? lefts)
+    {
+        var lines = WrapRaw(text, maxWidth, font, s, fc, topY, out lefts);
+        if (s.TextWrap == "balance" && fc == null && maxWidth > 0 && lines.Length >= 2
+            && s.WhiteSpace is not ("nowrap" or "pre"))
+        {
+            float total = (lines.Length - 1) * TokenWidth(" ", font, s.LetterSpacing);
+            foreach (var ln in lines) total += LineWidth(ln, font, s.LetterSpacing);
+            // 二分最小的“行长上限”W：贪心折行仍保持原行数（=最少行数），使各行尽量均匀
+            float lo = total / lines.Length - 0.5f, hi = maxWidth;
+            for (int iter = 0; iter < 8 && hi - lo > 1f; iter++)
+            {
+                float mid = (lo + hi) / 2;
+                if (WrapRaw(text, mid, font, s, fc, topY, out _).Length <= lines.Length) hi = mid;
+                else lo = mid;
+            }
+            var rebal = WrapRaw(text, hi, font, s, fc, topY, out var rl);
+            if (rebal.Length <= lines.Length) { lines = rebal; lefts = rl; }
+        }
+        return lines;
+    }
+
+    static string[] WrapRaw(string text, float maxWidth, SKFont font, ComputedStyle s,
+        FloatContext? fc, float topY, out float[]? lefts)
     {
         var lines = new List<string>();
+        var leftList = new List<float>();
         float ls = s.LetterSpacing;
         string ws = s.WhiteSpace;
+        float lineHeight = s.FontSize * s.LineHeightFactor;
+        float y = topY;
 
         text = Normalize(text, ws);
+
+        (float, float) Query() => fc != null ? fc.Insets(y, lineHeight) : (0, 0f);
+        void TakeLine(string line)
+        {
+            var (l, _) = Query();
+            lines.Add(line);
+            leftList.Add(l);
+            y += lineHeight;
+        }
 
         // nowrap / pre：不按宽度折行，仅按显式换行切
         bool noWrap = ws == "nowrap" || ws == "pre";
         if (noWrap || maxWidth <= 0)
         {
-            foreach (var para in text.Split('\n')) lines.Add(para);
-            if (lines.Count == 0) lines.Add("");
-            return lines.ToArray();
+            foreach (var para in text.Split('\n')) TakeLine(para);
+            if (lines.Count == 0) TakeLine("");
+            return Finish(lines, leftList, fc, out lefts);
         }
 
         foreach (var para in text.Split('\n'))
         {
-            if (para.Length == 0) { lines.Add(""); continue; }
-            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, lines);
+            if (para.Length == 0) { TakeLine(""); continue; }
+            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, TakeLine, Query);
         }
-        if (lines.Count == 0) lines.Add("");
+        if (lines.Count == 0) TakeLine("");
+        return Finish(lines, leftList, fc, out lefts);
+    }
+
+    static string[] Finish(List<string> lines, List<float> lefts, FloatContext? fc, out float[]? leftArr)
+    {
+        leftArr = fc != null && lefts.Any(v => v > 0.5f) ? lefts.ToArray() : null;
         return lines.ToArray();
     }
 
@@ -78,17 +125,27 @@ public static class TextMeasurer
         return sb.ToString();
     }
 
-    static void WrapParagraph(string para, float maxWidth, SKFont font, float ls, string wordBreak, List<string> result)
+    static void WrapParagraph(string para, float maxWidth, SKFont font, float ls, string wordBreak,
+        Action<string> take, Func<(float left, float right)> query)
     {
         var current = new StringBuilder();
         float currentWidth = 0;
+        var (inL, inR) = query();
+        float lineMax = Math.Max(1, maxWidth - inL - inR);
+        void EmitLine(string line)
+        {
+            take(line);
+            (inL, inR) = query();
+            lineMax = Math.Max(1, maxWidth - inL - inR);
+        }
+
         foreach (var token in Tokenize(para, wordBreak))
         {
             float tokenWidth = TokenWidth(token, font, ls);
             // 只有当前行已有非空白内容时才换行；单独的空格允许溢出，避免留白行
-            if (currentWidth + tokenWidth > maxWidth && current.Length > 0 && !string.IsNullOrWhiteSpace(current.ToString()))
+            if (currentWidth + tokenWidth > lineMax && current.Length > 0 && !string.IsNullOrWhiteSpace(current.ToString()))
             {
-                result.Add(current.ToString().TrimEnd());
+                EmitLine(current.ToString().TrimEnd());
                 current.Clear();
                 currentWidth = 0;
                 if (token == " ") continue; // 换行处的空格吞掉
@@ -96,7 +153,7 @@ public static class TextMeasurer
             current.Append(token);
             currentWidth += tokenWidth;
         }
-        if (current.Length > 0) result.Add(current.ToString().TrimEnd());
+        if (current.Length > 0) EmitLine(current.ToString().TrimEnd());
     }
 
     static IEnumerable<string> Tokenize(string s, string wordBreak)

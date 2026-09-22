@@ -19,15 +19,18 @@ public sealed class InlineFrag
     public string? Text;
     public BlockBox? Box;
     public float X, Width, FontSize, Ascent, Descent;
+    public float AlignDY;   // vertical-align 生效后的基线下移量（文本 run；原子盒由 PositionInline 处理）
 }
 
-/// <summary>一行：若干 frag + 行高/基线/宽度。Left 为对齐后的 x 偏移（相对内容盒）。</summary>
+/// <summary>一行：若干 frag + 行高/基线/宽度。Left 为对齐后的 x 偏移（相对内容盒）。
+/// Inset/Avail：环绕浮动时该行的左缩进与可用宽（无浮动时 0/-1 表示全宽）。</summary>
 public sealed class LineBox
 {
     public List<InlineFrag> Frags = new();
     public float Width, Height, Baseline, Left;
+    public float Inset;
+    public float Avail = -1;
 }
-
 /// <summary>
 /// inline 格式化上下文：把块内的有序片段摊平成原子序列，再按宽度折成行盒。
 /// 纯文本块不走这里（沿用 WrappedLines 老路径），只有混排行内内容才触发。
@@ -49,7 +52,7 @@ public static class InlineLayout
             }
             var c = piece.Child;
             if (c == null || c.Display == "none") continue;
-            if (c.Display == "inline-block" || c.Tag == "img")
+            if (c.Display == "inline-block" || c.Tag is "img" or "svg")
                 list.Add(new InlineAtom { Style = c, Box = factory(c) });
             else
                 list.AddRange(BuildAtoms(c, factory));   // 普通 inline：递归摊平
@@ -59,10 +62,57 @@ public static class InlineLayout
 
     /// <summary>按 maxWidth 把原子序列折成行盒。fontCache 复用 SKFont 度量。</summary>
     public static List<LineBox> BreakIntoLines(List<InlineAtom> atoms, float maxWidth)
+        => BreakIntoLines(atoms, maxWidth, null, 0);
+
+    /// <summary>带浮动环绕的折行：每行起笔时按该行 y 查询左右缩进，可用宽相应收窄（fc=null 时与旧行为一致）。</summary>
+    public static List<LineBox> BreakIntoLines(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY)
+    {
+        var lines = BreakRaw(atoms, maxWidth, fc, topY);
+        // text-wrap: balance：按“总宽/最少行数”目标宽二次折行，逼近各行等长（有浮动环绕时跳过）
+        if (fc == null && atoms.Count > 0 && atoms[0].Style.TextWrap == "balance"
+            && maxWidth > 0 && lines.Count >= 2)
+        {
+            float total = lines.Sum(l => l.Width) + (lines.Count - 1) * TextWidth(" ", atoms[0].Style);
+            // 二分最小的“行长上限”W：折行仍保持原行数（=最少行数），各行尽量均匀
+            float lo = total / lines.Count - 0.5f, hi = maxWidth;
+            for (int iter = 0; iter < 8 && hi - lo > 1f; iter++)
+            {
+                float mid = (lo + hi) / 2;
+                if (BreakRaw(atoms, mid, null, topY).Count <= lines.Count) hi = mid;
+                else lo = mid;
+            }
+            var rebal = BreakRaw(atoms, hi, null, topY);
+            if (rebal.Count <= lines.Count) lines = rebal;
+        }
+        return lines;
+    }
+
+    static List<LineBox> BreakRaw(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY)
     {
         var lines = new List<LineBox>();
-        var cur = new LineBox();
-        float curW = 0;
+        float yCursor = topY;
+        var cur = NewLine(atoms.Count > 0 ? atoms[0].Style : null);
+        float curW = 0, avail = cur.Avail;
+
+        LineBox NewLine(ComputedStyle? firstStyle)
+        {
+            var ln = new LineBox();
+            if (fc != null)
+            {
+                float est = firstStyle != null ? firstStyle.FontSize * firstStyle.LineHeightFactor : 16;
+                var (l, r) = fc.Insets(yCursor, est);
+                ln.Inset = l;
+                ln.Avail = Math.Max(1, maxWidth - l - r);
+            }
+            else ln.Avail = maxWidth;
+            return ln;
+        }
+
+        void Roll(ComputedStyle? nextStyle)
+        {
+            FinalizeLine(cur); lines.Add(cur); yCursor += cur.Height;
+            cur = NewLine(nextStyle); avail = cur.Avail; curW = 0;
+        }
 
         void AddFrag(InlineFrag f)
         {
@@ -75,14 +125,14 @@ public static class InlineLayout
         {
             if (a.IsBreak)
             {
-                if (cur.Frags.Count > 0) { FinalizeLine(cur); lines.Add(cur); cur = new LineBox(); curW = 0; }
-                else { var e = new LineBox(); FinalizeLine(e); lines.Add(e); } // <br> 于行首 → 空行
+                if (cur.Frags.Count > 0) Roll(a.Style);
+                else { var e = NewLine(a.Style); FinalizeLine(e); lines.Add(e); yCursor += e.Height; } // <br> 于行首 → 空行
                 continue;
             }
             if (a.Box != null)
             {
                 float bw = a.Box.TotalWidth;
-                if (curW + bw > maxWidth && cur.Frags.Count > 0) { FinalizeLine(cur); lines.Add(cur); cur = new LineBox(); curW = 0; }
+                if (curW + bw > avail && cur.Frags.Count > 0) Roll(a.Style);
                 AddFrag(new InlineFrag { Style = a.Style, Box = a.Box, Width = bw, FontSize = a.Style.FontSize, Ascent = a.Box.TotalHeight, Descent = 0 });
                 continue;
             }
@@ -91,15 +141,15 @@ public static class InlineLayout
             {
                 if (tok == "\n") // preserve 模式下的强制换行
                 {
-                    FinalizeLine(cur); lines.Add(cur); cur = new LineBox(); curW = 0; continue;
+                    Roll(a.Style); continue;
                 }
                 if (tok == " " && cur.Frags.Count == 0) continue; // 行首空格吞掉
                 float tw = TextWidth(tok, a.Style);
                 bool isSpace = tok == " ";
-                if (curW + tw > maxWidth && cur.Frags.Count > 0 && !(isSpace && string.IsNullOrWhiteSpace(LastText(cur))))
+                if (curW + tw > avail && cur.Frags.Count > 0 && !(isSpace && string.IsNullOrWhiteSpace(LastText(cur))))
                 {
                     TrimTrailingSpace(cur, ref curW);
-                    FinalizeLine(cur); lines.Add(cur); cur = new LineBox(); curW = 0;
+                    Roll(a.Style);
                     if (isSpace) continue; // 行首空格吞掉
                 }
                 // 合并到同一样式的尾 frag
@@ -111,7 +161,7 @@ public static class InlineLayout
             }
         }
         if (cur.Frags.Count > 0) { TrimTrailingSpace(cur, ref curW); FinalizeLine(cur); lines.Add(cur); }
-        else if (lines.Count == 0) { var e = new LineBox(); FinalizeLine(e); lines.Add(e); }
+        else if (lines.Count == 0) { var e = NewLine(null); FinalizeLine(e); lines.Add(e); }
         return lines;
     }
 
@@ -128,6 +178,28 @@ public static class InlineLayout
         ln.Baseline = maxBase > 0 ? maxBase : 14;
         ln.Height = Math.Max(maxH, ln.Baseline + 3);
         ln.Width = w;
+
+        // 文本 run 的 vertical-align（top/bottom 对齐行盒，super/sub 惯例偏移，length/% 相对基线上移）
+        foreach (var f in ln.Frags)
+        {
+            if (f.Text == null) continue;
+            var va = f.Style.VerticalAlign;
+            float dy;
+            switch (va)
+            {
+                case "top": dy = f.Ascent - ln.Baseline; break;
+                case "bottom": dy = ln.Height - ln.Baseline; break;
+                case "super": dy = -0.35f * f.FontSize; break;
+                case "sub": dy = 0.25f * f.FontSize; break;
+                default:
+                    float len = va.EndsWith('%')
+                        ? ln.Height * CssValueParser.ParseFloat(va[..^1]) / 100f
+                        : CssValueParser.ToPixels(va, f.FontSize);
+                    dy = float.IsNaN(len) ? 0 : -len; // 正值上移；"baseline"/"middle" 等关键字解析为 0
+                    break;
+            }
+            f.AlignDY = dy;
+        }
     }
 
     static string LastText(LineBox ln)

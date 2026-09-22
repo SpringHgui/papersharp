@@ -28,7 +28,7 @@ public static class TextPainter
             float lineLeft = contentLeft + ln.Left;
             float baseline = y + ln.Baseline;
             foreach (var f in ln.Frags)
-                if (f.Text != null) DrawRun(canvas, f, lineLeft + f.X, baseline);
+                if (f.Text != null) DrawRun(canvas, f, lineLeft + f.X, baseline + f.AlignDY);
             y += ln.Height;
         }
     }
@@ -66,9 +66,9 @@ public static class TextPainter
         DrawSpaced(canvas, f.Text!, x, baseline, paint, s.LetterSpacing);
         DrawDecoration(canvas, s, x, baseline, f.Width, color);
     }
-    /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。</summary>
+    /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。lefts 为每行左缩进（环绕浮动），可 null。</summary>
     public static void DrawLines(SKCanvas canvas, ComputedStyle s, SKTypeface typeface,
-        string[] lines, int first, int count, float left, float top, float width)
+        string[] lines, int first, int count, float left, float top, float width, float[]? lefts = null)
     {
         if (lines == null || count <= 0) return;
         byte alpha = (byte)Math.Round(Clamp01(s.Opacity) * 255);
@@ -92,10 +92,11 @@ public static class TextPainter
             int idx = first + k;
             if (idx >= lines.Length) break;
             var line = lines[idx];
+            float inset = lefts != null && idx < lefts.Length ? lefts[idx] : 0;
             float textW = MeasureWidth(line, paint, ls);
 
-            float x = left;
-            if (s.TextAlignment == CssTextAlign.Center) x = left + (width - textW) / 2;
+            float x = left + inset;
+            if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
             else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;
 
             DrawSpaced(canvas, line, x, baseline, paint, ls);

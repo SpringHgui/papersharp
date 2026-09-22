@@ -38,12 +38,31 @@ public static class StyleResolver
         """;
 
     // AngleSharp.Css 不实现的属性（computed/declared 都拿不到），从原始 CSS 里按选择器兜底扫出来。
-    static readonly string[] UnsupportedProps = { "text-overflow" };
+    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image" };
     static Dictionary<string, Dictionary<string, string>> _unsupportedMap = new();
+
+    // 自定义属性（CSS 变量）：选择器末段 token → (--name → 声明值)。var() 展开按元素链继承查找。
+    static Dictionary<string, Dictionary<string, string>> _varMap = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>最近一次 BuildDocument 从 &lt;title&gt; 抽出的文档标题（供 PDF 元数据等用）。</summary>
+    public static string? LastTitle { get; private set; }
+    public static string? LastAuthor { get; private set; }
+    public static string? LastDescription { get; private set; }
+    public static string? LastKeywords { get; private set; }
 
     public static ComputedStyle BuildDocument(string htmlBody, string userCss)
     {
         ScanUnsupported(userCss);
+        ScanVars(userCss);
+        // 调用方常把整份 HTML 文档传进来：抽 <title> 供元数据用，只把 <body> 内容当正文，
+        // 否则 head 里的 meta/title 会被当成可见块渲染。
+        var mt = Regex.Match(htmlBody, @"<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        LastTitle = mt.Success ? System.Net.WebUtility.HtmlDecode(mt.Groups[1].Value).Trim() : null;
+        LastAuthor = MetaContent(htmlBody, "author");
+        LastDescription = MetaContent(htmlBody, "description");
+        LastKeywords = MetaContent(htmlBody, "keywords");
+        var mb = Regex.Match(htmlBody, @"<body[^>]*>(.*)</body>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (mb.Success) htmlBody = mb.Groups[1].Value;
         var fullHtml =
             "<!doctype html><html><head><meta charset='utf-8'>" +
             $"<style>{UaStylesheet}</style>" +
@@ -60,6 +79,15 @@ public static class StyleResolver
         var window = doc.DefaultView ?? throw new InvalidOperationException("no window (Did WithCss() get applied?)");
 
         return Walk(window, body, null);
+    }
+
+    /// <summary>取 &lt;meta name="X" content="..."&gt;（属性顺序不敏感）。</summary>
+    static string? MetaContent(string html, string name)
+    {
+        var m = Regex.Match(html, @"<meta\s+[^>]*name=[""']" + name + @"[""'][^>]*>", RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        var c = Regex.Match(m.Value, @"content=[""']([^""']*)[""']", RegexOptions.IgnoreCase);
+        return c.Success ? System.Net.WebUtility.HtmlDecode(c.Groups[1].Value).Trim() : null;
     }
 
     /// <summary>扫原始 CSS：把不支持属性按「最后一段简单选择器 token → 值」建索引。</summary>
@@ -90,16 +118,116 @@ public static class StyleResolver
     /// <summary>取属性值：有 AngleSharp 结果就用；否则按元素 class/id/tag 命中兜底索引。</summary>
     static string Lookup(string prop, IElement element, string current)
     {
-        if (!string.IsNullOrWhiteSpace(current)) return current;
-        if (!_unsupportedMap.TryGetValue(prop, out var map) || map.Count == 0) return current;
-        var cls = element.GetAttribute("class");
-        if (!string.IsNullOrWhiteSpace(cls))
-            foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                if (map.TryGetValue("." + c, out var v)) return v;
-        var id = element.GetAttribute("id");
-        if (!string.IsNullOrWhiteSpace(id) && map.TryGetValue("#" + id, out var iv)) return iv;
-        if (map.TryGetValue(element.TagName.ToLowerInvariant(), out var tv)) return tv;
-        return current;
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            if (_unsupportedMap.TryGetValue(prop, out var map) && map.Count > 0)
+            {
+                var cls = element.GetAttribute("class");
+                if (!string.IsNullOrWhiteSpace(cls))
+                    foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                        if (map.TryGetValue("." + c, out var v)) return ExpandVars(v, element);
+                var id = element.GetAttribute("id");
+                if (!string.IsNullOrWhiteSpace(id) && map.TryGetValue("#" + id, out var iv)) return ExpandVars(iv, element);
+                if (map.TryGetValue(element.TagName.ToLowerInvariant(), out var tv)) return ExpandVars(tv, element);
+            }
+            return current;
+        }
+        return ExpandVars(current, element);
+    }
+
+    // ── var() / 自定义属性 ─────────────────────────────────────────────
+
+    /// <summary>扫原始 CSS 里的 --name 声明：按「选择器（逗号拆开后每段）末 token → name → 值」建索引，后定义覆盖先定义（层叠顺序）。</summary>
+    static void ScanVars(string css)
+    {
+        _varMap = new(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(css)) return;
+        css = Regex.Replace(css, @"/\*.*?\*/", "", RegexOptions.Singleline);
+        foreach (Match m in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
+        {
+            var body = m.Groups[2].Value;
+            if (!body.Contains("--")) continue;
+            Dictionary<string, string>? defs = null;
+            foreach (Match d in Regex.Matches(body, @"(--[A-Za-z][\w-]*)\s*:\s*([^;}]+)"))
+                (defs ??= new(StringComparer.OrdinalIgnoreCase))[d.Groups[1].Value] = d.Groups[2].Value.Trim();
+            if (defs == null) continue;
+            foreach (var selPart in m.Groups[1].Value.Split(','))
+            {
+                var key = SelectorScopeKey(selPart.Trim());
+                if (key == null) continue;
+                if (!_varMap.TryGetValue(key, out var map)) _varMap[key] = map = new(StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in defs) map[kv.Key] = kv.Value;
+            }
+        }
+    }
+
+    /// <summary>选择器 → 作用域 key：:root/html → "html"，* → "*"，其余取末段简单选择器（去伪类/属性段）。</summary>
+    static string? SelectorScopeKey(string sel)
+    {
+        if (sel.Length == 0 || sel.StartsWith("@")) return null;
+        if (sel == ":root" || sel.Equals("html", StringComparison.OrdinalIgnoreCase)) return "html";
+        if (sel == "*") return "*";
+        var parts = Regex.Split(sel, @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
+        var last = parts.Length > 0 ? parts[^1] : sel;
+        last = Regex.Replace(last, @"[:\[].*$", ""); // 去掉伪类/属性选择器
+        return last.Length > 0 ? last.ToLowerInvariant() : null;
+    }
+
+    /// <summary>把值里的 var(--x[, 兜底]) 按元素作用域展开；支持嵌套与变量链，环/超深在 16 轮后放弃。</summary>
+    static string ExpandVars(string value, IElement element)
+    {
+        if (string.IsNullOrEmpty(value) || !value.Contains("var(", StringComparison.OrdinalIgnoreCase)) return value;
+        for (int guard = 0; guard < 16; guard++)
+        {
+            int at = value.IndexOf("var(", StringComparison.OrdinalIgnoreCase);
+            if (at < 0) break;
+            int j = at + 4, depth = 1;
+            while (j < value.Length && depth > 0)
+            {
+                if (value[j] == '(') depth++;
+                else if (value[j] == ')') depth--;
+                j++;
+            }
+            if (depth > 0) break;   // 括号不闭合，停止展开避免烂尾
+            var inner = value[(at + 4)..(j - 1)];
+            int comma = -1, d2 = 0;
+            for (int k = 0; k < inner.Length; k++)
+            {
+                if (inner[k] == '(') d2++;
+                else if (inner[k] == ')') d2--;
+                else if (inner[k] == ',' && d2 == 0) { comma = k; break; }
+            }
+            var name = (comma < 0 ? inner : inner[..comma]).Trim();
+            var fallback = comma < 0 ? "" : inner[(comma + 1)..].Trim();
+            var def = name.StartsWith("--") ? FindVar(element, name) : null;
+            value = value[..at] + (def ?? fallback) + value[j..];
+        }
+        return value;
+    }
+
+    /// <summary>按 CSS 继承语义查变量：从元素自身向上走，同级内联 style &gt; class &gt; id &gt; tag &gt; *。</summary>
+    static string? FindVar(IElement el, string name)
+    {
+        for (IElement? e = el; e != null; e = e.ParentElement)
+        {
+            var inline = e.GetAttribute("style");
+            if (inline != null && inline.Contains(name, StringComparison.Ordinal))
+            {
+                var m = Regex.Match(inline, Regex.Escape(name) + @"\s*:\s*([^;]+)");
+                if (m.Success) return m.Groups[1].Value.Trim();
+            }
+            var cls = e.GetAttribute("class");
+            if (!string.IsNullOrWhiteSpace(cls))
+                foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    if (_varMap.TryGetValue("." + c, out var cm) && cm.TryGetValue(name, out var v)) return v;
+            var id = e.GetAttribute("id");
+            if (!string.IsNullOrWhiteSpace(id) && _varMap.TryGetValue("#" + id, out var im) && im.TryGetValue(name, out var iv)) return iv;
+            var tag = e.TagName.ToLowerInvariant();
+            if (_varMap.TryGetValue(tag, out var tm) && tm.TryGetValue(name, out var tv)) return tv;
+            if (_varMap.TryGetValue("*", out var wm) && wm.TryGetValue(name, out var wv)) return wv;
+            if (e.TagName.Equals("HTML", StringComparison.OrdinalIgnoreCase)) break; // 已到根，html 的 key 亦即 :root
+        }
+        return null;
     }
 
     static ComputedStyle Walk(IWindow window, IElement element, ComputedStyle? parent)
@@ -110,6 +238,17 @@ public static class StyleResolver
         // 替换元素：读取 <img> 的 src
         if (cs.Tag == "img")
             cs.ImageSrc = element.GetAttribute("src");
+
+        // <a> 的 href：供 PDF 链接注释
+        if (cs.Tag == "a")
+            cs.LinkHref = element.GetAttribute("href");
+
+        // 内联 <svg>：整体捕获为替换内容，内部节点不成盒
+        if (cs.Tag == "svg")
+        {
+            cs.SvgMarkup = element.OuterHtml;
+            return cs;
+        }
 
         // 单元格 colspan（HTML 属性，非 CSS）
         if (cs.Tag == "td" || cs.Tag == "th")
@@ -151,9 +290,9 @@ public static class StyleResolver
 
         // 判定纯 inline 格式化上下文：块级、无块级子元素、且含【行内元素 / 换行 / 图文混排的 img】。
         // 关键：只有文本、无任何行内结构的块 NOT 走这里 → 仍用老的 WrappedLines 路径，保证既有样例零回归。
-        bool hasBlockChild = cs.Children.Any(c => c.Display != "none" && !ComputedStyle.IsInlineLevel(c.Display) && c.Tag != "img");
+        bool hasBlockChild = cs.Children.Any(c => c.Display != "none" && !ComputedStyle.IsInlineLevel(c.Display) && c.Tag is not ("img" or "svg"));
         bool hasInlineEl = cs.Children.Any(c => ComputedStyle.IsInlineLevel(c.Display) && c.Tag != "img");
-        bool hasImgChild = cs.Children.Any(c => c.Tag == "img" && c.Display != "none");
+        bool hasImgChild = cs.Children.Any(c => c.Tag is "img" or "svg" && c.Display != "none");
         bool hasBr = cs.InlinePieces.Any(p => p.IsBreak);
         // 只有 block 与 table-cell 为其内容建立 inline 格式化上下文（flex/table/row/行内级都不算）
         bool blockish = cs.Display == "block" || cs.Display == "table-cell";
@@ -194,7 +333,7 @@ public static class StyleResolver
             try
             {
                 var v = computed?.GetPropertyValue(prop);
-                return string.IsNullOrEmpty(v) ? "" : v;
+                return string.IsNullOrEmpty(v) ? "" : ExpandVars(v, element);
             }
             catch
             {
@@ -211,15 +350,15 @@ public static class StyleResolver
         catch { /* 拿不到声明值时退回 computed，不让渲染崩 */ }
         string Spec(string prop)
         {
-            try { return decls?.GetPropertyValue(prop) ?? ""; }
+            try { return ExpandVars(decls?.GetPropertyValue(prop) ?? "", element); }
             catch { return ""; }
         }
-        // 尺寸类：声明值是百分比 → 用声明值（保留 %，交布局层解析）；否则优先 computed
+        // 尺寸类：声明值是百分比或 calc() → 用声明值（保留 % 与线性式，交布局层解析）；否则优先 computed
         // （已解析 px/em/rem 且含继承），computed 不可用时退回声明值。
         string Val(string prop)
         {
             var sp = Spec(prop);
-            if (sp.EndsWith("%")) return sp;
+            if (sp.EndsWith("%") || sp.Contains("calc(", StringComparison.OrdinalIgnoreCase)) return sp;
             var g = Get(prop);
             return string.IsNullOrEmpty(g) ? sp : g;
         }
@@ -279,39 +418,24 @@ public static class StyleResolver
         s.FlexBasis = CssValueParser.ParseSize(Val("flex-basis"), s.FontSize);
         s.Gap = CssValueParser.ParseSize(Val("gap"), s.FontSize);
 
-        // Grid
-        s.GridTemplateColumns = Raw("grid-template-columns");
-        s.GridTemplateRows = Raw("grid-template-rows");
+        // Grid：模板串优先取声明值——computed 会把 calc()/repeat() 按 1024 视口提前折算成 px 列表，
+        // 丢失轨道表达式；声明值经 ExpandVars 后保留 repeat/minmax/calc 原文，轨道在布局期按容器解析。
+        s.GridTemplateColumns = FirstNonEmpty(Spec("grid-template-columns"), Raw("grid-template-columns"));
+        s.GridTemplateRows = FirstNonEmpty(Spec("grid-template-rows"), Raw("grid-template-rows"));
         s.ColumnGap = CssValueParser.ParseSize(Val("column-gap"), s.FontSize);
         s.RowGap = CssValueParser.ParseSize(Val("row-gap"), s.FontSize);
-        var gridColumn = Raw("grid-column");
-        var gridRow = Raw("grid-row");
-        if (!string.IsNullOrEmpty(gridColumn))
+        // gap 简写兜底（AngleSharp 对 row-gap 扩展不完整时用）
+        var gapRaw = Raw("gap");
+        if (!string.IsNullOrWhiteSpace(gapRaw) && gapRaw != "normal")
         {
-            var parts = gridColumn.Split('/', StringSplitOptions.TrimEntries);
-            if (parts.Length >= 2)
-            {
-                s.GridColumnStart = ParseGridLine(parts[0]);
-                s.GridColumnEnd = ParseGridLine(parts[1]);
-            }
-            else if (gridColumn.StartsWith("span "))
-            {
-                s.GridColumnSpan = ParseGridSpan(gridColumn);
-            }
+            var gt = gapRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            s.ColumnGap = CssValueParser.ParseSize(gt[0], s.FontSize);
+            s.RowGap = gt.Length > 1 ? CssValueParser.ParseSize(gt[1], s.FontSize) : s.ColumnGap;
         }
-        if (!string.IsNullOrEmpty(gridRow))
-        {
-            var parts = gridRow.Split('/', StringSplitOptions.TrimEntries);
-            if (parts.Length >= 2)
-            {
-                s.GridRowStart = ParseGridLine(parts[0]);
-                s.GridRowEnd = ParseGridLine(parts[1]);
-            }
-            else if (gridRow.StartsWith("span "))
-            {
-                s.GridRowSpan = ParseGridSpan(gridRow);
-            }
-        }
+        ParseGridPlacement(Raw("grid-column"), out var gcs, out var gce, out var gcspan);
+        s.GridColumnStart = gcs; s.GridColumnEnd = gce; s.GridColumnSpan = gcspan;
+        ParseGridPlacement(Raw("grid-row"), out var grs, out var gre, out var grspan);
+        s.GridRowStart = grs; s.GridRowEnd = gre; s.GridRowSpan = grspan;
 
         // 尺寸约束（支持 %）
         s.MinWidth = CssValueParser.ParseSize(Val("min-width"), s.FontSize);
@@ -339,6 +463,13 @@ public static class StyleResolver
         s.Float = CssValueParser.ParseKeyword(Raw("float"), "none");
         s.Clear = CssValueParser.ParseKeyword(Raw("clear"), "none");
 
+        // 文本高级：vertical-align / text-wrap / text-fit（非标准，走属性兜底 + HTML 属性）
+        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Raw("vertical-align")), "baseline")!;
+        s.TextWrap = CssValueParser.ParseKeyword(Lookup("text-wrap", element, Raw("text-wrap")), "wrap");
+        var tf = Lookup("text-fit", element, Raw("text-fit"));
+        if (string.IsNullOrWhiteSpace(tf)) tf = element.GetAttribute("text-fit") ?? "";
+        s.TextFit = CssValueParser.ParseKeyword(tf, "none");
+
         // 文本装饰 / 排版细节
         s.TextDecoration = FirstNonEmpty(Raw("text-decoration-line"), FirstToken(Raw("text-decoration")), "none");
         var lsp = Raw("letter-spacing");
@@ -364,7 +495,17 @@ public static class StyleResolver
         s.BorderRadiusBottomLeft = FirstRadius(Raw("border-bottom-left-radius"), s.FontSize);
         s.Shadow = CssValueParser.ParseBoxShadow(Raw("box-shadow"), s.FontSize);
         var bgi = FirstNonEmpty(Spec("background-image"), Raw("background-image"), Spec("background"), Raw("background"));
-        s.Background = CssValueParser.ParseGradient(bgi);
+        // conic-gradient 等 AngleSharp 不认识的写法：从原始 CSS 兜底
+        s.Background = CssValueParser.ParseGradient(
+            Lookup("background-image", element, Lookup("background", element, bgi)));
+
+        // 进阶视觉：blend / clip / mask / filter / squircle（AngleSharp 多不支持，走原始 CSS 兜底）
+        s.MixBlendMode = CssValueParser.ParseKeyword(Lookup("mix-blend-mode", element, Raw("mix-blend-mode")), "normal");
+        s.CornerShape = CssValueParser.ParseKeyword(Lookup("corner-shape", element, Raw("corner-shape")), "round");
+        var cp = Lookup("clip-path", element, Raw("clip-path"));
+        s.ClipPath = string.IsNullOrWhiteSpace(cp) || cp == "none" ? null : cp;
+        s.MaskImage = CssValueParser.ParseGradient(Lookup("mask-image", element, Raw("mask-image")));
+        s.Filter = CssValueParser.ParseFilter(Lookup("filter", element, Raw("filter")));
 
         return s;
     }
@@ -406,21 +547,32 @@ public static class StyleResolver
         return fallback;
     }
 
-    static int ParseGridLine(string v)
+    /// <summary>解析 grid-column / grid-row：auto | N | span N | "A / B"（线号或 span 混合）。</summary>
+    static void ParseGridPlacement(string? val, out int start, out int end, out int span)
     {
-        v = (v ?? "").Trim();
-        if (int.TryParse(v, out var n) && n >= 1) return n;
-        return 0;
+        start = 0; end = 0; span = 1;
+        if (string.IsNullOrWhiteSpace(val)) return;
+        var parts = val.Split('/', StringSplitOptions.TrimEntries);
+        var (s0, sp0) = ParseGridSide(parts[0]);
+        start = s0; span = sp0;
+        if (parts.Length > 1)
+        {
+            var (s1, sp1) = ParseGridSide(parts[1]);
+            end = s1;
+            if (s1 > 0 && start > 0) span = Math.Max(1, s1 - start);
+            else if (sp1 > 1 && start == 0) span = sp1;
+        }
     }
 
-    static int ParseGridSpan(string v)
+    static (int line, int span) ParseGridSide(string tok)
     {
-        v = (v ?? "").Trim();
-        if (v.StartsWith("span ", StringComparison.OrdinalIgnoreCase))
+        tok = tok.Trim().ToLowerInvariant();
+        if (tok.Length == 0 || tok == "auto") return (0, 1);
+        if (tok.StartsWith("span"))
         {
-            var num = v[5..].Trim();
-            if (int.TryParse(num, out var n) && n >= 1) return n;
+            var rest = tok[4..].Trim();
+            return int.TryParse(rest, out var n) && n >= 1 ? (0, n) : (0, 1);
         }
-        return 1;
+        return int.TryParse(tok, out var l) && l >= 1 ? (l, 1) : (0, 1);
     }
 }

@@ -152,7 +152,7 @@ public static class Paginator
             float bh = s.BorderWidthTop + s.PaddingTop + box.ContentHeight + s.PaddingBottom + s.BorderWidthBottom;
             int lines = box.Lines?.Count ?? box.WrappedLines?.Length ?? 0;
             float textX = box.BorderX + s.BorderWidthLeft + s.PaddingLeft;
-            float textY = box.BorderY + s.BorderWidthTop + s.PaddingTop;
+            float textY = box.BorderY + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
 
             list.Add(new DrawItem
             {

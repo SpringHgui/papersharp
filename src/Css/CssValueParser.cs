@@ -20,6 +20,11 @@ public static class CssValueParser
         value = value.Trim();
         if (value == "0" || value == "auto" || value == "normal") return 0;
 
+        if (value.Contains("calc(", StringComparison.OrdinalIgnoreCase))
+        {
+            var ev = EvalCalc(value, parentFontSize, rootFontSize);
+            return ev.HasValue ? ev.Value.abs : 0;   // 无包含块基准，百分比项忽略
+        }
         if (value.EndsWith("px")) return ParseFloat(value[..^2]);
         if (value.EndsWith("pt")) return ParseFloat(value[..^2]) * 96f / 72f;
         if (value.EndsWith("rem")) return ParseFloat(value[..^3]) * rootFontSize;
@@ -28,11 +33,17 @@ public static class CssValueParser
         return ParseFloat(value);
     }
 
-    /// <summary>解析 width/height/flex-basis/偏移：auto→Auto；%→Percent；px/pt/em/rem→Absolute（含负值，供 top/left 偏移）。</summary>
+    /// <summary>解析 width/height/flex-basis/偏移：auto→Auto；%→Percent；px/pt/em/rem→Absolute（含负值，供 top/left 偏移）；calc()→Calc/Absolute。</summary>
     public static CssSize ParseSize(string value, float fontSize)
     {
         value = value?.Trim() ?? "";
         if (value.Length == 0 || value == "auto" || value == "none") return CssSize.Auto;
+        if (value.Contains("calc(", StringComparison.OrdinalIgnoreCase))
+        {
+            var ev = EvalCalc(value, fontSize);
+            if (!ev.HasValue) return CssSize.Auto;
+            return ev.Value.pct != 0 ? CssSize.Calc(ev.Value.pct, ev.Value.abs) : CssSize.Abs(ev.Value.abs);
+        }
         if (value.EndsWith("%"))
         {
             var p = ParseFloat(value[..^1]);
@@ -45,6 +56,123 @@ public static class CssValueParser
         if (value == "0" || value == "0px" || value == "0pt" || value == "0em") return CssSize.Abs(0);
         return CssSize.Auto;
     }
+
+    /// <summary>
+    /// 求值 calc()：四则 + px/pt/em/rem/% 混合，嵌套括号。CSS 规定乘除只允许一侧为无量纲数字。
+    /// 结果折算成线性式 pct% + abs（em/rem/px 归入 abs，% 归入 pct）。解析失败返回 null。
+    /// </summary>
+    public static (float pct, float abs)? EvalCalc(string value, float fontSize, float rootFontSize = 16f)
+    {
+        value = value?.Trim() ?? "";
+        int open = value.IndexOf("calc(", StringComparison.OrdinalIgnoreCase);
+        if (open < 0) return null;
+        try
+        {
+            // 把嵌套 calc( 拉平成普通括号，再取第一对括号内的表达式
+            var s = Regex.Replace(value, "calc\\s*\\(", "(", RegexOptions.IgnoreCase);
+            open = s.IndexOf('(');
+            int depth = 0, close = -1;
+            for (int i = open; i < s.Length; i++)
+            {
+                if (s[i] == '(') depth++;
+                else if (s[i] == ')' && --depth == 0) { close = i; break; }
+            }
+            if (close < 0) return null;
+            var p = new CalcParser(s[(open + 1)..close], fontSize, rootFontSize);
+            var (pct, abs) = p.Expr();
+            p.Ws();
+            if (p.Pos != p.S.Length) return null;   // 有残留 token → 非法
+            return (pct, abs);
+        }
+        catch { return null; }
+    }
+
+    sealed class CalcParser
+    {
+        public readonly string S;
+        public int Pos;
+        readonly float _em, _rem;
+        public CalcParser(string s, float em, float rem) { S = s; _em = em; _rem = rem; }
+
+        // expr := term (('+'|'-') term)*
+        public (float pct, float abs) Expr()
+        {
+            var acc = Term();
+            while (true)
+            {
+                Ws();
+                if (Pos >= S.Length) return acc;
+                char op = S[Pos];
+                if (op != '+' && op != '-') return acc;
+                Pos++;
+                var (p, a) = Term();
+                acc = (acc.pct + (op == '+' ? p : -p), acc.abs + (op == '+' ? a : -a));
+            }
+        }
+
+        // term := operand (('*'|'/') number)?
+        (float pct, float abs) Term()
+        {
+            var v = Operand();
+            Ws();
+            if (Pos < S.Length && (S[Pos] == '*' || S[Pos] == '/'))
+            {
+                char op = S[Pos]; Pos++;
+                Ws();
+                float n = Number();
+                if (op == '/') { if (n == 0) throw new FormatException(); n = 1 / n; }
+                v = (v.pct * n, v.abs * n);
+            }
+            return v;
+        }
+
+        // operand := '(' expr ')' | length|number
+        (float pct, float abs) Operand()
+        {
+            Ws();
+            if (Pos < S.Length && S[Pos] == '(')
+            {
+                Pos++;
+                var v = Expr();
+                Ws();
+                if (Pos >= S.Length || S[Pos] != ')') throw new FormatException();
+                Pos++;
+                return v;
+            }
+            var (num, unit) = NumUnit();
+            return unit switch
+            {
+                "px" or "" => (0, num),
+                "pt" => (0, num * 96f / 72f),
+                "em" => (0, num * _em),
+                "rem" => (0, num * _rem),
+                "%" => (num, 0),
+                _ => throw new FormatException(),
+            };
+        }
+
+        public void Ws() { while (Pos < S.Length && (char.IsWhiteSpace(S[Pos]) || S[Pos] == '\t')) Pos++; }
+
+        float Number()
+        {
+            int start = Pos;
+            while (Pos < S.Length && (char.IsDigit(S[Pos]) || S[Pos] == '.' || S[Pos] == '-' || S[Pos] == '+' || S[Pos] == 'e' || S[Pos] == 'E')) Pos++;
+            if (start == Pos) throw new FormatException();
+            return float.Parse(S[start..Pos], NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
+
+        (float num, string unit) NumUnit()
+        {
+            float n = Number();
+            Ws();
+            int start = Pos;
+            while (Pos < S.Length && char.IsLetter(S[Pos])) Pos++;
+            string unit = S[start..Pos];
+            if (unit.Length == 0 && Pos < S.Length && S[Pos] == '%') { unit = "%"; Pos++; }
+            return (n, unit.ToLowerInvariant());
+        }
+    }
+
 
     public static SKColor? ParseColor(string value)
     {
@@ -233,10 +361,11 @@ public static class CssValueParser
     public static GradientSpec? ParseGradient(string value)
     {
         value = value?.Trim() ?? "";
-        bool radial;
+        bool radial, conic;
         int open;
-        if (value.StartsWith("linear-gradient(", StringComparison.OrdinalIgnoreCase)) { radial = false; open = "linear-gradient(".Length - 1; }
-        else if (value.StartsWith("radial-gradient(", StringComparison.OrdinalIgnoreCase)) { radial = true; open = "radial-gradient(".Length - 1; }
+        if (value.StartsWith("linear-gradient(", StringComparison.OrdinalIgnoreCase)) { radial = false; conic = false; open = "linear-gradient(".Length - 1; }
+        else if (value.StartsWith("radial-gradient(", StringComparison.OrdinalIgnoreCase)) { radial = true; conic = false; open = "radial-gradient(".Length - 1; }
+        else if (value.StartsWith("conic-gradient(", StringComparison.OrdinalIgnoreCase)) { radial = false; conic = true; open = "conic-gradient(".Length - 1; }
         else return null;
         int close = value.LastIndexOf(')');
         if (close <= open) return null;
@@ -244,14 +373,25 @@ public static class CssValueParser
         var parts = SplitTopLevel(inner, ',');
         if (parts.Count < 2) return null;
 
-        var spec = new GradientSpec { Radial = radial, AngleDeg = 180 };
+        var spec = new GradientSpec { Radial = radial, Conic = conic, AngleDeg = conic ? 0 : 180 };
         int startIdx = 0;
-        if (!radial)
+        if (!radial && !conic)
         {
             // 第一段可能是方向（to right / 90deg），也可能是第一个颜色
             var dir = parts[0].Trim();
             float? angle = ParseGradientDirection(dir);
             if (angle != null) { spec.AngleDeg = angle.Value; startIdx = 1; }
+        }
+        else if (conic)
+        {
+            // 第一段可能是 "from 90deg"（可带 "at x y"，中心固定 50% 50%）
+            var head = parts[0].Trim();
+            if (head.StartsWith("from", StringComparison.OrdinalIgnoreCase) || head.StartsWith("at", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var tok in SplitTopLevel(head, ' '))
+                    if (tok.Trim().EndsWith("deg")) { spec.AngleDeg = ParseFloat(tok.Trim()[..^3]); break; }
+                startIdx = 1;
+            }
         }
         else
         {
@@ -264,34 +404,54 @@ public static class CssValueParser
         }
 
         var colors = new List<SKColor>();
-        var stops = new List<float>();
+        var stopsPct = new List<float?>();  // 百分比/无单位 0 → 0..1
+        var stopsPx = new List<float?>();   // px 停止位（BuildShader 期按渐变线长折算）
         bool anyStop = false;
         for (int i = startIdx; i < parts.Count; i++)
         {
             var stop = parts[i].Trim();
-            float? pos = null;
-            // 末尾可能是 " 50%" 位置
+            float? pct = null, px = null;
+            // 末尾可能是 " 50%" / " 12px" / " 0"（AngleSharp computed 会把 0% 折成无单位 0、100% 折成视口 px）
             var sp = SplitTopLevel(stop, ' ');
-            if (sp.Count >= 2 && sp[^1].EndsWith("%"))
+            if (sp.Count >= 2)
             {
-                pos = ParseFloat(sp[^1][..^1]) / 100f;
-                stop = string.Join(" ", sp.Take(sp.Count - 1));
-                anyStop = true;
+                var last = sp[^1].Trim();
+                bool taken = false;
+                if (last.EndsWith("%")) { pct = ParseFloat(last[..^1]) / 100f; taken = true; }
+                else if (last.EndsWith("px")) { px = ParseFloat(last[..^2]); taken = true; }
+                else if (last.EndsWith("deg") && conic) { pct = ParseFloat(last[..^3]) / 360f; taken = true; }   // conic 角停止位
+                else if (last == "0") { pct = 0; taken = true; }
+                if (taken)
+                {
+                    stop = string.Join(" ", sp.Take(sp.Count - 1));
+                    anyStop = true;
+                }
             }
             var col = ParseColor(stop.Trim());
             if (col == null) continue;
             colors.Add(col.Value);
-            stops.Add(pos ?? -1);
+            stopsPct.Add(pct);
+            stopsPx.Add(px);
         }
         if (colors.Count < 2) return null;
         spec.Colors = colors.ToArray();
         if (anyStop)
         {
             // 缺位置的按线性内插填充
-            var arr = stops.ToArray();
-            for (int i = 0; i < arr.Length; i++)
-                if (arr[i] < 0) arr[i] = (float)i / (arr.Length - 1);
-            spec.Stops = arr;
+            var pctArr = new float[colors.Count];
+            var pxArr = new float[colors.Count];
+            for (int i = 0; i < pctArr.Length; i++)
+            {
+                pctArr[i] = stopsPct[i] ?? float.NaN;
+                pxArr[i] = stopsPx[i] ?? float.NaN;
+                if (stopsPct[i] == null && stopsPx[i] == null)
+                {
+                    float v = (float)i / (pctArr.Length - 1);
+                    pctArr[i] = v; pxArr[i] = float.NaN;
+                }
+            }
+            spec.Stops = pctArr;
+            spec.StopsPx = pxArr;
         }
         return spec;
     }
@@ -331,6 +491,126 @@ public static class CssValueParser
         return result;
     }
 
-    static float ParseFloat(string s) =>
+    /// <summary>filter: blur(4px) drop-shadow(2px 4px 6px rgba(...)) —— 支持 blur 与单个 drop-shadow。</summary>
+    public static CssFilter? ParseFilter(string value)
+    {
+        value = value?.Trim() ?? "";
+        if (value.Length == 0 || value == "none") return null;
+        CssFilter? f = null;
+        foreach (var part in SplitTopLevel(value, ' '))
+        {
+            var p = part.Trim();
+            if (p.StartsWith("blur(", StringComparison.OrdinalIgnoreCase))
+            {
+                (f ??= new CssFilter()).Blur = ToPixels(p[5..^1], 16);
+            }
+            else if (p.StartsWith("drop-shadow(", StringComparison.OrdinalIgnoreCase))
+            {
+                var args = SplitTopLevel(p[12..^1], ' ');
+                var nums = new List<string>();
+                SKColor? col = null;
+                foreach (var a in args)
+                {
+                    var t = a.Trim();
+                    if (t.Length == 0) continue;
+                    if (col == null && (t.EndsWith("px") || float.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
+                        nums.Add(t);
+                    else col = ParseColor(t);
+                }
+                var ff = f ??= new CssFilter();
+                ff.HasShadow = true;
+                if (nums.Count > 0) ff.ShadowX = ToPixels(nums[0], 16);
+                if (nums.Count > 1) ff.ShadowY = ToPixels(nums[1], 16);
+                if (nums.Count > 2) ff.ShadowBlur = ToPixels(nums[2], 16);
+                ff.ShadowColor = col ?? SKColors.Black;
+            }
+        }
+        return f;
+    }
+
+    /// <summary>clip-path 子集：inset(t r b l [round 半径]) / circle(R at X Y) / polygon(x y, ...)。% 相对盒宽高。</summary>
+    public static SkiaSharp.SKPath? BuildClipPath(string value, SkiaSharp.SKRect r)
+    {
+        value = value?.Trim() ?? "";
+        try
+        {
+            if (value.StartsWith("inset(", StringComparison.OrdinalIgnoreCase))
+                return ClipInset(value[6..value.LastIndexOf(')')], r);
+            if (value.StartsWith("circle(", StringComparison.OrdinalIgnoreCase))
+                return ClipCircle(value[7..value.LastIndexOf(')')], r);
+            if (value.StartsWith("polygon(", StringComparison.OrdinalIgnoreCase))
+                return ClipPolygon(value[8..value.LastIndexOf(')')], r);
+        }
+        catch { /* 解析失败视为无裁剪 */ }
+        return null;
+    }
+
+    static SkiaSharp.SKPath ClipInset(string arg, SkiaSharp.SKRect r)
+    {
+        var toks = SplitTopLevel(arg, ' ');
+        float round = 0;
+        var vals = new List<string>();
+        for (int i = 0; i < toks.Count; i++)
+        {
+            var t = toks[i].Trim();
+            if (t == "round") { if (i + 1 < toks.Count) round = ToPixels(toks[i + 1].Trim(), 16); break; }
+            vals.Add(t);
+        }
+        float L() => PctPx(vals.Count > 3 ? vals[3] : vals.Count > 1 ? vals[1] : "0", r.Width);
+        float R() => PctPx(vals.Count > 1 ? vals[1] : vals.Count > 0 ? vals[0] : "0", r.Width);
+        float T() => PctPx(vals.Count > 0 ? vals[0] : "0", r.Height);
+        float B() => PctPx(vals.Count > 2 ? vals[2] : vals.Count > 0 ? vals[0] : "0", r.Height);
+        var rect = new SkiaSharp.SKRect(r.Left + L(), r.Top + T(), r.Right - R(), r.Bottom - B());
+        var p = new SkiaSharp.SKPath();
+        if (round > 0) p.AddRoundRect(rect, round, round);
+        else p.AddRect(rect);
+        return p;
+    }
+
+    static SkiaSharp.SKPath ClipCircle(string arg, SkiaSharp.SKRect r)
+    {
+        var toks = new List<string>();
+        foreach (var t in SplitTopLevel(arg, ' ')) if (t.Trim().Length > 0) toks.Add(t.Trim());
+        float cx = r.MidX, cy = r.MidY, rad = Math.Min(r.Width, r.Height) / 2;
+        int i = 0;
+        if (toks.Count > 0 && toks[0] != "at") { rad = PctPx(toks[0], Math.Max(r.Width, r.Height) / 2f); i = 1; }
+        if (i < toks.Count && toks[i] == "at")
+        {
+            if (i + 1 < toks.Count) cx = PctPx(toks[i + 1], r.Width) + r.Left;
+            if (i + 2 < toks.Count) cy = PctPx(toks[i + 2], r.Height) + r.Top;
+        }
+        var p = new SkiaSharp.SKPath();
+        p.AddCircle(cx, cy, Math.Max(0, rad));
+        return p;
+    }
+
+    static SkiaSharp.SKPath ClipPolygon(string arg, SkiaSharp.SKRect r)
+    {
+        var pts = new List<float>();
+        foreach (var pair in SplitTopLevel(arg, ','))
+        {
+            var xy = SplitTopLevel(pair, ' ').Where(t => t.Trim().Length > 0).ToList();
+            if (xy.Count < 2) continue;
+            pts.Add(r.Left + PctPx(xy[0].Trim(), r.Width));
+            pts.Add(r.Top + PctPx(xy[1].Trim(), r.Height));
+        }
+        var p = new SkiaSharp.SKPath();
+        if (pts.Count >= 6)
+        {
+            var poly = new SkiaSharp.SKPoint[pts.Count / 2];
+            for (int i = 0; i < poly.Length; i++) poly[i] = new SkiaSharp.SKPoint(pts[2 * i], pts[2 * i + 1]);
+            p.AddPoly(poly);
+        }
+        return p;
+    }
+
+    static float PctPx(string v, float base_)
+    {
+        v = v.Trim();
+        if (v.EndsWith("%")) return ParseFloat(v[..^1]) / 100f * base_;
+        return ToPixels(v, 16);
+    }
+
+    public static float ParseFloat(string s) =>
         float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
 }

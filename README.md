@@ -27,41 +27,52 @@
 - **第二梯队视觉/排版**：`border-radius` / `box-shadow` / 线性·径向渐变 / `opacity` / `min-max-width/height` / `position: relative|absolute`（含负偏移、absolute 出流收缩适配、盖顶绘制）/ `text-decoration` / `letter-spacing` / `white-space`(nowrap/pre/pre-wrap) + `text-overflow:ellipsis` / `text-transform` / `word-break` / `@font-face`。`assets/polish.html` 一页演示全部（PNG + 分页 PDF 两条路径都验过）。
 - **`box-sizing: border-box`**：`width`/`height` 连同 `min/max` 在块路径、flex 主轴、`img`、表格单元格上都按盒模型语义折算（border-box 时先扣 padding+border 再当内容尺寸用）。既有 7 样例字节不变（它们全用 content-box），新增 `assets/pct.html`/`table.html` 里可见 border-box 生效。
 - **inline 格式化上下文**：`<p>文本 <span>/<strong>/<em>/<a>/<u> <br> 行内 <img> inline-block 药丸</p>` 这类混排真正按行流动——`InlineLayout` 把块内有序片段摊平成原子序列（文本 run / `<br>` / inline-block 与行内 img 作原子盒），按宽度折成行盒（基线对齐、`text-align`、行高取行内最大字号、CJK/word-break 断词、white-space 折叠），每段带自己的字体/颜色/背景/字距/装饰线绘制。纯文本块仍走老的 `WrappedLines` 路径以保证零回归；只有含行内元素/`<br>`/图文混排的块才切到新引擎。`assets/inline.html` 演示全部（PNG + 2 页 PDF 都验过）。
-- **`<table>` 布局**：`display: table/table-row-group/table-header-group/table-footer-group/table-row/table-cell` + `<td colspan>`，列宽按「单跨单元格 max-content 定基准、多跨不足均摊、显式 `width` 或超可用宽时按比例缩放」自动分配；`border-collapse: collapse`（内部只留 top+left 去双线）与 `separate`（`border-spacing`）两种边框模型；单元格撑满行高（行背景/斑马纹可见）、格内可放 inline 混排。**暂不支持** `rowspan`、跨页断行（表格整块放置）、`table-caption`、列宽 `%`。`assets/table.html` 演示合并/分离边框 + colspan + 单元格内行内混排（PNG + PDF 都验过）。
+- **`<table>` 布局**：`display: table/table-row-group/table-header-group/table-footer-group/table-row/table-cell` + `<td colspan>`，列宽按「单跨单元格 max-content 定基准、多跨不足均摊、显式 `width` 或超可用宽时按比例缩放」自动分配；`border-collapse: collapse`（内部只留 top+left 去双线）与 `separate`（`border-spacing`）两种边框模型；单元格撑满行高（行背景/斑马纹可见）、格内可放 inline 混排。`assets/table.html` 演示合并/分离边框 + colspan + 单元格内行内混排（PNG + PDF 都验过）。
+- **M1 表格分页补全**：`rowspan`/`table-caption`/列宽 `%`/`<col>`；长表**跨页续 + 每页共享列宽 + 重复 `<thead>`**；分页控制 `break-before/after: page`、`break-inside: avoid`、`orphans`/`widows`；`@page` 页码 counter 支持 `cjk-ideographic`/`trad-chinese-informal` 中文数字。验收样例 `assets/m1.html`（400 行明细发票跨多页）。
+- **M2 布局扩展**：**flex-wrap / wrap-reverse / row-reverse / column-reverse**、**float**（inline 文本行绕浮动盒，`FloatContext`）、**CSS Grid 子集**（template-columns/rows + gap + span + `fr`/`minmax()`/`repeat()`/auto-fill）、定位补全（`left+right` 拉伸、`z-index` 排序盖顶）。验收样例 `assets/m2.html`。
+- **M3 文本与视觉**：**vertical-align**（top/bottom/super/sub/长度）、**text-wrap: balance**、**text-fit: scale-down**；**conic 渐变**、**mix-blend-mode**、**clip-path**（inset/circle/polygon）、**mask-image**（线性渐变遮罩）、**corner-shape: squircle**、**filter: blur()/drop-shadow()** 链、**内联 `<svg>`**（Svg.Skia）。验收样例 `assets/m3.html`（OG 图卡风）。
+- **M4 输出与字体**：多格式输出 **PNG/JPEG/WebP/ICO/SVG**（`RenderImage`/`RenderIco`/`RenderSvg`，`SvgWriter` 绘制期录 SVG，渐变/裁剪映射为 SVG 原生）；**`var()`**（作用域链 + 回退值 + 嵌套）与 **`calc()`**（px/pt/em/rem/%、嵌套括号线性式）自研补全；`GoogleFonts.Fetch()` 下载+缓存+离线复用、`@font-face` 多 src 回退（woff2 可用）、`RegisterFontDirectory` 整目录注册。验收样例 `assets/m4.html`。
+- **M5 PDF 语义**：Skia 2.88.9 无 outline/annotation API → **自写 PDF 增量更新尾部**（`Pdf/PdfEnhancer.cs`：解析 xref/trailer，追加 /Outlines 书签树 + /Link /URI 注释 + 绝对偏移 xref，任何异常原样返回）。h1–h6 自动生成书签层级、`<a href>` 生成可点链接（行内片段精确矩形）、Title/Author/Subject/Keywords/Creator 元数据。验收样例 `assets/m5.html`。
 
 ## 目录结构
 
 ```
 paper-sharp/
 ├── PaperSharp.csproj
-├── Program.cs                      # 入口：渲染 invoice + long + flex + img + report + pct + polish + inline + table 九个样例
+├── Program.cs                      # 入口：渲染 invoice/long/flex/img/report/pct/polish/inline/table + m1–m5 里程碑验收样例
 ├── run.bat                         # 双击一键 restore+run
 ├── tools/
 │   └── subset-font.py              # 构建期字体子集化（fonttools）
 ├── src/
-│   ├── Renderer.cs                 # 顶层 API：RenderPdf（分页+页眉页脚）/ RenderPng（单页长图）
+│   ├── Renderer.cs                 # 顶层 API：RenderPdf（分页+页眉页脚+语义增强）/ RenderPng / RenderImage(JPEG/WebP) / RenderIco / RenderSvg
 │   ├── Css/
-│   │   ├── StyleResolver.cs        # AngleSharp 桥接 + UA 样式表 + 递归提取 + 不支持属性兜底
+│   │   ├── StyleResolver.cs        # AngleSharp 桥接 + UA 样式表 + 递归提取 + var()/calc() + 不支持属性兜底
 │   │   ├── ComputedStyle.cs        # 我们自己的样式模型（结构 + 已解析值 + 声明值）
-│   │   ├── CssSize.cs              # 尺寸值对象（Auto/Absolute/Percent），布局期按包含块 Resolve
-│   │   ├── CssValueParser.cs       # px/em/pt/%/负值、rgb()/hex、border-radius/box-shadow/gradient/opacity 等
-│   │   ├── Visual.cs               # BoxShadow / GradientSpec（渐变在矩形上建 SKShader）
-│   │   ├── FontFaceParser.cs       # @font-face 块解析 → 登记 family→文件
-│   │   └── PageSpec.cs             # @page 解析（size/margin/边距盒/counter）
+│   │   ├── CssSize.cs              # 尺寸值对象（Auto/Absolute/Percent/Calc），布局期按包含块 Resolve
+│   │   ├── CssValueParser.cs       # px/em/pt/%/负值/calc、rgb()/hex、border-radius/box-shadow/gradient/filter/clip-path 等
+│   │   ├── Visual.cs               # BoxShadow / GradientSpec（linear/radial/conic）/ blend/clip/mask/filter 值对象
+│   │   ├── FontFaceParser.cs       # @font-face 块解析（多 src 回退）→ 登记 family→文件
+│   │   ├── GoogleFonts.cs          # Google Fonts css2 下载 + SHA1 缓存 + 离线复用 helper
+│   │   └── PageSpec.cs             # @page 解析（size/margin/边距盒/counter 含中文数字）
 │   ├── Layout/
-│   │   ├── BlockBox.cs             # 布局盒数据结构（含 inline 原子/行盒、表格网格中间态）
-│   │   ├── LayoutBuilder.cs        # ToBoxTree / Measure / Position（block + flex + img + relative/absolute + min/max + box-sizing + table）
-│   │   ├── InlineLayout.cs         # inline 格式化上下文：片段摊平 + 按宽折行盒（基线/对齐/断词/white-space）
-│   │   ├── Paginator.cs            # 块级分页引擎（跨页回流 + 碎片化 + inline 按行拆 + absolute 盖顶列表；表格整块放置）
-│   │   ├── TextMeasurer.cs         # 折行（Latin + CJK + white-space + word-break + letter-spacing）
-│   │   ├── ImageLoader.cs          # 图像解码 + 缓存（路径 / data URI）
-│   │   └── FontManager.cs          # 子集字体优先 + @font-face + 系统字体跨平台回退
+│   │   ├── BlockBox.cs             # 布局盒数据结构（含 inline 原子/行盒、表格网格、浮动几何中间态）
+│   │   ├── LayoutBuilder.cs        # ToBoxTree / Measure / Position（block+flex(含wrap/reverse)+grid+float+img+定位+table）
+│   │   ├── FloatContext.cs         # 浮动盒收集 + inline 行绕排（逐行左右缩进）
+│   │   ├── InlineLayout.cs         # inline 格式化上下文：折行盒 + vertical-align + balance
+│   │   ├── Paginator.cs            # 块级分页引擎（跨页回流 + break/orphans-widows + 表格续页 + absolute 盖顶列表）
+│   │   ├── TextMeasurer.cs         # 折行（Latin + CJK + white-space + word-break + balance）
+│   │   ├── ImageLoader.cs          # 图像解码 + 缓存（路径 / data URI / 内联 svg）
+│   │   └── FontManager.cs          # 子集字体优先 + @font-face + RegisterFontDirectory + 系统回退
+│   ├── Pdf/
+│   │   ├── PdfEnhancer.cs          # 自写 PDF 增量尾部：/Outlines 书签 + /Link 注释 + trailer/xref 重写
+│   │   └── PdfSemantic.cs          # 从分页盒树收集 h1–h6 书签与 <a> 链接矩形
 │   └── Paint/
-│       ├── Painter.cs              # 单页长图绘制（PNG 用，先画在流再画 absolute；inline 行盒 + 原子盒）
+│       ├── Painter.cs              # 单页长图绘制（PNG 用，z-index 排序盖顶）
 │       ├── PagePainter.cs          # 分页绘制（PDF 用，消费 DrawItem 列表 + AbsItems）
-│       ├── BoxPainter.cs           # 盒装饰：圆角/阴影/渐变/边框/opacity（两路径共用）
-│       ├── TextPainter.cs          # 文本绘制：对齐/字距/装饰线/opacity + inline 行盒逐段样式（两路径共用）
-│       └── MarginBoxRenderer.cs    # 页眉/页脚边距盒 + 页码渲染
+│       ├── BoxPainter.cs           # 盒装饰：圆角/squircle/阴影/渐变/边框/opacity/blend/clip/mask/filter
+│       ├── TextPainter.cs          # 文本绘制：对齐/字距/装饰线 + inline 行盒逐段样式
+│       ├── SvgWriter.cs            # 绘制期录 SVG（渐变/裁剪/filter 映射 SVG 原生）
+│       └── MarginBoxRenderer.cs    # 页眉/页脚边距盒 + 页码渲染（含中文数字）
 ├── assets/
 │   ├── invoice.html / invoice.css  # 单页样例
 │   ├── long.html / long.css        # 多页样例（26 行明细，演示分页）
@@ -72,9 +83,14 @@ paper-sharp/
 │   ├── polish.html / polish.css    # 第二梯队样例（圆角/阴影/渐变/透明度/文本装饰/字距/截断/定位/min-max/@font-face）
 │   ├── inline.html / inline.css    # inline 格式化上下文样例（行内 run/图文混排/br/inline-block 药丸/对齐/长段折行）
 │   ├── table.html / table.css      # 表格样例（合并/分离边框 + colspan + 斑马纹 + 单元格内行内混排）
+│   ├── m1.html / m1.css            # M1 验收：跨页续发票（续表+rowspan+break+中文页码）
+│   ├── m2.html / m2.css            # M2 验收：卡片网格 + 图文环绕 + 多行 flex 标签流
+│   ├── m3.html / m3.css            # M3 验收：OG 图卡（conic/squircle/blend/clip/mask/filter/内联 svg）
+│   ├── m4.html / m4.css            # M4 验收：var()/calc() 全谱 + 多字体 + 多格式输出
+│   ├── m5.html / m5.css            # M5 验收：书签层级 / 链接注释 / metadata
 │   ├── imgs/                       # 测试图（logo/photo/qr.png）
 │   └── fonts/                      # 子集化产物（YaheiSub-Regular/Bold.ttf）
-└── output/                         # 生成物（九个样例各自的 pdf + png）
+└── output/                         # 生成物（各样例 pdf + png，m3 另有 jpg/webp/ico/svg）
 ```
 
 ## 跑起来
@@ -96,38 +112,46 @@ dotnet run
 
 **盒模型**：`width` / `height`（px/pt/em/rem/%）、`min/max-width` / `min/max-height`（含 %，块路径与 flex 主轴都夹取）、`margin` / `padding`（1-4 值简写或 longhand，px/pt/em/rem/%，**负值支持**）、`border-*-width`（px/em，**不接受 %**）、`border-color`、`box-sizing: content-box|border-box`（border-box 时 `width`/`height`/`min`/`max` 连同 padding+border 一起算，块/flex/img/表格单元格一致处理）。`width`/`height`/`flex-basis` 的 `%` 在布局期按**包含块**解析（宽度% 相对父内容宽、高度% 相对父确定高，父高 auto 时% 高退化为 auto）；`margin`/`padding` 的 `%` 按 CSS 规范一律相对**包含块宽度**（横竖同基准），由 `CssSize` 承载、`ComputedStyle.ResolveBoxSizes` 在 `Measure` 里折算。
 
-**Flexbox**：`display:flex`、`flex-direction`（row/column）、`justify-content`（flex-start/center/flex-end/space-between/space-around/space-evenly）、`align-items`/`align-self`（stretch/flex-start/center/flex-end）、`flex-grow`/`flex-shrink`/`flex-basis`（含 %）/`flex`、`gap`（px 或 %，% 按容器内容宽解析）。支持嵌套。**暂不支持** `flex-wrap`、`row-reverse`/`column-reverse`。
+**Flexbox**：`display:flex`、`flex-direction`（row/column/**row-reverse/column-reverse**）、`justify-content`（6 种）、`align-items`/`align-self`（含 stretch）、`flex-grow`/`flex-shrink`/`flex-basis`（含 %、`calc()`）/`flex`、`gap`、**`flex-wrap`（nowrap/wrap/wrap-reverse）**。支持嵌套。`align-content` 暂简化为 flex-start。
 
-**定位**：`position: static|relative|absolute` + `top/right/bottom/left`（px/em/%，**支持负值**）。`relative` 在流内位置基础上按偏移挪动；`absolute` 出流（不占流内空间、`width:auto` 时按内容收缩 shrink-to-fit），相对**最近定位祖先**的 padding box 定位（无则相对 body），`left`/`right` 与 `top`/`bottom` 各自取先出现的一端。absolute 盒在两条绘制路径里都最后画（盖顶）。**未做** `fixed`/`sticky`、z-index 层叠上下文、`left+right` 同时拉伸宽度。
+**定位**：`position: static|relative|absolute`（`fixed|sticky` 能解析但暂按 static 流内处理）与 `top/right/bottom/left`（px/em/%/`calc()`，**支持负值**）。`relative` 流内挪动；`absolute` 出流 shrink-to-fit，相对最近定位祖先 padding box；`left+right`（`top+bottom`）同给且尺寸 auto 时**拉伸**。absolute 盒按 **`z-index`** 排序后在两条绘制路径里统一盖顶。**未做** 真正的 `fixed`/`sticky` 视口语义、完整层叠上下文。
 
-**视觉**：`background-color`、`color`、`opacity`（0–1，作用于背景+边框+文本+图片）、`border-radius`（1–4 值，圆角背景 + 圆角边框描边）、`box-shadow`（单层 `offset-x offset-y [blur [spread]] color`，高斯模糊投影）、`background-image: linear-gradient()` / `radial-gradient()`（方向支持 `to 方位`/`<deg>`，2+ 色标含可选百分比位置）。
+**视觉**：`background-color`、`color`、`opacity`、`border-radius`（1–4 值）、`box-shadow`、`background-image: linear-gradient()/radial-gradient()/**conic-gradient()**`。进阶：**`mix-blend-mode`**、**`clip-path`**（inset/circle/polygon）、**`mask-image: linear-gradient()`**、**`corner-shape: squircle`**（超椭圆圆角）、**`filter: blur() drop-shadow()`**（可链式，作用于盒装饰+文本）。
+
+**Grid / float**：**`display:grid`** 子集——`grid-template-columns/rows`（长度/%/`fr`/`auto`/`minmax()`/`repeat()`/`auto-fill`）、`gap`、`grid-column/row: span N`、跨轨道 stretch；**`float: left|right`** 出流贴边，inline 文本行绕浮动盒（`FloatContext` 逐行左右缩进）。
 
 **图片**：`<img>` 替换元素，`src` 支持相对/绝对文件路径与 `data:image/...;base64,` URI；`width`/`height` 三种模式（都给=拉伸、只给一个=等比缩放、都不给=自然尺寸且超容器等比缩小）。可作 block 或 flex item。
 
 **文本**：`font-family`、`font-size`（px/pt/em/rem/%，% 相对父字号）、`font-weight`、`line-height`（无单位倍数或 %，% 折算成对字号的倍数）、`text-align`（left/center/right）、`text-decoration`（underline/line-through/overline）、`letter-spacing`（px/em，含负值，逐字排布）、`text-transform`（uppercase/lowercase/capitalize）、`white-space`（normal/nowrap/pre/pre-wrap/pre-line）、`text-overflow: ellipsis`（配合 nowrap + 固定宽，超宽截断加省略号）、`word-break`（normal/break-all/keep-all）。
 
-**inline 格式化上下文**：`display: inline`（UA 已给 `span/a/em/i/strong/b/u/…` 补齐）与 `inline-block`。`InlineLayout` 把块内有序片段（文本 / `<br>` / 行内元素 / 行内 `<img>`）摊平成原子序列，按内容宽折成行盒：CJK 逐字、Latin 逐词、`word-break`/`white-space` 生效、连续空白折叠、行高取行内最大字号、基线对齐、`text-align` 作用于整行、`inline-block` 与行内 `<img>` 作原子盒（auto 宽 shrink-to-fit）。每段按自己的字体/颜色/背景/字距/装饰线绘制。**边界**：只有含行内元素/`<br>`/图文混排的块才走此引擎，纯文本块仍走 `WrappedLines`；`vertical-align` 未做（原子盒按基线底对齐）；跨页时含原子盒的 inline 块整块放置（纯文本 inline 块可按行拆）。
+**inline 格式化上下文**：`display: inline`（UA 已给 `span/a/em/i/strong/b/u/…` 补齐）与 `inline-block`。`InlineLayout` 把块内有序片段（文本 / `<br>` / 行内元素 / 行内 `<img>`）摊平成原子序列，按内容宽折成行盒：CJK 逐字、Latin 逐词、`word-break`/`white-space` 生效、连续空白折叠、行高取行内最大字号、基线对齐、`text-align` 作用于整行、**`vertical-align`**（top/bottom/super/sub/长度/%）**text-wrap: balance** 再平衡、浮动行绕排。每段按自己的字体/颜色/背景/字距/装饰线绘制。**边界**：只有含行内元素/`<br>`/图文混排的块才走此引擎，纯文本块仍走 `WrappedLines`；跨页时含原子盒的 inline 块整块放置（纯文本 inline 块可按行拆）。
 
-**表格**：`display: table/table-row-group/table-header-group/table-footer-group/table-row/table-cell`（UA 已给 `<table>/thead/tbody/tfoot/tr/td/th` 补齐）+ `<td colspan>`。列宽自动分配（单跨 max-content 定基准、多跨不足均摊、显式 `width` 或超可用宽按比例缩放）；`border-collapse: collapse`（内部仅留 top+left 去双线）/ `separate`（`border-spacing`）；单元格撑满行高使行背景/斑马纹可见；单元格内容可放 inline 混排。**暂不支持** `rowspan`、跨页断行（整表原子放置）、`table-caption`、列宽 `%`/`<col>`。
+**表格**：`display: table/table-row-group/table-header-group/table-footer-group/table-row/table-cell`（UA 已给 `<table>/thead/tbody/tfoot/tr/td/th` 补齐）+ `<td colspan>` + **`rowspan`**。列宽自动分配（单跨 max-content 定基准、多跨不足均摊、显式 `width`/`%`/`<col>` 优先）；`border-collapse: collapse` / `separate`；单元格撑满行高；`table-caption`；**长表跨页续 + 每页共享列宽 + 重复 `<thead>`**。
 
-**`@font-face`**：`font-family` + `src: url(...)`（相对 `baseDir` 解析）+ `font-weight`，由 `FontFaceParser` 从 CSS 文本解析并登记到 `FontManager`，按字重就近选文件、`SKTypeface.FromFile` 加载。**未做** `format()` 校验、多 `src` 回退、woff2 变体、`local()`。
+**`@font-face`**：`font-family` + `src: url(...)`（相对 `baseDir` 解析，**多 src 按序回退，woff2 可用**）+ `font-weight`，由 `FontFaceParser` 解析登记到 `FontManager`，按字重就近选文件。另有 `FontManager.RegisterFontDirectory(dir)` 整目录注册与 `GoogleFonts.Fetch("Family:wght@400;700")`（css2 API 下载 + SHA1 缓存 + 断网回退缓存元数据，离线复用）。**未做** `format()` 校验、`local()`。
+
+**`var()` / `calc()`**：AngleSharp 对二者优先级/内嵌处理不全，自研补全。`var(--x, 回退)` 按「内联 > .class > #id > tag > `*`」作用域链向上查找（嵌套定义在**使用处**作用域解析）；`calc()` 递归下降解析成线性式（px/pt/em/rem/%、嵌套括号、`+ - * /`），进 `CssSize.Calc` 在布局期按包含块落地。注意：AngleSharp computed 会把 `calc()` 按 1024 视口预解析，故 grid/flex 等模板值优先取**声明值**。
 
 **`@page` 分页媒体**：`size`（A2–A5 / Letter / Legal / 两长度 / landscape）、`margin`（简写 + `margin-*`，支持 mm/cm/in/pt/px）；嵌套边距盒 `@top-left/center/right`、`@bottom-left/center/right`，`content` 支持字面串 + `counter(page)` + `counter(pages)`，以及盒内 `font-size`/`font-family`/`font-weight`/`color`。由 `AtPageParser` 从 CSS 文本直接解析（不依赖 AngleSharp 的分页媒体）。
 
+**分页控制 / PDF 语义**：`break-before/after: page`、`break-inside: avoid`、`orphans`/`widows`（默认 2）；`@page` 页码 counter 风格 `cjk-ideographic`/`trad-chinese-informal`。PDF 输出经 `PdfEnhancer`（自写增量更新尾部，Skia 无此 API）注入 **h1–h6 书签 outline**、**`<a href>` 链接注释**、**Title/Author/Subject/Keywords/Creator 元数据**（取自 `<title>`/`<meta name=author|description|keywords>`）。输出格式：PNG（scale 高清）/ JPEG / WebP / ICO / 矢量 PDF / **SVG**（`SvgWriter` 绘制期录制）。
+
 **继承**：由 AngleSharp.Css 的 `GetComputedStyle()` 完成，跟浏览器行为一致。**例外——百分比**：`GetComputedStyle` 会把 `%` 一律按 render device 的视口（1024）折算成 px，丢失百分比信息（`height:100%` → `"1024px"`）。故对 `width`/`height`/`flex-basis`/`gap`/`font-size`/`line-height`/`margin-*`/`padding-*` 额外读 `GetStyleCollection().GetDeclarations()` 拿**声明值**（保留 `%`），是百分比就用它、否则用 computed。详见"关键代码导读"。
 
-## 明确不支持的（demo 边界）
+## 明确不支持的（当前边界）
 
-- **grid / float** — 布局层没实现（flex / inline / table 已支持，见上）
-- **flex-wrap / *-reverse** — flex 只做了单行不换行、正向
-- **表格 `rowspan` / 跨页断行 / `table-caption` / 列宽 `%`** — 表格做了自动列宽 + colspan + 合并/分离边框，但跨行合并、长表跨页续表头、标题行、按 `%` 定列宽还没做
-- **inline 的 `vertical-align` / 行内背景跨行** — 原子盒只按基线底对齐；行内背景逐段画、不跨行合并
-- **`break-inside: avoid` / 孤行寡行控制** — 分页器只做"块放不下就换页 + 超长块按行/子块拆"，没做 CSS Fragmentation 的高级约束
-- **伪类 / 伪元素（`::before`/`::after`）/ `@media` / SVG** — 都没做
-- **`overflow: hidden` 裁剪 / `transform`** — 都没做（圆角/阴影/渐变/opacity/box-sizing 已做，见上）
+- **`position: fixed` / `sticky` 视口语义** — 能解析但按 static 处理（无"视口/滚动"概念）
+- **`align-content`（flex 多行对齐）** — 暂简化为 flex-start
+- **`corner-shape` 的 bevel/scoop/notch** — 只做了 squircle；**`text-wrap: pretty`** — 只做了 balance
+- **伪类 / 伪元素（`::before`/`::after`）/ `@media`** — 都没做
+- **`overflow: hidden` 裁剪 / `transform`** — 都没做（圆角/阴影/渐变/opacity/box-sizing/clip-path/filter/squircle 已做，见上）
 - **网络图片 URL** — `ImageLoader` 默认不联网（保证离线 + 确定性输出）
+- **SVG 滤镜图（`filter: url(#…)` feTurbulence/feDisplacementMap）/ 路径文字 `offset-path` / `lang` 分形（zh/ja/ko）** — 都没做
+- **阿拉伯文 shaping / bidi / emoji 多文字系统** — SkiaSharp 2.88 managed 无 HarfBuzz，架构级工程量（M6，按 YAGNI 搁置）
+- **Tagged PDF / PDF/A / PDF/UA / 附件（Factur-X）** — Skia 后端不出结构树/XMP；`PdfEnhancer` 增量尾部机制已可复用，待真实需求驱动（M5 剩余）
+- **动画 GIF/WebP/APNG、JSX 输入、Tailwind、WASM 多运行时** — 与"HTML→文档"主线冲突，见 ROADMAP"明确不做"
 
-这些恰好是"再加就能用"的空间，架构上不用返工。
+这些恰好是"再加就能用"的空间，架构上基本不用返工。
 
 ## 关键代码导读
 
@@ -159,15 +183,16 @@ dotnet run
 
 ## 想扩展的话
 
-按对"渲任意真实网页"的价值排序：
+按对"渲任意真实网页"的价值排序（M1–M5 已完成项见上文各节）：
 
-1. **表格补全** — `rowspan`、长表跨页续 `<thead>`、`table-caption`、列宽 `%`/`<col>`。
-2. **inline 补全** — `vertical-align`（top/middle/bottom）、行内背景跨行合并、行内盒的 `position`/相对定位。
-3. **分页高级约束** — `break-inside: avoid`、`orphans`/`widows`、`@page` 命名页 / `:first` / `:blank`。
-4. **flex-wrap / *-reverse** — 在 `MeasureFlex` 里加换行分组 + 反向遍历。
-5. **absolute 补全** — `left+right` 同时给时拉伸宽度、`z-index` 层叠上下文、`fixed`/`sticky`。
-6. **网络图片 / `@font-face` 多 src** — `ImageLoader` 放开 http 分支（注意破坏确定性输出）；`@font-face` 补 `format()`/woff2/`local()`。
-7. **换 UA 样式表** — `StyleResolver.UaStylesheet` 常量，或从外部 `assets/ua.css` 加载。
+1. **PDF 合规（M5 剩余）** — Tagged PDF 结构树 / XMP / PDF-A、附件（Factur-X XML）——`PdfEnhancer` 增量尾部已就位，加对象即可。
+2. **伪元素 `::before`/`::after` + `@media`** — 真实网页高频；伪元素要在 `StyleResolver` 合成匿名 inline 片段。
+3. **`overflow: hidden` 裁剪 / `transform`** — 裁剪可用 `SKCanvas.ClipRect` 挂到盒上；transform 涉及布局无关的绘制矩阵。
+4. **`lang` 分形（zh/ja/ko）/ `text-wrap: pretty` / `align-content`** — 小步补全。
+5. **`fixed`/`sticky`、`corner-shape` bevel/scoop/notch** — 视口语义与更多圆角形状。
+6. **SVG 滤镜图（`filter: url(#feTurbulence…)`）/ 路径文字 `offset-path`** — Skia 有原语，缺 CSS 侧滤镜图解析。
+7. **复杂文字系统（M6）** — HarfBuzz shaping + bidi，架构级，按需求驱动。
+8. **换 UA 样式表** — `StyleResolver.UaStylesheet` 常量，或从外部 `assets/ua.css` 加载。
 
 ## 常见坑提示
 

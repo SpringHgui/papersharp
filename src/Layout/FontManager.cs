@@ -28,18 +28,46 @@ public static class FontManager
     static SKTypeface? _subsetBold;
     static bool _loadedSubsetAttempted;
 
-    // @font-face 登记的自定义字体：family → [(weight, 原始路径)]。路径在加载时按 BaseDir 解析。
+    // @font-face 登记的自定义字体：family → [(weight, 候选路径链)]。路径在加载时按 BaseDir 解析。
     public static string? BaseDir;
-    static readonly Dictionary<string, List<(int weight, string path)>> Registered = new(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, List<(int weight, List<string> paths)>> Registered = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>登记一条 @font-face。同 family+weight 覆盖旧的，并清掉该 family 的缓存。</summary>
+    /// <summary>登记一条 @font-face（单文件）。同 family+weight 覆盖旧的，并清掉该 family 的缓存。</summary>
     public static void RegisterFont(string family, string path, int weight)
+        => RegisterFont(family, new List<string> { path }, weight);
+
+    /// <summary>登记一条 @font-face：paths 是按声明顺序的候选文件（如 woff2→ttf 兜底链），加载时逐个尝试。</summary>
+    public static void RegisterFont(string family, List<string> paths, int weight)
     {
         if (!Registered.TryGetValue(family, out var list)) { list = new(); Registered[family] = list; }
         list.RemoveAll(e => e.weight == weight);
-        list.Add((weight, path));
+        list.Add((weight, paths));
         foreach (var k in Cache.Keys.Where(k => string.Equals(k.Item1, family, StringComparison.OrdinalIgnoreCase)).ToList())
             Cache.TryRemove(k, out _);
+    }
+
+    /// <summary>
+    /// 简单字体目录注册 helper：扫目录里的 ttf/otf/woff/woff2，读出真实 family name 逐一登记。
+    /// 之后 CSS 里直接写该 family 即可命中，无需手写 @font-face。
+    /// </summary>
+    public static void RegisterFontDirectory(string dir)
+    {
+        if (!Directory.Exists(dir)) return;
+        foreach (var file in Directory.EnumerateFiles(dir))
+        {
+            var ext = Path.GetExtension(file).ToLowerInvariant();
+            if (ext is not (".ttf" or ".otf" or ".woff" or ".woff2")) continue;
+            try
+            {
+                using var tf = SKTypeface.FromFile(file);
+                if (tf == null) continue;
+                string family = tf.FamilyName;
+                if (string.IsNullOrWhiteSpace(family)) continue;
+                int weight = tf.FontWeight is >= 1 and <= 1000 ? tf.FontWeight : 400;
+                RegisterFont(family, file, weight);
+            }
+            catch { /* 坏文件跳过，不影响其他字体 */ }
+        }
     }
 
     static string? ResolveFontPath(string path)
@@ -89,15 +117,16 @@ public static class FontManager
     {
         EnsureSubsetLoaded();
 
-        // @font-face 登记的自定义字体优先（按字重就近取）
+        // @font-face 登记的自定义字体优先（按字重就近取；同字重内按 src 声明顺序逐个尝试文件）
         if (Registered.TryGetValue(family, out var faces) && faces.Count > 0)
         {
             var pick = faces.OrderBy(f => Math.Abs(f.weight - weight)).First();
-            var full = ResolveFontPath(pick.path);
-            if (full != null && File.Exists(full))
+            foreach (var raw in pick.paths)
             {
+                var full = ResolveFontPath(raw);
+                if (full == null || !File.Exists(full)) continue;
                 try { var tf = SKTypeface.FromFile(full); if (tf != null) return tf; }
-                catch { /* 字体损坏则回退系统字体 */ }
+                catch { /* 该候选损坏 → 试下一个 src */ }
             }
         }
 

@@ -16,11 +16,16 @@ public sealed class ComputedStyle
     public string? TextContent;
     /// <summary>&lt;img&gt; 的 src（文件路径 / data URI / URL）。</summary>
     public string? ImageSrc;
+    /// <summary>&lt;a&gt; 的 href（PDF 链接注释 / 书签用），其余元素为 null。</summary>
+    public string? LinkHref;
 
     /// <summary>有序行内片段（文本 / 行内子元素），仅用于 inline 格式化上下文，保留 DOM 顺序。</summary>
     public List<InlinePiece> InlinePieces = new();
     /// <summary>该块是否是纯 inline 格式化上下文（非 flex/table 块，含文本或行内元素，且无块级子元素）。</summary>
     public bool IsInlineFC;
+
+    /// <summary>浅拷贝一份样式（供匿名 flex/grid 子项包装用）；调用方自行重置 Children/InlinePieces。</summary>
+    public ComputedStyle CloneShallow() => (ComputedStyle)MemberwiseClone();
 
     /// <summary>display 是否行内级（inline / inline-block）。</summary>
     public static bool IsInlineLevel(string display) => display == "inline" || display == "inline-block";
@@ -102,6 +107,11 @@ public sealed class ComputedStyle
     public string Float = "none";        // none | left | right
     public string Clear = "none";        // none | left | right | both
 
+    // 文本高级
+    public string VerticalAlign = "baseline"; // baseline | top | bottom | middle | length/percentage（原子盒与表格单元生效）
+    public string TextWrap = "wrap";         // wrap | balance
+    public string TextFit = "none";          // none | scale-down（来自 HTML text-fit 属性，AngleSharp 不识别该 CSS 属性）
+
     // 视觉
     public SKColor Color = SKColors.Black;
     public SKColor BackgroundColor = SKColor.Empty;
@@ -109,6 +119,14 @@ public sealed class ComputedStyle
     public BoxShadow? Shadow;
     public float BorderRadiusTopLeft, BorderRadiusTopRight, BorderRadiusBottomRight, BorderRadiusBottomLeft;
     public float Opacity = 1f;
+
+    // 视觉增强（M3）
+    public string MixBlendMode = "normal";   // normal | multiply | screen | overlay | darken | lighten ...
+    public string CornerShape = "round";     // round | squircle（配合 border-radius）
+    public string? ClipPath;                 // clip-path 原始值（inset/circle/polygon）
+    public GradientSpec? MaskImage;          // mask-image: linear-gradient(...)（alpha 用渐变）
+    public CssFilter? Filter;                // filter: blur() / drop-shadow()
+    public string? SvgMarkup;                // 内联 <svg> 的标记（替换元素渲染）
 
     // 文本
     public string FontFamily = "sans-serif";
