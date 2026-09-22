@@ -9,7 +9,23 @@
     <AssemblyName>PaperSharp</AssemblyName>
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- NuGet 包元数据；正式版本号由 CI 用 git tag 通过 -p:Version 覆盖 -->
+    <Version>0.1.0</Version>
+    <PackageId>PaperSharp</PackageId>
+    <Authors>SpringHgui</Authors>
+    <Description>面向 .NET 的高性能文档渲染引擎：纯托管管线把 HTML/CSS 编译为矢量 PDF 与高清图片（PNG/JPEG/WebP/ICO/SVG），无需浏览器、无需 headless Chrome。</Description>
+    <PackageTags>pdf;html;css;render;document;skia;printing</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/SpringHgui/papersharp</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.3.1" />
