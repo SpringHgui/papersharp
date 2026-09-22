@@ -1,0 +1,24 @@
+<div class="title">百分比单位演示</div>
+<div class="hint">标题 font-size:150% · 提示 92% · 两栏 width:58%/38% · 条形图 width:% · 定高容器内 height:100% · margin/padding %</div>
+
+<h2>两栏布局（width 百分比 + gap 4%）</h2>
+<div class="cols">
+  <div class="col-a">左栏占容器内容宽的 58%。百分比宽度在布局期按包含块内容宽解析，容器变宽时这里会自动跟着变。百分比宽度在布局期按包含块内容宽解析。</div>
+  <div class="col-b">右栏 38%，中间 gap 4%，三者合计 100%。</div>
+</div>
+
+<h2>横向条形图（每根 bar 的 width 是百分比）</h2>
+<div class="crow"><span class="clabel">华东</span><div class="ctrack"><div class="cbar" style="width:82%"></div></div><span class="cval">82%</span></div>
+<div class="crow"><span class="clabel">华南</span><div class="ctrack"><div class="cbar g" style="width:64%"></div></div><span class="cval">64%</span></div>
+<div class="crow"><span class="clabel">华北</span><div class="ctrack"><div class="cbar o" style="width:47%"></div></div><span class="cval">47%</span></div>
+<div class="crow"><span class="clabel">西南</span><div class="ctrack"><div class="cbar r" style="width:29%"></div></div><span class="cval">29%</span></div>
+
+<h2>定高容器内 height 百分比</h2>
+<div class="tall">
+  <div class="side">100% 高</div>
+  <div class="main">右侧 flex:1 且 height:100%，撑满 90px 高的父容器。height 百分比相对"确定高度"的父级解析——父级高度 auto 时百分比高度退化为 auto。</div>
+</div>
+
+<h2>margin / padding 百分比（相对包含块宽）</h2>
+<div class="pad-card"><div class="inner">绿色卡片 padding:4%（内边距随容器宽缩放），下方 margin-bottom:3% 控制与下一块的间距。CSS 里 margin/padding 的百分比横竖都按包含块宽度解析。</div></div>
+<div class="indent">左右各 margin:12% 的缩进块——两侧留白都是容器宽的 12%。</div>

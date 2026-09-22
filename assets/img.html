@@ -1,0 +1,38 @@
+<div class="header">
+  <img class="logo" src="imgs/logo.png" />
+  <div class="head-text">
+    <div class="co">ACME  GmbH</div>
+    <div class="sub">图文混排演示 · Images in block &amp; flex</div>
+  </div>
+</div>
+
+<h2>自然尺寸 vs CSS 尺寸</h2>
+<div class="row">
+  <div class="col">
+    <img src="imgs/photo.png" />
+    <p class="cap">自然尺寸 240×160</p>
+  </div>
+  <div class="col">
+    <img class="half" src="imgs/photo.png" />
+    <p class="cap">width:120px（等比缩放）</p>
+  </div>
+  <div class="col">
+    <img class="fixed" src="imgs/photo.png" />
+    <p class="cap">width:80 height:80（拉伸）</p>
+  </div>
+</div>
+
+<h2>带边框/圆角容器内的图片</h2>
+<div class="framed">
+  <img class="qr" src="imgs/qr.png" />
+  <div class="qr-text">
+    <p>扫码付款</p>
+    <p class="amount">¥2,760.00</p>
+  </div>
+</div>
+
+<h2>data URI 内联图片</h2>
+<div class="inline-row">
+  <img class="dot" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAYAAAA6/NlyAAABVklEQVR4nO2bzbHDIAyEV1tH+nk1p5/0oXfNJA4W5scS4rt5zIhdJMwBGdhsNpGRSfOoF03ixOQ0feLQ5FCtMsvo8/E4DfL3eg3XLBhk1mKwYQHkLsM6wqjRuMw0rDOMjjDOKGYL8+jIDKtBwBQOsi29M6xezP6YX0eVNO4226KDxnHqzewPPdrDsCIW2mJY3x+8ZffKfmZDUFdY9XGhUjbp5wrZrdFJJIPRjqHWY4pIBpEMLvh1LvphaWS0/WvRTSSDSAaRDCIZRDKIZBDJIJLBDnc97ijp5o13xrOQ94dd0qvDszKIto8/9Mrn+13SR0TJskUnC++if60P9ZtL2nuWrfpYs0peTdfcFdMQL1ppF/WyNoi3LJ8dQ12OJS+mr+hgxVhX+/lqj4dE6uLp0brEC3N+BZ+V7R59WtKoIU0nXtpey5TdtCn7pdN2xLv/52GzwVr8A+SpcFytPd6hAAAAAElFTkSuQmCC" />
+  <p class="cap">base64 内联的圆点（无需外部文件）</p>
+</div>

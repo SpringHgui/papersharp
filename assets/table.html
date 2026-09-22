@@ -1,0 +1,37 @@
+<h1>Table Layout</h1>
+<p class="note">display:table / row-group / row / cell · 自动列宽 · colspan · 合并与分离边框 · 单元格内行内混排</p>
+
+<h2>合并边框（border-collapse: collapse）</h2>
+<table>
+  <thead>
+    <tr><th>项目</th><th class="mid">数量</th><th class="num">单价</th><th class="num">金额</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>精密轴承 6204ZZ</td><td class="mid">500</td><td class="num">¥8.20</td><td class="num">¥4,100.00</td></tr>
+    <tr><td>不锈钢螺栓 M8×30</td><td class="mid">10000</td><td class="num">¥0.15</td><td class="num">¥1,500.00</td></tr>
+    <tr><td class="hl">铝合金型材 40×40（加急）</td><td class="mid">200</td><td class="num">¥22.00</td><td class="num">¥4,400.00</td></tr>
+    <tr><td>步进电机 57BYG</td><td class="mid">120</td><td class="num">¥68.00</td><td class="num">¥8,160.00</td></tr>
+    <tr><td colspan="3" class="total">合计（三列合并）</td><td class="num total">¥18,160.00</td></tr>
+  </tbody>
+</table>
+
+<h2>分离边框（border-collapse: separate · border-spacing）</h2>
+<table class="sep">
+  <thead>
+    <tr><th>渠道</th><th class="num">订单</th><th class="num">占比</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>华东</td><td class="num">1,204</td><td class="num">42%</td></tr>
+    <tr><td>华南</td><td class="num">860</td><td class="num">30%</td></tr>
+    <tr><td>华北</td><td class="num">452</td><td class="num">16%</td></tr>
+  </tbody>
+</table>
+
+<h2>单元格内的行内混排</h2>
+<table>
+  <thead><tr><th>组件</th><th>状态</th></tr></thead>
+  <tbody>
+    <tr><td>支付网关</td><td><span class="ok">● 正常</span> · 延迟 <span class="badge">12ms</span></td></tr>
+    <tr><td>库存服务</td><td>运行中，含 <span class="hl">高亮片段</span> 与 <em>斜体</em>，会自动折行</td></tr>
+  </tbody>
+</table>

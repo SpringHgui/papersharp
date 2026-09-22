@@ -1,0 +1,42 @@
+@page {
+  size: A4;
+  margin: 16mm;
+  @bottom-right { content: "第 " counter(page) " / " counter(pages) " 页"; font-size: 8pt; color: #999999; }
+}
+
+body {
+  font-family: "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  color: #222222;
+  line-height: 1.5;
+}
+
+.title { font-size: 150%; font-weight: bold; color: #1e40af; margin: 0 0 4px 0; }
+.hint { color: #888888; font-size: 92%; margin: 0 0 18px 0; }
+
+h2 { font-size: 115%; font-weight: bold; color: #333333; margin: 18px 0 8px 0; }
+
+/* 两栏：width 百分比 */
+.cols { display: flex; flex-direction: row; gap: 4%; }
+.col-a { width: 58%; background-color: #eff6ff; padding: 12px; }
+.col-b { width: 38%; background-color: #fef2f2; padding: 12px; }
+
+/* 条形图：bar 宽度用百分比 */
+.crow { display: flex; flex-direction: row; align-items: center; margin: 6px 0; }
+.clabel { width: 60px; color: #555555; }
+.ctrack { flex: 1; background-color: #e5e7eb; height: 18px; }
+.cbar { height: 18px; background-color: #1e40af; }
+.cbar.g { background-color: #059669; }
+.cbar.o { background-color: #d97706; }
+.cbar.r { background-color: #dc2626; }
+.cval { width: 48px; text-align: right; color: #555555; }
+
+/* height 百分比：定高容器内子块撑满 */
+.tall { display: flex; flex-direction: row; height: 90px; gap: 8px; }
+.tall .side { width: 90px; height: 100%; background-color: #1e40af; color: #ffffff; text-align: center; }
+.tall .main { flex: 1; height: 100%; background-color: #f5f7fa; padding: 10px; }
+
+/* margin / padding 百分比：一律相对包含块宽解析（横竖同基准） */
+.pad-card { background-color: #ecfdf5; padding: 4%; margin-bottom: 3%; }
+.pad-card .inner { background-color: #ffffff; padding: 6px 10px; }
+.indent { margin-left: 12%; margin-right: 12%; background-color: #fff7ed; padding: 8px 12px; }
