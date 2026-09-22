@@ -3,3 +3,5 @@
 /src/PaperSharp/obj
 /src/PaperSharp/bin
 .vs/
+/src/PaperSharpSamples/obj
+/src/PaperSharpSamples/bin
