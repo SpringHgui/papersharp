@@ -1,0 +1,212 @@
+<h1>M1 里程碑验收报告</h1>
+
+<p class="note">
+    本报告演示 M1（表格与分页补全）的全部特性：表格 rowspan、表格跨页续表 + 共享列宽 + 重复 thead、table-caption、
+    break-inside:avoid、break-before/after:page、widows/orphans、中文数字页码。
+</p>
+
+<h2>一、表格 rowspan 演示</h2>
+
+<table>
+    <caption>表 1：产品分类与库存汇总（含跨行合并）</caption>
+    <thead>
+        <tr>
+            <th>分类</th>
+            <th>产品</th>
+            <th class="num">库存</th>
+            <th class="num">单价</th>
+            <th class="num">金额</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td rowspan="3" class="rowspan-cell center">电子元件</td>
+            <td>电阻 10kΩ</td>
+            <td class="num">50,000</td>
+            <td class="num">¥0.02</td>
+            <td class="num">¥1,000.00</td>
+        </tr>
+        <tr>
+            <td>电容 100μF</td>
+            <td class="num">30,000</td>
+            <td class="num">¥0.15</td>
+            <td class="num">¥4,500.00</td>
+        </tr>
+        <tr>
+            <td>LED 红光</td>
+            <td class="num">20,000</td>
+            <td class="num">¥0.08</td>
+            <td class="num">¥1,600.00</td>
+        </tr>
+        <tr>
+            <td rowspan="2" class="rowspan-cell center">机械零件</td>
+            <td>螺栓 M6×20</td>
+            <td class="num">100,000</td>
+            <td class="num">¥0.05</td>
+            <td class="num">¥5,000.00</td>
+        </tr>
+        <tr>
+            <td>螺母 M6</td>
+            <td class="num">100,000</td>
+            <td class="num">¥0.03</td>
+            <td class="num">¥3,000.00</td>
+        </tr>
+        <tr>
+            <td rowspan="2" class="rowspan-cell center">包装材料</td>
+            <td>纸箱 A4</td>
+            <td class="num">5,000</td>
+            <td class="num">¥2.50</td>
+            <td class="num">¥12,500.00</td>
+        </tr>
+        <tr>
+            <td>气泡膜</td>
+            <td class="num">2,000</td>
+            <td class="num">¥8.00</td>
+            <td class="num">¥16,000.00</td>
+        </tr>
+    </tbody>
+</table>
+
+<h2>二、表格跨页续表演示</h2>
+
+<p>
+    下表包含 50 行数据，将跨越多页。每页顶部重复 thead，列宽保持一致。
+</p>
+
+<table>
+    <caption>表 2：订单明细（50 行，跨页续表）</caption>
+    <thead>
+        <tr>
+            <th class="num">序号</th>
+            <th>订单号</th>
+            <th>客户</th>
+            <th>产品</th>
+            <th class="num">数量</th>
+            <th class="num">单价</th>
+            <th class="num">金额</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr><td class="num">1</td><td>ORD-2024-001</td><td>华东电子</td><td>电阻 10kΩ</td><td class="num">10,000</td><td class="num">¥0.02</td><td class="num">¥200.00</td></tr>
+        <tr><td class="num">2</td><td>ORD-2024-002</td><td>华南科技</td><td>电容 100μF</td><td class="num">5,000</td><td class="num">¥0.15</td><td class="num">¥750.00</td></tr>
+        <tr><td class="num">3</td><td>ORD-2024-003</td><td>华北制造</td><td>LED 红光</td><td class="num">8,000</td><td class="num">¥0.08</td><td class="num">¥640.00</td></tr>
+        <tr><td class="num">4</td><td>ORD-2024-004</td><td>西南工业</td><td>螺栓 M6×20</td><td class="num">20,000</td><td class="num">¥0.05</td><td class="num">¥1,000.00</td></tr>
+        <tr><td class="num">5</td><td>ORD-2024-005</td><td>东北机械</td><td>螺母 M6</td><td class="num">20,000</td><td class="num">¥0.03</td><td class="num">¥600.00</td></tr>
+        <tr><td class="num">6</td><td>ORD-2024-006</td><td>华东电子</td><td>纸箱 A4</td><td class="num">500</td><td class="num">¥2.50</td><td class="num">¥1,250.00</td></tr>
+        <tr><td class="num">7</td><td>ORD-2024-007</td><td>华南科技</td><td>气泡膜</td><td class="num">300</td><td class="num">¥8.00</td><td class="num">¥2,400.00</td></tr>
+        <tr><td class="num">8</td><td>ORD-2024-008</td><td>华北制造</td><td>电阻 10kΩ</td><td class="num">15,000</td><td class="num">¥0.02</td><td class="num">¥300.00</td></tr>
+        <tr><td class="num">9</td><td>ORD-2024-009</td><td>西南工业</td><td>电容 100μF</td><td class="num">8,000</td><td class="num">¥0.15</td><td class="num">¥1,200.00</td></tr>
+        <tr><td class="num">10</td><td>ORD-2024-010</td><td>东北机械</td><td>LED 红光</td><td class="num">12,000</td><td class="num">¥0.08</td><td class="num">¥960.00</td></tr>
+        <tr><td class="num">11</td><td>ORD-2024-011</td><td>华东电子</td><td>螺栓 M6×20</td><td class="num">30,000</td><td class="num">¥0.05</td><td class="num">¥1,500.00</td></tr>
+        <tr><td class="num">12</td><td>ORD-2024-012</td><td>华南科技</td><td>螺母 M6</td><td class="num">30,000</td><td class="num">¥0.03</td><td class="num">¥900.00</td></tr>
+        <tr><td class="num">13</td><td>ORD-2024-013</td><td>华北制造</td><td>纸箱 A4</td><td class="num">800</td><td class="num">¥2.50</td><td class="num">¥2,000.00</td></tr>
+        <tr><td class="num">14</td><td>ORD-2024-014</td><td>西南工业</td><td>气泡膜</td><td class="num">500</td><td class="num">¥8.00</td><td class="num">¥4,000.00</td></tr>
+        <tr><td class="num">15</td><td>ORD-2024-015</td><td>东北机械</td><td>电阻 10kΩ</td><td class="num">20,000</td><td class="num">¥0.02</td><td class="num">¥400.00</td></tr>
+        <tr><td class="num">16</td><td>ORD-2024-016</td><td>华东电子</td><td>电容 100μF</td><td class="num">10,000</td><td class="num">¥0.15</td><td class="num">¥1,500.00</td></tr>
+        <tr><td class="num">17</td><td>ORD-2024-017</td><td>华南科技</td><td>LED 红光</td><td class="num">15,000</td><td class="num">¥0.08</td><td class="num">¥1,200.00</td></tr>
+        <tr><td class="num">18</td><td>ORD-2024-018</td><td>华北制造</td><td>螺栓 M6×20</td><td class="num">40,000</td><td class="num">¥0.05</td><td class="num">¥2,000.00</td></tr>
+        <tr><td class="num">19</td><td>ORD-2024-019</td><td>西南工业</td><td>螺母 M6</td><td class="num">40,000</td><td class="num">¥0.03</td><td class="num">¥1,200.00</td></tr>
+        <tr><td class="num">20</td><td>ORD-2024-020</td><td>东北机械</td><td>纸箱 A4</td><td class="num">1,000</td><td class="num">¥2.50</td><td class="num">¥2,500.00</td></tr>
+        <tr><td class="num">21</td><td>ORD-2024-021</td><td>华东电子</td><td>气泡膜</td><td class="num">600</td><td class="num">¥8.00</td><td class="num">¥4,800.00</td></tr>
+        <tr><td class="num">22</td><td>ORD-2024-022</td><td>华南科技</td><td>电阻 10kΩ</td><td class="num">25,000</td><td class="num">¥0.02</td><td class="num">¥500.00</td></tr>
+        <tr><td class="num">23</td><td>ORD-2024-023</td><td>华北制造</td><td>电容 100μF</td><td class="num">12,000</td><td class="num">¥0.15</td><td class="num">¥1,800.00</td></tr>
+        <tr><td class="num">24</td><td>ORD-2024-024</td><td>西南工业</td><td>LED 红光</td><td class="num">18,000</td><td class="num">¥0.08</td><td class="num">¥1,440.00</td></tr>
+        <tr><td class="num">25</td><td>ORD-2024-025</td><td>东北机械</td><td>螺栓 M6×20</td><td class="num">50,000</td><td class="num">¥0.05</td><td class="num">¥2,500.00</td></tr>
+        <tr><td class="num">26</td><td>ORD-2024-026</td><td>华东电子</td><td>螺母 M6</td><td class="num">50,000</td><td class="num">¥0.03</td><td class="num">¥1,500.00</td></tr>
+        <tr><td class="num">27</td><td>ORD-2024-027</td><td>华南科技</td><td>纸箱 A4</td><td class="num">1,200</td><td class="num">¥2.50</td><td class="num">¥3,000.00</td></tr>
+        <tr><td class="num">28</td><td>ORD-2024-028</td><td>华北制造</td><td>气泡膜</td><td class="num">700</td><td class="num">¥8.00</td><td class="num">¥5,600.00</td></tr>
+        <tr><td class="num">29</td><td>ORD-2024-029</td><td>西南工业</td><td>电阻 10kΩ</td><td class="num">30,000</td><td class="num">¥0.02</td><td class="num">¥600.00</td></tr>
+        <tr><td class="num">30</td><td>ORD-2024-030</td><td>东北机械</td><td>电容 100μF</td><td class="num">15,000</td><td class="num">¥0.15</td><td class="num">¥2,250.00</td></tr>
+        <tr><td class="num">31</td><td>ORD-2024-031</td><td>华东电子</td><td>LED 红光</td><td class="num">20,000</td><td class="num">¥0.08</td><td class="num">¥1,600.00</td></tr>
+        <tr><td class="num">32</td><td>ORD-2024-032</td><td>华南科技</td><td>螺栓 M6×20</td><td class="num">60,000</td><td class="num">¥0.05</td><td class="num">¥3,000.00</td></tr>
+        <tr><td class="num">33</td><td>ORD-2024-033</td><td>华北制造</td><td>螺母 M6</td><td class="num">60,000</td><td class="num">¥0.03</td><td class="num">¥1,800.00</td></tr>
+        <tr><td class="num">34</td><td>ORD-2024-034</td><td>西南工业</td><td>纸箱 A4</td><td class="num">1,500</td><td class="num">¥2.50</td><td class="num">¥3,750.00</td></tr>
+        <tr><td class="num">35</td><td>ORD-2024-035</td><td>东北机械</td><td>气泡膜</td><td class="num">800</td><td class="num">¥8.00</td><td class="num">¥6,400.00</td></tr>
+        <tr><td class="num">36</td><td>ORD-2024-036</td><td>华东电子</td><td>电阻 10kΩ</td><td class="num">35,000</td><td class="num">¥0.02</td><td class="num">¥700.00</td></tr>
+        <tr><td class="num">37</td><td>ORD-2024-037</td><td>华南科技</td><td>电容 100μF</td><td class="num">18,000</td><td class="num">¥0.15</td><td class="num">¥2,700.00</td></tr>
+        <tr><td class="num">38</td><td>ORD-2024-038</td><td>华北制造</td><td>LED 红光</td><td class="num">22,000</td><td class="num">¥0.08</td><td class="num">¥1,760.00</td></tr>
+        <tr><td class="num">39</td><td>ORD-2024-039</td><td>西南工业</td><td>螺栓 M6×20</td><td class="num">70,000</td><td class="num">¥0.05</td><td class="num">¥3,500.00</td></tr>
+        <tr><td class="num">40</td><td>ORD-2024-040</td><td>东北机械</td><td>螺母 M6</td><td class="num">70,000</td><td class="num">¥0.03</td><td class="num">¥2,100.00</td></tr>
+        <tr><td class="num">41</td><td>ORD-2024-041</td><td>华东电子</td><td>纸箱 A4</td><td class="num">1,800</td><td class="num">¥2.50</td><td class="num">¥4,500.00</td></tr>
+        <tr><td class="num">42</td><td>ORD-2024-042</td><td>华南科技</td><td>气泡膜</td><td class="num">900</td><td class="num">¥8.00</td><td class="num">¥7,200.00</td></tr>
+        <tr><td class="num">43</td><td>ORD-2024-043</td><td>华北制造</td><td>电阻 10kΩ</td><td class="num">40,000</td><td class="num">¥0.02</td><td class="num">¥800.00</td></tr>
+        <tr><td class="num">44</td><td>ORD-2024-044</td><td>西南工业</td><td>电容 100μF</td><td class="num">20,000</td><td class="num">¥0.15</td><td class="num">¥3,000.00</td></tr>
+        <tr><td class="num">45</td><td>ORD-2024-045</td><td>东北机械</td><td>LED 红光</td><td class="num">25,000</td><td class="num">¥0.08</td><td class="num">¥2,000.00</td></tr>
+        <tr><td class="num">46</td><td>ORD-2024-046</td><td>华东电子</td><td>螺栓 M6×20</td><td class="num">80,000</td><td class="num">¥0.05</td><td class="num">¥4,000.00</td></tr>
+        <tr><td class="num">47</td><td>ORD-2024-047</td><td>华南科技</td><td>螺母 M6</td><td class="num">80,000</td><td class="num">¥0.03</td><td class="num">¥2,400.00</td></tr>
+        <tr><td class="num">48</td><td>ORD-2024-048</td><td>华北制造</td><td>纸箱 A4</td><td class="num">2,000</td><td class="num">¥2.50</td><td class="num">¥5,000.00</td></tr>
+        <tr><td class="num">49</td><td>ORD-2024-049</td><td>西南工业</td><td>气泡膜</td><td class="num">1,000</td><td class="num">¥8.00</td><td class="num">¥8,000.00</td></tr>
+        <tr><td class="num">50</td><td>ORD-2024-050</td><td>东北机械</td><td>电阻 10kΩ</td><td class="num">45,000</td><td class="num">¥0.02</td><td class="num">¥900.00</td></tr>
+    </tbody>
+</table>
+
+<div class="page-break-before">
+    <h2>三、break-before:page 演示</h2>
+    <p>此段落设置了 <code>break-before: page</code>，强制从新页开始。</p>
+</div>
+
+<h2>四、break-inside:avoid 演示</h2>
+
+<p>以下卡片设置了 <code>break-inside: avoid</code>，不会被分页打断：</p>
+
+<div class="card no-break-inside">
+    <div class="card-title">项目 A：电子元件采购</div>
+    <p>本项目涉及电子元件的批量采购，包括电阻、电容、LED 等基础元件。采购周期为 2024 年 Q1，总预算 ¥50,000。</p>
+    <p>主要供应商：华东电子有限公司、华南科技股份有限公司。交货地点：上海仓库。</p>
+    <p>备注：所有元件需通过 QC 检测，合格率要求 ≥ 99.5%。</p>
+</div>
+
+<div class="card no-break-inside">
+    <div class="card-title">项目 B：机械零件加工</div>
+    <p>本项目涉及机械零件的定制加工，包括螺栓、螺母、垫片等标准件。加工周期为 2024 年 Q2，总预算 ¥30,000。</p>
+    <p>主要供应商：华北制造有限公司、东北机械工业公司。交货地点：北京仓库。</p>
+    <p>备注：所有零件需符合 GB/T 标准，公差要求 ±0.05mm。</p>
+</div>
+
+<div class="page-break-after">
+    <h2>五、break-after:page 演示</h2>
+    <p>此段落设置了 <code>break-after: page</code>，在此之后强制换页。</p>
+</div>
+
+<h2>六、widows/orphans 孤行寡行控制</h2>
+
+<p class="widows-orphans">
+    以下段落设置了 <code>widows: 3; orphans: 3</code>，确保分页时页面底部至少保留 3 行，页面顶部至少保留 3 行。
+    这样可以避免孤行（页面顶部只有一行）和寡行（页面底部只有一行）的排版问题。
+    这是专业排版中的重要细节，能够显著提升文档的可读性和美观度。
+    在实际应用中，widows 和 orphans 的值通常设置为 2 或 3，具体取决于文档的排版要求和审美标准。
+    对于中文文档，由于字符密度较高，通常需要更多的行来保证视觉连贯性。
+    因此，中文文档的 widows 和 orphans 值建议设置为 3 或 4。
+    这样可以确保分页处的文本段落保持良好的阅读体验，不会因为分页而造成理解上的断裂。
+    同时，合理的 widows/orphans 设置也能够减少页面底部的空白，提高页面空间的利用率。
+    在报纸、杂志等连续排版场景中，这一设置尤为重要。
+    现代排版软件和专业出版系统都支持这一功能，但在网页排版中，由于浏览器的支持程度不一，往往被忽视。
+    PaperSharp 引擎完整实现了 CSS Paged Media 规范中的 widows 和 orphans 控制，为高质量的 PDF 输出提供了保障。
+</p>
+
+<h2>七、中文数字页码演示</h2>
+
+<p>
+    本报告的页脚使用了中文数字页码格式：<code>counter(page, cjk-ideographic)</code>。
+    例如：第一页显示为"第一页"，第二页显示为"第二页"，第十页显示为"第十页"，
+    第十一页显示为"第十一页"，第二十页显示为"第二十页"。
+</p>
+
+<p>
+    此外，还支持传统中文数字（大写）格式：<code>counter(page, trad-chinese-informal)</code>。
+    例如：第一页显示为"壹页"，第二页显示为"贰页"，第十页显示为"拾页"。
+    这种格式常用于财务票据、合同等正式文档，以防止数字被篡改。
+</p>
+
+<div class="note">
+    <strong>M1 里程碑验收要点：</strong>
+    <ul>
+        <li>表格 rowspan：跨行合并单元格正确渲染</li>
+        <li>表格跨页续表：50 行大表格跨页时列宽一致、thead 重复</li>
+        <li>table-caption：表格标题正确定位在表格上方</li>
+        <li>break-inside:avoid：卡片不被分页打断</li>
+        <li>break-before/after:page：强制分页生效</li>
+        <li>widows/orphans：段落分页时无孤行寡行</li>
+        <li>中文数字页码：页脚显示"第 X 页 / 共 X 页"格式</li>
+    </ul>
+</div>

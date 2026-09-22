@@ -36,6 +36,12 @@ public sealed class BlockBox
     public float[]? TRowH;
     public float TSpacing;
     public int TNumCols;
+    public BlockBox? TCaption;          // table-caption 子盒（若有）
+    public bool TCaptionBottom;         // caption-side: bottom
+    public List<int> THeaderRows = new(); // thead 行索引（在 TRows 中的下标）
+    public List<int> TFooterRows = new(); // tfoot 行索引
+    public float THeaderHeight;          // thead 总高（含 spacing）
+    public float TFooterHeight;          // tfoot 总高（含 spacing）
 
     // 测量结果
     public float ContentWidth;
@@ -56,9 +62,10 @@ public sealed class BlockBox
         + Style.PaddingBottom + Style.BorderWidthBottom + Style.MarginBottom;
 }
 
-/// <summary>表格网格里一个单元格：盒子 + 起始列 + 跨列数。</summary>
+/// <summary>表格网格里一个单元格：盒子 + 起始列/行 + 跨列/行数。</summary>
 public sealed class TCellInfo
 {
     public BlockBox Cell = null!;
     public int Col, Span;
+    public int Row, RowSpan;
 }

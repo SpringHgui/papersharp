@@ -33,6 +33,8 @@ public sealed class ComputedStyle
     public string BorderCollapse = "separate"; // separate | collapse
     public float BorderSpacing;                // separate 时单元格间距（横纵同值，px）
     public int Colspan = 1;                    // <td>/<th> 的 colspan
+    public int Rowspan = 1;                    // <td>/<th> 的 rowspan
+    public string CaptionSide = "top";         // top | bottom
 
     // Flexbox（Display == "flex" 时生效；子项用 FlexGrow/Shrink/Basis/AlignSelf）
     public string FlexDirection = "row";   // row | column（暂不支持 reverse）
@@ -101,6 +103,13 @@ public sealed class ComputedStyle
     public string TextTransform = "none";    // none | uppercase | lowercase | capitalize
     public string TextOverflow = "clip";     // clip | ellipsis
     public string WordBreak = "normal";      // normal | break-all | keep-all
+
+    // 分页控制（打印媒体 / @page 上下文）
+    public string BreakInside = "auto";      // auto | avoid
+    public string BreakBefore = "auto";      // auto | page
+    public string BreakAfter = "auto";       // auto | page
+    public int Widows = 2;                   // 段落在分页后底部保留的最少行数
+    public int Orphans = 2;                  // 段落在分页后顶部保留的最少行数
 }
 
 public enum CssTextAlign { Left, Center, Right }

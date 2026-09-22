@@ -87,31 +87,52 @@ public static class Paginator
 
         public void Place(BlockBox box, float availW, float x)
         {
+            var s = box.Style;
+            // break-before: page → 强制换页
+            if (s.BreakBefore == "page" && CurY > ContentTop + 0.5f)
+                NewPage();
+
             float h = box.TotalHeight;
             float remaining = ContentBottom - CurY;
             if (h <= remaining + 0.5f)
             {
                 EmitWhole(box, x, CurY);
                 CurY += h;
-                return;
             }
-            if (h <= UsableH + 0.5f)
+            else if (h <= UsableH + 0.5f)
             {
                 NewPage();
                 EmitWhole(box, x, CurY);
                 CurY += h;
-                return;
             }
-            // 替换元素（img）不可拆分：放不下也只能整块放，超出页底裁掉。
-            // 含原子盒的 inline 块、以及表格（MVP 不跨页断行）同理整块放置。
-            if (box.IsReplaced || (box.IsInlineFC && box.HasInlineAtomic) || box.Style.Display == "table")
+            // break-inside: avoid → 不碎片化，整块放到下一页
+            else if (s.BreakInside == "avoid")
             {
                 NewPage();
                 EmitWhole(box, x, CurY);
                 CurY += Math.Min(h, UsableH);
-                return;
             }
-            Fragment(box, availW, x);
+            // 替换元素（img）不可拆分：放不下也只能整块放，超出页底裁掉。
+            // 含原子盒的 inline 块同理整块放置。
+            else if (box.IsReplaced || (box.IsInlineFC && box.HasInlineAtomic))
+            {
+                NewPage();
+                EmitWhole(box, x, CurY);
+                CurY += Math.Min(h, UsableH);
+            }
+            // 表格跨页续表：按行拆分，重复 thead/tfoot
+            else if (s.Display == "table")
+            {
+                FlowTable(box, x);
+            }
+            else
+            {
+                Fragment(box, availW, x);
+            }
+
+            // break-after: page → 元素放完后强制换页
+            if (s.BreakAfter == "page")
+                NewPage();
         }
 
         void EmitWhole(BlockBox box, float x, float y)
@@ -202,10 +223,26 @@ public static class Paginator
                 float remaining = ContentBottom - CurY;
                 int fit = Math.Max(1, (int)Math.Floor(remaining / lineHeight));
                 int count = Math.Min(fit, lines.Length - i);
+
+                // 孤行寡行控制：换页前检查
+                if (count < lines.Length - i)
+                {
+                    // Orphans：当前页底部至少 s.Orphans 行
+                    if (count < s.Orphans)
+                        count = lines.Length - i; // 不够就全放当前页（可能溢出）
+                    else
+                    {
+                        // Widows：下一页顶部至少 s.Widows 行
+                        int remainingLines = lines.Length - i - count;
+                        if (remainingLines < s.Widows && count > s.Orphans)
+                            count = Math.Max(s.Orphans, lines.Length - i - s.Widows);
+                    }
+                }
+
                 Cur.Items.Add(new DrawItem
                 {
                     Box = box, X = innerX, Y = CurY, W = box.ContentWidth, H = count * lineHeight,
-                    DrawDecor = false, // 装饰由 Fragment 的带负责
+                    DrawDecor = false,
                     FirstLine = i, LineCount = count,
                     TextLeft = innerX, TextTop = CurY, TextWidth = box.ContentWidth,
                 });
@@ -218,6 +255,7 @@ public static class Paginator
         /// <summary>纯文本 inline 块按行盒拆分跨页：逐行累加，放不下当前行则换页（行高可变，含原子盒的块不走这里）。</summary>
         void FlowInline(BlockBox box, float innerX)
         {
+            var s = box.Style;
             var lines = box.Lines!;
             int i = 0;
             float y = CurY;
@@ -227,10 +265,28 @@ public static class Paginator
                 int count = 0;
                 while (i + count < lines.Count && (acc + lines[i + count].Height <= remaining + 0.5f || count == 0))
                 {
-                    // 首行即便高于页也至少放一行（避免死循环）
                     if (count > 0 && acc + lines[i + count].Height > remaining + 0.5f) break;
                     acc += lines[i + count].Height; count++;
                 }
+
+                if (i + count < lines.Count)
+                {
+                    if (count < s.Orphans)
+                    {
+                        while (i + count < lines.Count)
+                        { acc += lines[i + count].Height; count++; }
+                    }
+                    else
+                    {
+                        int remainingLines = lines.Count - i - count;
+                        if (remainingLines < s.Widows && count > s.Orphans)
+                        {
+                            while (count > s.Orphans && lines.Count - i - count < s.Widows)
+                            { count--; acc -= lines[i + count].Height; }
+                        }
+                    }
+                }
+
                 Cur.Items.Add(new DrawItem
                 {
                     Box = box, X = innerX, Y = y, W = box.ContentWidth, H = acc,
@@ -242,6 +298,121 @@ public static class Paginator
                 if (i < lines.Count) { NewPage(); y = CurY; }
             }
             CurY = y;
+        }
+
+        /// <summary>表格跨页续表：按行拆分，每页重复 thead/tfoot，共享列宽。</summary>
+        void FlowTable(BlockBox table, float x)
+        {
+            if (table.TRows == null || table.TColW == null || table.TRowH == null)
+            {
+                EmitWhole(table, x, CurY);
+                CurY += table.TotalHeight;
+                return;
+            }
+
+            var s = table.Style;
+            float spacing = table.TSpacing;
+            int numRows = table.TRows.Count;
+            var headerRows = table.THeaderRows;
+            var footerRows = table.TFooterRows;
+            float headerH = table.THeaderHeight;
+            float footerH = table.TFooterHeight;
+
+            // 表格装饰（border/padding）
+            float bw = table.TotalWidth - s.MarginLeft - s.MarginRight;
+            float bx = x + s.MarginLeft;
+            float innerX = bx + s.BorderWidthLeft + s.PaddingLeft;
+            float topDeco = s.BorderWidthTop + s.PaddingTop;
+            float bottomDeco = s.PaddingBottom + s.BorderWidthBottom;
+
+            // 识别 body 行（非 header/footer）
+            var bodyRows = new List<int>();
+            var headerSet = new HashSet<int>(headerRows);
+            var footerSet = new HashSet<int>(footerRows);
+            for (int r = 0; r < numRows; r++)
+                if (!headerSet.Contains(r) && !footerSet.Contains(r))
+                    bodyRows.Add(r);
+
+            int bodyIdx = 0;
+            bool firstPage = true;
+
+            while (bodyIdx < bodyRows.Count)
+            {
+                if (!firstPage) NewPage();
+                firstPage = false;
+
+                float y = CurY;
+                // 首页加表格上装饰
+                if (bodyIdx == 0) y += topDeco;
+
+                // 计算可用高度
+                float available = ContentBottom - y;
+                // 非首页需要预留 thead 高度
+                float usedH = 0;
+                var pageRows = new List<int>();
+
+                // thead 行
+                foreach (var hr in headerRows) { pageRows.Add(hr); usedH += table.TRowH[hr] + spacing; }
+                // tfoot 行（每页都要放）
+                float footerWithSpacing = footerH;
+                if (footerRows.Count > 0) footerWithSpacing = footerH + spacing;
+
+                // body 行：尽量多放
+                while (bodyIdx < bodyRows.Count)
+                {
+                    int r = bodyRows[bodyIdx];
+                    float rowH = table.TRowH[r] + spacing;
+                    // 检查是否能放下：已用 + 本行 + tfoot + 底装饰
+                    float needed = usedH + rowH + footerWithSpacing + bottomDeco;
+                    if (needed > available + 0.5f && pageRows.Count > headerRows.Count)
+                        break; // 放不下且已有至少一个 body 行
+                    pageRows.Add(r);
+                    usedH += rowH;
+                    bodyIdx++;
+                }
+
+                // tfoot 行
+                foreach (var fr in footerRows) { pageRows.Add(fr); usedH += table.TRowH[fr] + spacing; }
+
+                // 定位并绘制这些行
+                float gridStartY = y;
+                float totalUsed = LayoutBuilder.PositionTableRows(table, innerX, gridStartY, pageRows);
+
+                // 绘制表格装饰带
+                float bandTop = bodyIdx == bodyRows.Count + (bodyIdx == 0 ? 0 : 0) && !firstPage
+                    ? ContentTop : (bodyIdx <= bodyRows.Count && firstPage ? CurY : ContentTop);
+                float bandBottom = gridStartY + totalUsed + bottomDeco;
+                if (bandBottom > ContentBottom) bandBottom = ContentBottom;
+
+                // 表格装饰：首页从 CurY 开始，后续页从 ContentTop 开始
+                float decoTop = firstPage ? CurY + s.MarginTop : ContentTop;
+                Cur.Items.Insert(0, Band(table, bx, decoTop, bw, bandBottom - decoTop));
+
+                // 绘制行内容
+                foreach (var r in pageRows)
+                    EmitTableRow(table, r, innerX);
+
+                CurY = bandBottom;
+                if (bodyIdx < bodyRows.Count) CurY = ContentBottom; // 当前页满
+            }
+
+            if (bodyRows.Count == 0)
+            {
+                // 只有 header/footer 的表格，整块放置
+                EmitWhole(table, x, CurY);
+                CurY += table.TotalHeight;
+            }
+        }
+
+        void EmitTableRow(BlockBox table, int rowIdx, float innerX)
+        {
+            if (table.TRows == null || rowIdx >= table.TRows.Count) return;
+            // 行盒背景
+            var rowBox = table.TRowBoxes != null && rowIdx < table.TRowBoxes.Count ? table.TRowBoxes[rowIdx] : null;
+            if (rowBox != null) EmitInto(Cur.Items, rowBox);
+            // 各单元格
+            foreach (var info in table.TRows[rowIdx])
+                EmitInto(Cur.Items, info.Cell);
         }
 
         static DrawItem Band(BlockBox box, float x, float y, float w, float h) =>

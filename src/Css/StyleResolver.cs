@@ -113,7 +113,10 @@ public static class StyleResolver
 
         // 单元格 colspan（HTML 属性，非 CSS）
         if (cs.Tag == "td" || cs.Tag == "th")
+        {
             if (int.TryParse(element.GetAttribute("colspan"), out var span) && span > 1) cs.Colspan = span;
+            if (int.TryParse(element.GetAttribute("rowspan"), out var rspan) && rspan > 1) cs.Rowspan = rspan;
+        }
 
         // 按 DOM 顺序遍历子节点：文本→InlinePiece(文本)；元素→递归 + Children + InlinePiece(子/br)。
         // 同时聚合直接文本到 TextContent（块路径用），并保留有序片段（inline 路径用）。
@@ -297,6 +300,14 @@ public static class StyleResolver
         s.TextOverflow = CssValueParser.ParseKeyword(Lookup("text-overflow", element, Raw("text-overflow")), "clip");
         s.WordBreak = CssValueParser.ParseKeyword(Raw("word-break"), "normal");
 
+        // 分页控制
+        s.BreakInside = CssValueParser.ParseKeyword(Raw("break-inside"), "auto");
+        s.BreakBefore = CssValueParser.ParseKeyword(Raw("break-before"), "auto");
+        s.BreakAfter = CssValueParser.ParseKeyword(Raw("break-after"), "auto");
+        s.Widows = ParseInt(Raw("widows"), 2);
+        s.Orphans = ParseInt(Raw("orphans"), 2);
+        s.CaptionSide = CssValueParser.ParseKeyword(Raw("caption-side"), "top");
+
         // 视觉
         s.Opacity = CssValueParser.ParseOpacity(Raw("opacity"));
         s.BorderRadiusTopLeft = FirstRadius(Raw("border-top-left-radius"), s.FontSize);
@@ -338,5 +349,12 @@ public static class StyleResolver
     {
         foreach (var v in vs) if (!string.IsNullOrWhiteSpace(v)) return v!;
         return "";
+    }
+
+    static int ParseInt(string v, int fallback)
+    {
+        v = (v ?? "").Trim();
+        if (int.TryParse(v, out var n) && n >= 1) return n;
+        return fallback;
     }
 }

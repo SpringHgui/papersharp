@@ -1,5 +1,15 @@
 # PaperSharp · 最小可运行 demo
 
+> **HTML/CSS → PDF & PNG, without a browser.**
+
+<!-- 徽章位：发布 NuGet / 接 CI / 定 license 后，把占位徽章的 label 与 (#) 换成真实链接即可 -->
+[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#)
+[![No headless browser](https://img.shields.io/badge/no--headless--browser-%E2%9C%93-brightgreen)](#)
+[![License](https://img.shields.io/badge/license-TBD-yellow)](#)
+[![Build](https://img.shields.io/badge/build-CI--placeholder-lightgrey)](#)
+[![NuGet](https://img.shields.io/badge/NuGet-not--yet--published-lightgrey)](https://www.nuget.org/packages?q=PaperSharp)
+
 **一段 HTML + 一段 CSS → A4 PDF + PNG**，跨平台。用 **SkiaSharp + AngleSharp.Css + 手写的 block-flow 布局层**。
 
 对应之前讨论的方案：

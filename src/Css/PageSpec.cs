@@ -11,6 +11,7 @@ public sealed class ContentPart
 {
     public ContentPartKind Kind;
     public string? Text;
+    public string CounterStyle = "decimal"; // decimal, cjk-ideographic, trad-chinese-informal, etc.
 }
 
 /// <summary>一个 @page 边距盒（页眉/页脚）。</summary>
@@ -188,10 +189,15 @@ public static class AtPageParser
             {
                 int close = value.IndexOf(')', i);
                 if (close < 0) break;
-                string arg = value[(i + 8)..close].Trim().ToLowerInvariant();
+                string arg = value[(i + 8)..close].Trim();
+                // counter(page) 或 counter(page, cjk-ideographic)
+                var args = arg.Split(',', StringSplitOptions.TrimEntries);
+                string counterName = args[0].ToLowerInvariant();
+                string style = args.Length > 1 ? args[1].ToLowerInvariant() : "decimal";
                 parts.Add(new ContentPart
                 {
-                    Kind = arg == "pages" ? ContentPartKind.TotalPages : ContentPartKind.PageNumber,
+                    Kind = counterName == "pages" ? ContentPartKind.TotalPages : ContentPartKind.PageNumber,
+                    CounterStyle = style,
                 });
                 i = close + 1;
             }

@@ -36,9 +36,10 @@ RenderOne("pct");
 RenderOne("polish");
 RenderOne("inline");
 RenderOne("table");
+RenderOne("m1");
 
 Console.WriteLine();
-Console.WriteLine("Done. 产物在 output/。polish.pdf 演示第二梯队，inline.pdf 演示 inline 格式化上下文，table.pdf 演示表格布局。");
+Console.WriteLine("Done. 产物在 output/。polish.pdf 演示第二梯队，inline.pdf 演示 inline 格式化上下文，table.pdf 演示表格布局，m1.pdf 演示 M1 里程碑全部特性。");
 
 void RenderOne(string name)
 {
