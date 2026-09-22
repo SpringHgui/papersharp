@@ -37,72 +37,77 @@
 ## 目录结构
 
 ```
-paper-sharp/
-├── PaperSharp.csproj
-├── Program.cs                      # 入口：渲染 invoice/long/flex/img/report/pct/polish/inline/table + m1–m5 里程碑验收样例
-├── run.bat                         # 双击一键 restore+run
-├── tools/
-│   └── subset-font.py              # 构建期字体子集化（fonttools）
+papersharp/
+├── PaperSharp.slnx
 ├── src/
-│   ├── Renderer.cs                 # 顶层 API：RenderPdf（分页+页眉页脚+语义增强）/ RenderPng / RenderImage(JPEG/WebP) / RenderIco / RenderSvg
-│   ├── Css/
-│   │   ├── StyleResolver.cs        # AngleSharp 桥接 + UA 样式表 + 递归提取 + var()/calc() + 不支持属性兜底
-│   │   ├── ComputedStyle.cs        # 我们自己的样式模型（结构 + 已解析值 + 声明值）
-│   │   ├── CssSize.cs              # 尺寸值对象（Auto/Absolute/Percent/Calc），布局期按包含块 Resolve
-│   │   ├── CssValueParser.cs       # px/em/pt/%/负值/calc、rgb()/hex、border-radius/box-shadow/gradient/filter/clip-path 等
-│   │   ├── Visual.cs               # BoxShadow / GradientSpec（linear/radial/conic）/ blend/clip/mask/filter 值对象
-│   │   ├── FontFaceParser.cs       # @font-face 块解析（多 src 回退）→ 登记 family→文件
-│   │   ├── GoogleFonts.cs          # Google Fonts css2 下载 + SHA1 缓存 + 离线复用 helper
-│   │   └── PageSpec.cs             # @page 解析（size/margin/边距盒/counter 含中文数字）
-│   ├── Layout/
-│   │   ├── BlockBox.cs             # 布局盒数据结构（含 inline 原子/行盒、表格网格、浮动几何中间态）
-│   │   ├── LayoutBuilder.cs        # ToBoxTree / Measure / Position（block+flex(含wrap/reverse)+grid+float+img+定位+table）
-│   │   ├── FloatContext.cs         # 浮动盒收集 + inline 行绕排（逐行左右缩进）
-│   │   ├── InlineLayout.cs         # inline 格式化上下文：折行盒 + vertical-align + balance
-│   │   ├── Paginator.cs            # 块级分页引擎（跨页回流 + break/orphans-widows + 表格续页 + absolute 盖顶列表）
-│   │   ├── TextMeasurer.cs         # 折行（Latin + CJK + white-space + word-break + balance）
-│   │   ├── ImageLoader.cs          # 图像解码 + 缓存（路径 / data URI / 内联 svg）
-│   │   └── FontManager.cs          # 子集字体优先 + @font-face + RegisterFontDirectory + 系统回退
-│   ├── Pdf/
-│   │   ├── PdfEnhancer.cs          # 自写 PDF 增量尾部：/Outlines 书签 + /Link 注释 + trailer/xref 重写
-│   │   └── PdfSemantic.cs          # 从分页盒树收集 h1–h6 书签与 <a> 链接矩形
-│   └── Paint/
-│       ├── Painter.cs              # 单页长图绘制（PNG 用，z-index 排序盖顶）
-│       ├── PagePainter.cs          # 分页绘制（PDF 用，消费 DrawItem 列表 + AbsItems）
-│       ├── BoxPainter.cs           # 盒装饰：圆角/squircle/阴影/渐变/边框/opacity/blend/clip/mask/filter
-│       ├── TextPainter.cs          # 文本绘制：对齐/字距/装饰线 + inline 行盒逐段样式
-│       ├── SvgWriter.cs            # 绘制期录 SVG（渐变/裁剪/filter 映射 SVG 原生）
-│       └── MarginBoxRenderer.cs    # 页眉/页脚边距盒 + 页码渲染（含中文数字）
-├── assets/
-│   ├── invoice.html / invoice.css  # 单页样例
-│   ├── long.html / long.css        # 多页样例（26 行明细，演示分页）
-│   ├── flex.html / flex.css        # flexbox 样例（5 种典型布局）
-│   ├── img.html / img.css          # 图片样例（三种尺寸模式 + 图文混排 + data URI）
-│   ├── report.html / report.css    # @page 样例（页边距 + 页眉页脚页码，跨 2 页）
-│   ├── pct.html / pct.css          # % 单位样例（width%/height%/font-size%/gap%/margin%/padding% + 条形图）
-│   ├── polish.html / polish.css    # 第二梯队样例（圆角/阴影/渐变/透明度/文本装饰/字距/截断/定位/min-max/@font-face）
-│   ├── inline.html / inline.css    # inline 格式化上下文样例（行内 run/图文混排/br/inline-block 药丸/对齐/长段折行）
-│   ├── table.html / table.css      # 表格样例（合并/分离边框 + colspan + 斑马纹 + 单元格内行内混排）
-│   ├── m1.html / m1.css            # M1 验收：跨页续发票（续表+rowspan+break+中文页码）
-│   ├── m2.html / m2.css            # M2 验收：卡片网格 + 图文环绕 + 多行 flex 标签流
-│   ├── m3.html / m3.css            # M3 验收：OG 图卡（conic/squircle/blend/clip/mask/filter/内联 svg）
-│   ├── m4.html / m4.css            # M4 验收：var()/calc() 全谱 + 多字体 + 多格式输出
-│   ├── m5.html / m5.css            # M5 验收：书签层级 / 链接注释 / metadata
-│   ├── imgs/                       # 测试图（logo/photo/qr.png）
-│   └── fonts/                      # 子集化产物（YaheiSub-Regular/Bold.ttf）
-└── output/                         # 生成物（各样例 pdf + png，m3 另有 jpg/webp/ico/svg）
+│   ├── PaperSharp/                 # 纯渲染库（net8.0 类库，无入口、无测试资产）
+│   │   ├── PaperSharp.csproj
+│   │   ├── Renderer.cs             # 顶层 API：RenderPdf（分页+页眉页脚+语义增强）/ RenderPng / RenderImage(JPEG/WebP) / RenderIco / RenderSvg
+│   │   ├── Css/
+│   │   │   ├── StyleResolver.cs    # AngleSharp 桥接 + UA 样式表 + 递归提取 + var()/calc() + 不支持属性兜底
+│   │   │   ├── ComputedStyle.cs    # 我们自己的样式模型（结构 + 已解析值 + 声明值）
+│   │   │   ├── CssSize.cs          # 尺寸值对象（Auto/Absolute/Percent/Calc），布局期按包含块 Resolve
+│   │   │   ├── CssValueParser.cs   # px/em/pt/%/负值/calc、rgb()/hex、border-radius/box-shadow/gradient/filter/clip-path 等
+│   │   │   ├── Visual.cs           # BoxShadow / GradientSpec（linear/radial/conic）/ blend/clip/mask/filter 值对象
+│   │   │   ├── FontFaceParser.cs   # @font-face 块解析（多 src 回退）→ 登记 family→文件
+│   │   │   ├── GoogleFonts.cs      # Google Fonts css2 下载 + SHA1 缓存 + 离线复用 helper
+│   │   │   └── PageSpec.cs         # @page 解析（size/margin/边距盒/counter 含中文数字）
+│   │   ├── Layout/
+│   │   │   ├── BlockBox.cs         # 布局盒数据结构（含 inline 原子/行盒、表格网格、浮动几何中间态）
+│   │   │   ├── LayoutBuilder.cs    # ToBoxTree / Measure / Position（block+flex(含wrap/reverse)+grid+float+img+定位+table）
+│   │   │   ├── FloatContext.cs     # 浮动盒收集 + inline 行绕排（逐行左右缩进）
+│   │   │   ├── InlineLayout.cs     # inline 格式化上下文：折行盒 + vertical-align + balance
+│   │   │   ├── Paginator.cs        # 块级分页引擎（跨页回流 + break/orphans-widows + 表格续页 + absolute 盖顶列表）
+│   │   │   ├── TextMeasurer.cs     # 折行（Latin + CJK + white-space + word-break + balance）
+│   │   │   ├── ImageLoader.cs      # 图像解码 + 缓存（路径 / data URI / 内联 svg）
+│   │   │   └── FontManager.cs      # 子集字体优先 + @font-face + RegisterFontDirectory + 系统回退
+│   │   ├── Pdf/
+│   │   │   ├── PdfEnhancer.cs      # 自写 PDF 增量尾部：/Outlines 书签 + /Link 注释 + trailer/xref 重写
+│   │   │   └── PdfSemantic.cs      # 从分页盒树收集 h1–h6 书签与 <a> 链接矩形
+│   │   └── Paint/
+│   │       ├── Painter.cs          # 单页长图绘制（PNG 用，z-index 排序盖顶）
+│   │       ├── PagePainter.cs      # 分页绘制（PDF 用，消费 DrawItem 列表 + AbsItems）
+│   │       ├── BoxPainter.cs       # 盒装饰：圆角/squircle/阴影/渐变/边框/opacity/blend/clip/mask/filter
+│   │       ├── TextPainter.cs      # 文本绘制：对齐/字距/装饰线 + inline 行盒逐段样式
+│   │       ├── SvgWriter.cs        # 绘制期录 SVG（渐变/裁剪/filter 映射 SVG 原生）
+│   │       └── MarginBoxRenderer.cs # 页眉/页脚边距盒 + 页码渲染（含中文数字）
+│   └── PaperSharpSamples/          # 验收样例 + 基准测试宿主（Exe，引用 PaperSharp）
+│       ├── PaperSharpSamples.csproj
+│       ├── Program.cs              # 入口：渲染 invoice/long/flex/img/report/pct/polish/inline/table + m1–m5 里程碑验收样例；bench/cold/scale/svgpng/tree 模式
+│       ├── Benchmark.cs            # 可复现渲染基准（热态延迟/阶段拆解/内存/规模扩展/吞吐）
+│       ├── run.bat                 # 双击一键 restore+run
+│       ├── tools/
+│       │   └── subset-font.py      # 构建期字体子集化（fonttools）
+│       ├── assets/
+│       │   ├── invoice.html / invoice.css  # 单页样例
+│       │   ├── long.html / long.css        # 多页样例（26 行明细，演示分页）
+│       │   ├── flex.html / flex.css        # flexbox 样例（5 种典型布局）
+│       │   ├── img.html / img.css          # 图片样例（三种尺寸模式 + 图文混排 + data URI）
+│       │   ├── report.html / report.css    # @page 样例（页边距 + 页眉页脚页码，跨 2 页）
+│       │   ├── pct.html / pct.css          # % 单位样例（width%/height%/font-size%/gap%/margin%/padding% + 条形图）
+│       │   ├── polish.html / polish.css    # 第二梯队样例（圆角/阴影/渐变/透明度/文本装饰/字距/截断/定位/min-max/@font-face）
+│       │   ├── inline.html / inline.css    # inline 格式化上下文样例（行内 run/图文混排/br/inline-block 药丸/对齐/长段折行）
+│       │   ├── table.html / table.css      # 表格样例（合并/分离边框 + colspan + 斑马纹 + 单元格内行内混排）
+│       │   ├── m1.html / m1.css            # M1 验收：跨页续发票（续表+rowspan+break+中文页码）
+│       │   ├── m2.html / m2.css            # M2 验收：卡片网格 + 图文环绕 + 多行 flex 标签流
+│       │   ├── m3.html / m3.css            # M3 验收：OG 图卡（conic/squircle/blend/clip/mask/filter/内联 svg）
+│       │   ├── m4.html / m4.css            # M4 验收：var()/calc() 全谱 + 多字体 + 多格式输出
+│       │   ├── m5.html / m5.css            # M5 验收：书签层级 / 链接注释 / metadata
+│       │   ├── imgs/                       # 测试图（logo/photo/qr.png）
+│       │   └── fonts/                      # 子集化产物（YaheiSub-Regular/Bold.ttf）
+│       └── output/                 # 生成物（各样例 pdf + png，m3 另有 jpg/webp/ico/svg）
 ```
 
 ## 跑起来
 
 ```
-cd paper-sharp
+cd src/PaperSharpSamples
 python tools/subset-font.py   # 一次性：裁字体子集（需 pip install fonttools）
 dotnet restore
 dotnet run
 ```
 
-或者直接双击 `run.bat`（不含字体子集化那步）。产物在 `bin/Debug/net8.0/output/`。
+或者直接双击 `src/PaperSharpSamples/run.bat`（不含字体子集化那步）。产物在 `src/PaperSharpSamples/bin/Debug/net10.0/output/`。
 
 > 没跑 `subset-font.py` 也能运行——`FontManager` 找不到子集文件时自动退回系统字体，只是 PDF 会大（整份嵌入雅黑 ~20MB）。
 
@@ -175,7 +180,7 @@ dotnet run
 
 **@page 在哪**：`src/Css/PageSpec.cs` 的 `AtPageParser` 用花括号配对从 CSS 文本解析 `size`/`margin`/嵌套边距盒 + `counter()`；`Paginator` 按 `@page` 边距算内容区；`src/Paint/MarginBoxRenderer.cs` 每页把边距盒文本（含页码）画到页边距带里。
 
-**字体子集化**：`tools/subset-font.py` 构建期裁字 → `src/Layout/FontManager.cs` 运行时 `SKTypeface.FromFile` 优先加载子集，PDF 因此只嵌 ~1.8MB 而非整份雅黑。
+**字体子集化**：`src/PaperSharpSamples/tools/subset-font.py` 构建期裁字 → `src/Layout/FontManager.cs` 运行时 `SKTypeface.FromFile` 优先加载子集，PDF 因此只嵌 ~1.8MB 而非整份雅黑。
 
 **文本折行**：`src/Layout/TextMeasurer.cs` — `Tokenize()` 里 `IsCjk()` 判定，中文按字断，Latin 按空格断。
 

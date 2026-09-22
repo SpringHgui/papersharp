@@ -1,7 +1,7 @@
 # PaperSharp 渲染器 · 性能测试报告
 
 > 对象：`paper-sharp`（AngleSharp.Css + SkiaSharp + 手写布局层的 HTML/CSS → PDF/PNG 渲染器）。
-> 方法：新增可复现基准入口 `src/Benchmark.cs`（`dotnet run -- bench|cold|scale`），全部数字为本机 `Stopwatch` 实测。
+> 方法：新增可复现基准入口 `src/PaperSharpSamples/Benchmark.cs`（在 PaperSharpSamples 目录下 `dotnet run -- bench|cold|scale`），全部数字为本机 `Stopwatch` 实测。
 
 ## 0. 结论速览（TL;DR）
 
@@ -24,7 +24,7 @@
 | 构建 | `dotnet build`（Debug） |
 | 并发干扰 | **有**：用户 python 进程满载 CPU 全程运行 |
 
-产物路径：`bin/Debug/net8.0/output/`。字体子集已生成（`assets/fonts/YaheiSub-*.ttf`），PDF 走子集嵌入。
+产物路径：`src/PaperSharpSamples/bin/Debug/net10.0/output/`。字体子集已生成（`src/PaperSharpSamples/assets/fonts/YaheiSub-*.ttf`），PDF 走子集嵌入。
 
 ## 2. 冷启动首帧（每样例一个全新进程，不预热）
 
