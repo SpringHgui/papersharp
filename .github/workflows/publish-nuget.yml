@@ -9,6 +9,7 @@ jobs:
   publish:
     runs-on: windows-latest
     permissions:
+      contents: read
       id-token: write # NuGet Trusted Publishing (OIDC)，无需 API Key
     steps:
       - uses: actions/checkout@v4
