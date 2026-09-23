@@ -19,6 +19,7 @@
   const waiting = new Map();        // jobId → {resolve, reject, timer}
   let seq = 0;
   let booted = false;
+  let lastSnapshot = null;
 
   main();
 
@@ -54,17 +55,24 @@
     }
 
     report("抓取整页 DOM 与生效样式…", 10);
+    const tCap = performance.now();
     const snap = await PSCapture.capture({
       inlineImages: opts.inlineImages,
       scaleToWidth: opts.width,          // 目标输出宽 ≠ 视口宽时整页等比缩放（不重新回流、不裁切）
+      // PDF 要跨页回流：钉死只在 fixed/sticky/absolute 与 flex/grid 子女处停住，不往子树里传
+      deepFreeze: opts.format !== "pdf",
       onProgress: (label, pct) => report(label, Math.min(60, pct)),
     });
+    const captureMs = Math.round(performance.now() - tCap);
     report(`已展平 ${snap.stats.elements} 个元素 / ${snap.classes} 组样式，${snap.stats.images} 张图内联中…`, 62);
 
+    lastSnapshot = snap;                       // --dump 用：端到端测试把快照落盘后离线复现/基准
     const downloadTicket = waitForDownload(jobId);
     try {
       const payload = JSON.stringify({ html: snap.html, css: snap.css, title: snap.title });
+      const tPush = performance.now();
       await pushChunks(payload, jobId, report);
+      const transportMs = Math.round(performance.now() - tPush);
       report("引擎渲染中…", 82);
       const rendered = await withTimeout(
         sendToOffscreen({ k: "render", id: jobId, total: chunksOf(payload).length, opts, filename: opts.filename }),
@@ -72,7 +80,16 @@
       if (!rendered?.ok) throw new Error(rendered?.error || "渲染失败");
       report("保存到下载文件夹…", 92);
       const { bytes } = await downloadTicket;
-      return { filename: opts.filename, bytes, warnings: snap.warnings };
+      return {
+        filename: opts.filename, bytes, warnings: snap.warnings,
+        // 各段耗时：定位「慢」到底慢在展平、传快照、还是引擎渲染
+        timing: {
+          captureMs, walkMs: snap.timing?.walk ?? 0, imageMs: snap.timing?.image ?? 0, computedStyles: snap.timing?.computed ?? 0,
+          transportMs, renderMs: rendered.renderMs ?? 0, bootMs: rendered.bootMs ?? 0,
+          elements: snap.stats.elements, classes: snap.classes, payloadKB: Math.round(payload.length / 1024),
+          htmlKB: Math.round(snap.html.length / 1024), cssKB: Math.round(snap.css.length / 1024),
+        },
+      };
     } catch (e) {
       waiting.delete(jobId);
       downloadTicket.catch(() => { });   // 已失败：别留下悬空 rejection
@@ -132,7 +149,7 @@
     void state;
     try {
       const result = await onExport(opts, (label, pct) => global.postMessage({ type: "papersharp:progress", label, pct }, "*"));
-      global.postMessage({ type: "papersharp:export-result", ok: true, ...result }, "*");
+      global.postMessage({ type: "papersharp:export-result", ok: true, ...result, dump: detail.wantDump ? lastSnapshot : undefined }, "*");
       return result;
     } catch (e) {
       global.postMessage({ type: "papersharp:export-result", ok: false, error: String(e?.message || e), filename: opts.filename }, "*");

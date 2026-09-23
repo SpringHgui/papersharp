@@ -66,11 +66,17 @@ public static class StyleResolver
         // display:block（computed/declared 都是），无法据其判断作者意图，故从原始 CSS 扫显式声明。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, List<Keyframe>> Keyframes = new();   // @keyframes 表（渲染传 animationTime 时按时刻取帧）
+        // 伪元素作用域 token 集（.cls / #id / tag）：只有 CSS 里所有伪元素选择器都能约成这种 token 时才非 null，
+        // 用来跳过「明显不可能有 ::before/::after 的元素」——每次 GetComputedStyle(el, pseudo) 是一整轮层叠
+        // （实测 1.7ms/元素/次，伪元素前后各一次 + 各自样式再一次 → 每元素最多多花 ~5ms），是快照类输入最大的开销。
+        public HashSet<string>? PseudoScope;
+        // 输入已是浏览器算好的 used value（展平快照）：跳过 GetDeclarations 这第二轮层叠（实测再省 1.4ms/元素）。
+        public bool Precomputed;
     }
 
-    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null)
+    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false)
     {
-        var ctx = new DocContext();
+        var ctx = new DocContext { Precomputed = precomputed };
         // 支持整份 HTML 内嵌 <style>：内容并入 userCss（参数在前、内嵌在后，符合后定义覆盖的层叠顺序），
         // 标签从原文剥除，避免 CSS 源码被当成可见文本渲染；head 里的也会在此被捞回。
         var embedded = Regex.Matches(htmlBody, @"<style[^>]*>(.*?)</style>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -85,7 +91,7 @@ public static class StyleResolver
         ScanVars(userCss, ctx);
         // 伪元素开销较大（每元素多两次 computed 层叠），仅当 CSS 里确有 ::before/::after 规则时才启用
         ctx.HasPseudoRules = Regex.IsMatch(userCss ?? "", @"::?(before|after)\b", RegexOptions.IgnoreCase);
-        if (ctx.HasPseudoRules) ScanPseudoDisplay(userCss ?? "", ctx);
+        if (ctx.HasPseudoRules) { ctx.PseudoScope = new(StringComparer.OrdinalIgnoreCase); ScanPseudoDisplay(userCss ?? "", ctx); }
         // @keyframes 表（仅当 CSS 里确有 @keyframes 时解析；渲染传 animationTime 才按时刻取帧覆盖样式）
         if (Regex.IsMatch(userCss ?? "", @"@keyframes\b", RegexOptions.IgnoreCase))
             ctx.Keyframes = Animation.ParseKeyframes(userCss ?? "");
@@ -333,7 +339,7 @@ public static class StyleResolver
 
         // 伪元素 ::before/::after：仅当 CSS 里确有伪元素规则时才建生成盒（content 片段 + 自身样式），
         // 实际注入与 counter 回填在 BuildDocument 末尾的 PseudoContent.Apply 文档序 pass 里做。
-        if (ctx.HasPseudoRules)
+        if (ctx.HasPseudoRules && PseudoMayMatch(element, ctx))
         {
             cs.Before = BuildPseudoGen(window, element, cs, ctx, "::before");
             cs.After = BuildPseudoGen(window, element, cs, ctx, "::after");
@@ -390,14 +396,40 @@ public static class StyleResolver
             var dm = Regex.Match(body, @"(?:^|[;\s])display\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
             foreach (var selPart in sel.Split(','))
             {
-                var stripped = Regex.Replace(selPart, @"::?(before|after)", " ", RegexOptions.IgnoreCase);
-                var toks = Regex.Split(stripped.Trim(), @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
-                var last = toks.Length > 0 ? toks[^1] : "";
-                last = Regex.Replace(last, @"[:\[].*$", "");   // 去伪类/属性段
+                var stripped = Regex.Replace(selPart, @"::?(before|after)", " ", RegexOptions.IgnoreCase).Trim();
+                var toks = Regex.Split(stripped, @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
+                var rawLast = toks.Length > 0 ? toks[^1] : "";
+                // 末段含 :is()/:where()/属性选择器/通配/伪类以外的结构时，token 匹配不再保守 → 放弃跳过
+                if (rawLast.Length == 0 || rawLast.Contains(":is(") || rawLast.Contains(":where(")
+                    || rawLast.Contains('[') || rawLast.Contains('*') || rawLast.Contains(":not("))
+                {
+                    ctx.PseudoScope = null;
+                    continue;
+                }
+                var last = Regex.Replace(rawLast, @"[:\[].*$", "");   // 去伪类/属性段
+                if (ctx.PseudoScope != null && last.Length > 0) ctx.PseudoScope.Add(last.ToLowerInvariant());
                 if (last.Length == 0) continue;
                 if (dm.Success) ctx.PseudoDisplay[last + suffix] = dm.Groups[1].Value.Trim().ToLowerInvariant();
             }
         }
+    }
+
+    /// <summary>
+    /// 该元素是否可能命中某条伪元素规则：按「末段简单选择器 token」保守筛（class &gt; id &gt; tag 任一命中即放行）。
+    /// ctx.PseudoScope 为 null（CSS 里有 :is()/[attr]/* 之类无法约成 token 的末段）时一律放行，保持旧行为。
+    /// </summary>
+    static bool PseudoMayMatch(IElement element, DocContext ctx)
+    {
+        var scope = ctx.PseudoScope;
+        if (scope == null || scope.Count == 0) return true;
+        if (scope.Contains(element.TagName.ToLowerInvariant())) return true;
+        var id = element.GetAttribute("id");
+        if (!string.IsNullOrEmpty(id) && scope.Contains("#" + id)) return true;
+        var cls = element.GetAttribute("class");
+        if (!string.IsNullOrWhiteSpace(cls))
+            foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                if (scope.Contains("." + c)) return true;
+        return false;
     }
 
     /// <summary>按元素 class/id/tag 命中伪元素原始 CSS 索引（就近优先 class &gt; id &gt; tag）。</summary>
@@ -460,8 +492,11 @@ public static class StyleResolver
         // GetDeclarations 返回的是做完 cascade 排序、但未经设备折算的原始声明值，
         // 其中的百分比被原样保留。需要按包含块解析的盒子尺寸属性用它兜底。
         ICssStyleDeclaration? decls = null;
-        try { decls = window.GetStyleCollection().GetDeclarations(element, pseudo); }
-        catch { /* 拿不到声明值时退回 computed，不让渲染崩 */ }
+        if (!ctx.Precomputed)
+        {
+            try { decls = window.GetStyleCollection().GetDeclarations(element, pseudo); }
+            catch { /* 拿不到声明值时退回 computed，不让渲染崩 */ }
+        }
         string Spec(string prop)
         {
             try { return ExpandVars(decls?.GetPropertyValue(prop) ?? "", element, ctx); }

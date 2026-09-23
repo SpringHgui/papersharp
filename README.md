@@ -200,7 +200,10 @@ node extension/test/e2e-browser.mjs --diag :: 端到端实测（Edge 无头装�
 快照走「计算样式展平」而不是把网页 CSS 原样交给引擎：浏览器负责解析级联 / `@layer` / 媒体查询 /
 阴影 DOM，插件只下发每个元素最终生效的扁平规则（签名去重后通常 200–300 KB），正好落在引擎的
 CSS 子集上；`overflow:hidden` 用已实现的 `clip-path` 近似、`background-image: url()` 合成成绝对定位
-`<img>`、图片一律内联成 data URI。取舍与已知限制见 [extension/README.md](extension/README.md)。
+`<img>`、图片一律内联成 data URI。真实网站的错位主要靠「钉死」解决——块级盒直接按浏览器算好的矩形
+`position:absolute` 摆位（长图整页钉，PDF 只钉 `fixed/sticky/absolute` 与 flex/grid 子女以保住分页回流，
+表格只钉位置）。导出侧再把快照标记成 `precomputed`，让引擎跳过「声明值」那一轮层叠：
+Bootstrap 控制台样张的引擎段从 10.9 s 降到 3.0 s。取舍与已知限制见 [extension/README.md](extension/README.md)。
 
 ## 支持的 CSS 子集
 

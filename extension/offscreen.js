@@ -17,6 +17,7 @@ let boot = null;
 const jobs = new Map(); // id → { parts: Map<seq,string> }
 const blobs = new Set();
 let busy = false;
+let bootMs = 0;   // 冷启动耗时（含字体安装），只统计一次
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg?.k) {
@@ -51,6 +52,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 async function ensureBooted() {
   if (!boot) {
+    const tb = performance.now();
     boot = (async () => {
       // wasm 无系统字体：先把打包的雅黑子集装成引擎的兜底字体，
       // 否则网页里任何未注册 font-family 的中文都会出豆腐块。
@@ -59,6 +61,7 @@ async function ensureBooted() {
         fetchAsset("fonts/YaheiSub-Bold.ttf"),
       ]);
       await installSubsetFont(regular, bold);
+      bootMs = Math.round(performance.now() - tb);
       return info();
     })();
     boot.catch(() => (boot = null));   // 冷启动失败不留坏单例
@@ -83,6 +86,7 @@ async function handleRender({ id, total, opts, filename, tabId }) {
     const snapshot = JSON.parse(joinParts(job));
     jobs.delete(id);
 
+    const tr = performance.now();
     const bytes = await renderRaw({
       html: snapshot.html,
       css: snapshot.css + pageRule(opts),
@@ -93,14 +97,18 @@ async function handleRender({ id, total, opts, filename, tabId }) {
       pageSize: opts.pageSize,
       icoSize: opts.icoSize,
       animationTime: opts.animationTime,
+      // 快照里的每个值都是浏览器算好的 used px（没有 % / calc / 层叠歧义），
+      // 让引擎跳过「声明值」那第二轮层叠（实测每元素省 ~1.4ms，是导出耗时的大头之一）
+      precomputed: true,
     });
+    const renderMs = Math.round(performance.now() - tr);
 
     const name = filename || filenameFor(snapshot.title, opts.format);
     const url = URL.createObjectURL(new Blob([bytes], { type: mimeOf(name) }));
     blobs.add(url);
     const sent = await chrome.runtime.sendMessage({ k: "download", id, url, filename: name, tabId, bytes: bytes.length });
     if (!sent?.ok) throw new Error(sent?.error || "下载提交失败");
-    return { ok: true, bytes: bytes.length };
+    return { ok: true, bytes: bytes.length, renderMs, bootMs };
   } catch (e) {
     jobs.delete(id);
     return { ok: false, error: String(e?.message || e).replace(/^Error: /, "").slice(0, 400) };

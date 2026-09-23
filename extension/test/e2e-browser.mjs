@@ -33,6 +33,7 @@ const EXT_NAME = "PaperSharp 网页导出";
 const PORT = Number(arg("port", 9333));
 const FORMATS = (arg("formats", "pdf,png,jpeg,webp,svg,ico")).split(",").filter(Boolean);
 const PAGE = arg("page", "showcase");
+const TARGET = arg("url", "");   // 直接指向真实站点（跳过本地 fixture 服务器）
 const EXPORT_TIMEOUT = Number(arg("timeout", 150)) * 1000;
 
 // setAutoAttach 会替我们抢先 attach 新 target，sessionId 只能从事件里拿（再 attachToTarget 会报 already attached）
@@ -77,9 +78,8 @@ async function main() {
     });
     console.log(`${basename(browser)} ${version.Browser} · CDP :${PORT} · 无头=${!flag("headed")}`);
 
-    const sw = await attachOurServiceWorker(cdp, sessions);
-    const extId = sw.url.match(/\/\/([^/]+)/)[1];
-    console.log(`扩展已装载：${EXT_NAME} (${extId})`);
+    // SW 在 MV3 里是懒唤醒的，冷启动时可能还没起来；扩展是否装载由页面侧注入证据判定
+    findServiceWorker(cdp, sessions).then((sw) => sw && console.log(`扩展 SW：${sw.url}`));
 
     const page = await attachTarget(cdp, sessions, (t) => t.type === "page", "page", async (t) => {
       const { sessionId } = await cdp.send("Target.attachToTarget", { targetId: t.targetId, flatten: true });
@@ -88,12 +88,17 @@ async function main() {
       return sessionId;
     });
 
-    await cdp.send("Page.navigate", { url: `${PAGE_ORIGIN}/${PAGE}.html` }, page.sessionId);
+    const target = TARGET || `${PAGE_ORIGIN}/${PAGE}.html`;
+    await cdp.send("Page.navigate", { url: target }, page.sessionId);
     await waitReady(cdp, page.sessionId);
     await sleep(2000);   // content script 在 document_idle 挂载，再等阴影 DOM / canvas / 懒加载
 
-    const mounted = await evalIn(cdp, page.sessionId, `!!document.querySelector('[data-papersharp-ui]')`);
-    console.log(`测试页：${PAGE_ORIGIN}/${PAGE}.html · 右上角按钮已注入=${mounted}\n`);
+    let mounted = false;
+    for (let i = 0; i < 20 && !mounted; i++) {
+      mounted = await evalIn(cdp, page.sessionId, `!!document.querySelector('[data-papersharp-ui]')`);
+      if (!mounted) await sleep(500);
+    }
+    console.log(`测试页：${target} · 右上角按钮已注入=${mounted}\n`);
     if (!mounted) throw new Error("content script 未注入（检查扩展是否被浏览器策略禁用）");
     await evalIn(cdp, page.sessionId, `window.__psTrace=[];addEventListener('message',e=>{if(e.data&&String(e.data.type||'').startsWith('papersharp:'))window.__psTrace.push(e.data)});1`);
     await uiSmoke(cdp, page.sessionId);
@@ -104,10 +109,20 @@ async function main() {
       let res;
       try { res = await exportVia(cdp, page.sessionId, format); }
       catch (e) { res = { ok: false, error: String(e.message || e) }; }
-      const row = { format, ok: !!res.ok, bytes: res.bytes || 0, ms: Date.now() - t0, filename: res.filename, error: res.error, warnings: res.warnings || [] };
+      if (flag("dump") && res.dump) {
+        writeFileSync(join(outDir, "snapshot.html"), res.dump.html);
+        writeFileSync(join(outDir, "snapshot.css"), res.dump.css);
+        console.log("   快照已落盘：out/snapshot.html + snapshot.css（视口 " + res.dump.viewportWidth + "px · 文档高 " + res.dump.contentHeight + "px）");
+      }
+      const row = { format, ok: !!res.ok, bytes: res.bytes || 0, ms: Date.now() - t0, filename: res.filename, error: res.error, warnings: res.warnings || [], timing: res.timing || null };
       report.push(row);
       console.log(`${row.ok ? "✔" : "✘"} ${format.padEnd(5)} ${String(row.bytes).padStart(9)} B  ${(row.ms / 1000).toFixed(1)}s  ${row.error || ""}`);
       if (row.warnings?.length) console.log(`   提示：${row.warnings.join(" / ")}`);
+      if (row.timing) {
+        const t = row.timing;
+        console.log(`   耗时：总 ${(row.ms / 1000).toFixed(1)}s = 冷启 ${(t.bootMs / 1000).toFixed(1)}s + 展平 ${(t.walkMs / 1000).toFixed(1)}s(其中图片 ${(t.imageMs / 1000).toFixed(1)}s, getComputedStyle ${t.computedStyles} 次) + 传快照 ${(t.transportMs / 1000).toFixed(1)}s + 引擎 ${(t.renderMs / 1000).toFixed(1)}s`);
+        console.log(`   规模：${t.elements} 元素 / ${t.classes} 组样式 / 快照 ${t.payloadKB} KB (html ${t.htmlKB} + css ${t.cssKB})`);
+      }
       if (!row.ok && flag("diag")) {
         console.log("   页面回执轨迹：" + JSON.stringify(await evalIn(cdp, page.sessionId, "window.__psTrace") || []).slice(0, 700));
         console.log("   扩展侧日志：\n" + (logs.length ? logs.map((l) => `     [${l.label}/${l.level}] ${l.text}`).join("\n") : "     (无)"));
@@ -153,9 +168,9 @@ async function main() {
 }
 
 /** 逐个 chrome-extension service worker 问 manifest.name，认出我们自己的那个（内置组件扩展也在列表里）。 */
-async function attachOurServiceWorker(cdp, sessions) {
+async function findServiceWorker(cdp, sessions, rounds = 8) {
   const tried = new Set();
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < rounds; i++) {
     const { targetInfos } = await cdp.send("Target.getTargets");
     for (const t of targetInfos.filter((x) => x.type === "service_worker" && !tried.has(x.targetId))) {
       tried.add(t.targetId);
@@ -169,7 +184,7 @@ async function attachOurServiceWorker(cdp, sessions) {
     }
     await sleep(500);
   }
-  throw new Error(`没找到「${EXT_NAME}」的 service worker —— 品牌版 Chrome 会忽略 --load-extension，改用 Edge 或 --headed`);
+  return null;
 }
 
 async function attachTarget(cdp, sessions, match, label, attach) {
@@ -204,10 +219,15 @@ async function uiSmoke(cdp, sessionId) {
 }
 
 async function exportVia(cdp, sessionId, format) {
+  // 输出宽度默认取视口宽（= 面板默认值，k=1 不缩放）；--width 900 才测等比缩放路径
+  const width = Number(arg("width", 0)) || "document.documentElement.clientWidth";
+  // --scroll 用于验证「滚动后导出」：fixed 元素不该被钉到滚动位置那么远
+  const scrollTo = Number(arg("scroll", 0));
+  if (scrollTo) await evalIn(cdp, sessionId, `scrollTo(0,${scrollTo});1`);
   const expression = `new Promise((resolve)=>{
     const done=(e)=>{ if(e.data&&e.data.type==='papersharp:export-result'){ removeEventListener('message',done); resolve(e.data);} };
     addEventListener('message',done);
-    postMessage({type:'papersharp:export', format:${JSON.stringify(format)}, width:900, scale:${format === "pdf" || format === "svg" ? 1 : 2}, quality:88, pageSize:'A4', icoSize:256, animationTime:1.0}, '*');
+    postMessage({type:'papersharp:export', wantDump:${flag("dump")}, format:${JSON.stringify(format)}, width:${width}, scale:${format === "pdf" || format === "svg" ? 1 : 2}, quality:88, pageSize:'A4', icoSize:256, animationTime:1.0}, '*');
     setTimeout(()=>resolve({type:'papersharp:export-result', ok:false, error:'页面侧等待超时'}), ${EXPORT_TIMEOUT});
   })`;
   const res = await withTimeout(

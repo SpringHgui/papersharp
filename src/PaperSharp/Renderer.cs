@@ -14,13 +14,13 @@ public enum PageSize { A4, Letter }
 /// </summary>
 public static class Renderer
 {
-    public static byte[] RenderPdf(string html, string css, PageSize pageSize = PageSize.A4, string? baseDir = null, double? animationTime = null)
+    public static byte[] RenderPdf(string html, string css, PageSize pageSize = PageSize.A4, string? baseDir = null, double? animationTime = null, bool precomputed = false)
     {
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
         var (defW, defH) = GetPageSize(pageSize);
         var spec = AtPageParser.Parse(css, defW, defH);   // 有 @page 则覆盖默认尺寸/边距
-        var (body, docInfo) = BuildMeasuredBody(html, css, spec.ContentW, animationTime);
+        var (body, docInfo) = BuildMeasuredBody(html, css, spec.ContentW, animationTime, precomputed);
         var pages = Paginator.Paginate(body, spec);
         var (outlines, links) = Pdf.PdfSemantic.Collect(pages);   // M5：书签 + 链接注释
 
@@ -55,14 +55,14 @@ public static class Renderer
     /// 渲染单页长图 PNG。<paramref name="scale"/> 是设备缩放因子（retina 导出）：布局仍按 CSS px 计算，
     /// 但画布放大 scale 倍后光栅，文字/几何以更高像素渲染 → 清晰。scale=1 保持旧行为（~96 DPI，偏糊）。
     /// </summary>
-    public static byte[] RenderPng(string html, string css, float width, string? baseDir = null, float scale = 1f, double? animationTime = null)
-        => RenderImage(html, css, width, SKEncodedImageFormat.Png, 100, baseDir, scale, animationTime);
+    public static byte[] RenderPng(string html, string css, float width, string? baseDir = null, float scale = 1f, double? animationTime = null, bool precomputed = false)
+        => RenderImage(html, css, width, SKEncodedImageFormat.Png, 100, baseDir, scale, animationTime, precomputed);
 
     /// <summary>光栅输出（PNG / JPEG / WebP）。JPEG 不支持透明，画布本就是白底无影响。</summary>
     public static byte[] RenderImage(string html, string css, float width, SKEncodedImageFormat format,
-        int quality = 90, string? baseDir = null, float scale = 1f, double? animationTime = null)
+        int quality = 90, string? baseDir = null, float scale = 1f, double? animationTime = null, bool precomputed = false)
     {
-        var (surface, _) = RasterLayout(html, css, width, baseDir, ref scale, animationTime);
+        var (surface, _) = RasterLayout(html, css, width, baseDir, ref scale, animationTime, precomputed);
         using (surface)
         {
             using var image = surface.Snapshot();
@@ -75,10 +75,10 @@ public static class Renderer
     /// ICO 输出：Vista+ 支持 PNG 压缩的图标条目。取文档左上 width×width 方形区缩放到 size×size，
     /// 打包 ICONDIR(6B) + ICONDIRENTRY(16B) + PNG。size 建议 16/32/48/64/128/256。
     /// </summary>
-    public static byte[] RenderIco(string html, string css, int size, float width, string? baseDir = null)
+    public static byte[] RenderIco(string html, string css, int size, float width, string? baseDir = null, bool precomputed = false)
     {
         float scale = 1f;
-        var (surface, _) = RasterLayout(html, css, width, baseDir, ref scale);
+        var (surface, _) = RasterLayout(html, css, width, baseDir, ref scale, null, precomputed);
         byte[] png;
         using (surface)
         {
@@ -105,7 +105,7 @@ public static class Renderer
     }
 
     /// <summary>SVG 输出：把布局树序列化为矢量 SVG（浏览器/编辑器可打开，文字可选中）。</summary>
-    public static byte[] RenderSvg(string html, string css, float width, string? baseDir = null, double? animationTime = null)
+    public static byte[] RenderSvg(string html, string css, float width, string? baseDir = null, double? animationTime = null, bool precomputed = false)
     {
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
@@ -113,7 +113,7 @@ public static class Renderer
         var spec = AtPageParser.Parse(css, defW, defH);
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
 
-        var computed = StyleResolver.BuildDocument(html, css, animationTime);
+        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed);
         var root = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(root, Math.Max(1, width - mL - mR));
         LayoutBuilder.Position(root, mL, mT);
@@ -122,7 +122,7 @@ public static class Renderer
     }
 
     /// <summary>共享的 PNG 光栅流程：布局 → 定位 → 建 surface 并绘制。返回 surface 与布局高。</summary>
-    static (SKSurface, float) RasterLayout(string html, string css, float width, string? baseDir, ref float scale, double? animationTime = null)
+    static (SKSurface, float) RasterLayout(string html, string css, float width, string? baseDir, ref float scale, double? animationTime = null, bool precomputed = false)
     {
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
@@ -131,7 +131,7 @@ public static class Renderer
         // 预览也按 @page 边距留白，视觉更接近成品页（页眉页脚不画，因为长图不分页）
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
 
-        var computed = StyleResolver.BuildDocument(html, css, animationTime);
+        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed);
         var root = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(root, Math.Max(1, width - mL - mR));
         LayoutBuilder.Position(root, mL, mT);
@@ -151,9 +151,9 @@ public static class Renderer
     static void Prepare(string css)
         => FontFaceParser.ParseAndRegister(css);   // 登记 @font-face 自定义字体（落在当前 RenderScope）
 
-    static (BlockBox body, Css.DocumentInfo? docInfo) BuildMeasuredBody(string html, string css, float width, double? animationTime = null)
+    static (BlockBox body, Css.DocumentInfo? docInfo) BuildMeasuredBody(string html, string css, float width, double? animationTime = null, bool precomputed = false)
     {
-        var computed = StyleResolver.BuildDocument(html, css, animationTime);
+        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed);
         var body = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(body, width);
         return (body, computed.Document);

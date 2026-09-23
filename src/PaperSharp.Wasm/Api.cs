@@ -30,18 +30,20 @@ public static partial class Api
             int quality = root.TryGetProperty("quality", out var q) ? q.GetInt32() : 90;
             // 确定性取帧时刻（秒）；缺省则不做动画覆盖，走元素自身样式
             double? animationTime = root.TryGetProperty("animationTime", out var at) ? at.GetDouble() : null;
+            // 展平快照（浏览器算好的 used px）：跳过 AngleSharp 的第二轮层叠（GetDeclarations），实测省 ~1.4ms/元素
+            bool precomputed = root.TryGetProperty("precomputed", out var pc) && pc.ValueKind == JsonValueKind.True;
 
             byte[] bytes = format switch
             {
-                "png" => Renderer.RenderPng(html, css, width, scale: scale, animationTime: animationTime),
-                "jpeg" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Jpeg, quality, scale: scale, animationTime: animationTime),
-                "webp" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Webp, quality, scale: scale, animationTime: animationTime),
-                "svg" => Renderer.RenderSvg(html, css, width, animationTime: animationTime),
+                "png" => Renderer.RenderPng(html, css, width, scale: scale, animationTime: animationTime, precomputed: precomputed),
+                "jpeg" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Jpeg, quality, scale: scale, animationTime: animationTime, precomputed: precomputed),
+                "webp" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Webp, quality, scale: scale, animationTime: animationTime, precomputed: precomputed),
+                "svg" => Renderer.RenderSvg(html, css, width, animationTime: animationTime, precomputed: precomputed),
                 "pdf" => Renderer.RenderPdf(html, css,
                     GetStr(root, "pageSize").Equals("letter", StringComparison.OrdinalIgnoreCase) ? PageSize.Letter : PageSize.A4,
-                    animationTime: animationTime),
+                    animationTime: animationTime, precomputed: precomputed),
                 "ico" => Renderer.RenderIco(html, css,
-                    root.TryGetProperty("icoSize", out var ic) ? ic.GetInt32() : 32, width),
+                    root.TryGetProperty("icoSize", out var ic) ? ic.GetInt32() : 32, width, precomputed: precomputed),
                 _ => throw new ArgumentException($"unsupported format: {format}"),
             };
             return Ok(Convert.ToBase64String(bytes));
