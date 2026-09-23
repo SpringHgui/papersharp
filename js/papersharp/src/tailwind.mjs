@@ -52,6 +52,28 @@ const GRADIENT_DIRS = {
   tr: "to top right", tl: "to top left", br: "to bottom right", bl: "to bottom left",
 };
 
+// Tailwind animate-* 工具类：映射到 animation 简写 + 对应 @keyframes（惰性按需注入）。
+// 引擎为确定性单帧渲染（无 transform 支持）：pulse 靠 opacity 可正常取帧；
+// spin/ping/bounce 依赖 transform，关键帧会被解析但位移不生效（不做假变换）。
+const ANIMATIONS = {
+  pulse: {
+    shorthand: "pulse 2s cubic-bezier(0.4,0,0.6,1) infinite",
+    keyframes: "@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}",
+  },
+  spin: {
+    shorthand: "spin 1s linear infinite",
+    keyframes: "@keyframes spin{to{transform:rotate(360deg)}}",
+  },
+  ping: {
+    shorthand: "ping 1s cubic-bezier(0,0,0.2,1) infinite",
+    keyframes: "@keyframes ping{75%,100%{transform:scale(2);opacity:0}}",
+  },
+  bounce: {
+    shorthand: "bounce 1s infinite",
+    keyframes: "@keyframes bounce{0%,100%,20%,53%{transform:translateY(0)}40%,80%{transform:translateY(-30%)}70%{transform:translateY(-10%)}}",
+  },
+};
+
 function spacing(v) {
   if (v === "px") return 1;
   if (v === "auto") return null;
@@ -194,6 +216,9 @@ export function compileToken(token) {
   if ((m = /^opacity-(\d+)$/.exec(token))) return [d("opacity", Number(m[1]) / 100)];
   if ((m = /^z-(\d+)$/.exec(token))) return [d("z-index", m[1])];
 
+  // 动画（animate-pulse/spin/ping/bounce）
+  if ((m = /^animate-(pulse|spin|ping|bounce)$/.exec(token))) return [d("animation", ANIMATIONS[m[1]].shorthand)];
+
   // 定位偏移（含负值）
   if ((m = /^-(t|r|b|l)-(.+)$/.exec(token))) {
     const v = spacing(m[2]); if (v != null) return [d({ t: "top", r: "right", b: "bottom", l: "left" }[m[1]], -v + "px")];
@@ -290,7 +315,13 @@ export function createCompiler() {
       return this.resolveAll([token]);
     },
     css() {
-      return PREFLIGHT + "\n" + rules
+      // 按需注入用到的 @keyframes：扫描已生成规则里的 animation 简写，取其动画名
+      const used = new Set();
+      for (const [, decls] of rules)
+        for (const [p, v] of decls)
+          if (p === "animation") { const name = /([a-zA-Z_][\w-]*)/.exec(String(v).replace(/^\s*none\b/, "")); if (name && ANIMATIONS[name[1]]) used.add(name[1]); }
+      const kf = [...used].map((n) => ANIMATIONS[n].keyframes).join("\n");
+      return PREFLIGHT + (kf ? "\n" + kf + "\n" : "\n") + rules
         .map(([name, decls]) => `.${name} { ${decls.map(([p, v]) => `${p}:${v}`).join(";")} }`)
         .join("\n");
     },

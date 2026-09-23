@@ -39,7 +39,7 @@ public static class StyleResolver
         """;
 
     // AngleSharp.Css 不实现的属性（computed/declared 都拿不到），从原始 CSS 里按选择器兜底扫出来。
-    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment" };
+    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -65,9 +65,10 @@ public static class StyleResolver
         // 伪元素显式声明的 display（"末token::before/after" → 值）。AngleSharp 对伪元素 UA 默认注入
         // display:block（computed/declared 都是），无法据其判断作者意图，故从原始 CSS 扫显式声明。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<Keyframe>> Keyframes = new();   // @keyframes 表（渲染传 animationTime 时按时刻取帧）
     }
 
-    public static ComputedStyle BuildDocument(string htmlBody, string userCss)
+    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null)
     {
         var ctx = new DocContext();
         // 支持整份 HTML 内嵌 <style>：内容并入 userCss（参数在前、内嵌在后，符合后定义覆盖的层叠顺序），
@@ -84,7 +85,10 @@ public static class StyleResolver
         ScanVars(userCss, ctx);
         // 伪元素开销较大（每元素多两次 computed 层叠），仅当 CSS 里确有 ::before/::after 规则时才启用
         ctx.HasPseudoRules = Regex.IsMatch(userCss ?? "", @"::?(before|after)\b", RegexOptions.IgnoreCase);
-        if (ctx.HasPseudoRules) ScanPseudoDisplay(userCss, ctx);
+        if (ctx.HasPseudoRules) ScanPseudoDisplay(userCss ?? "", ctx);
+        // @keyframes 表（仅当 CSS 里确有 @keyframes 时解析；渲染传 animationTime 才按时刻取帧覆盖样式）
+        if (Regex.IsMatch(userCss ?? "", @"@keyframes\b", RegexOptions.IgnoreCase))
+            ctx.Keyframes = Animation.ParseKeyframes(userCss ?? "");
         // 调用方常把整份 HTML 文档传进来：抽 <title> 供元数据用，只把 <body> 内容当正文，
         // 否则 head 里的 meta/title 会被当成可见块渲染。
         var mt = Regex.Match(htmlBody, @"<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -111,6 +115,8 @@ public static class StyleResolver
 
         var root = Walk(window, body, null, ctx);
         if (ctx.HasPseudoRules) PseudoContent.Apply(root);   // 文档序求值 counter + 注入伪元素匿名盒
+        if (animationTime.HasValue && ctx.Keyframes.Count > 0)
+            Animation.Apply(root, ctx.Keyframes, animationTime.Value);   // 确定性取帧：按时刻插值覆盖样式
         root.Document = new DocumentInfo(ctx.Title, ctx.Author, ctx.Description, ctx.Keywords);
         return root;
     }
@@ -639,6 +645,9 @@ public static class StyleResolver
         // 故把 none/空视为「无声明」，强制走原始 CSS 兜底（按 class>id>tag 命中）。
         s.CounterReset = Lookup("counter-reset", element, CleanCounter(Raw("counter-reset")), ctx) ?? "";
         s.CounterIncrement = Lookup("counter-increment", element, CleanCounter(Raw("counter-increment")), ctx) ?? "";
+
+        // animation 简写（AngleSharp 不实现，走原始 CSS 兜底表）：解析进样式字段，渲染传 animationTime 时按时刻取帧
+        Animation.ParseShorthand(Lookup("animation", element, "", ctx) ?? "", s);
 
         return s;
     }

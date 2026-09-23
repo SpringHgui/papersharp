@@ -1,0 +1,299 @@
+// 端到端实测：装载未打包扩展 → 打开测试页 → 逐个格式导出 → 核对 chrome.downloads 落地文件。
+// 这是唯一能真正验证「展平 + 图片内联 + WASM 渲染 + 下载」全链路的方式（不引第三方依赖，Node 22 内置 WebSocket 直连 CDP）。
+//
+//   node extension/test/e2e-browser.mjs                        # 全 6 个格式
+//   node extension/test/e2e-browser.mjs --formats png,pdf --diag
+//   node extension/test/e2e-browser.mjs --page long-article
+//   node extension/test/e2e-browser.mjs --browser chrome       # 默认 edge
+//
+// ⚠ 品牌版 Chrome 会忽略 --load-extension（实测：只加了内置组件扩展，我们的扩展根本没装载），
+//   所以默认用 Edge（Chromium 内核，同一套 MV3 代码）。要跑 Chrome 需换 Chromium/Canary。
+//
+// 产物：extension/test/out/downloads/*（--default-download-directory 指到这里）+ report.json
+
+import { spawn } from "node:child_process";
+import { existsSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname, basename } from "node:path";
+import { fileURLToPath } from "node:url";
+import { startServers, PAGE_ORIGIN } from "./serve.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const extDir = join(here, "..");
+const outDir = join(here, "out");
+const dlDir = join(outDir, "downloads");
+const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : dflt; };
+const flag = (name) => process.argv.includes(`--${name}`);
+
+const BROWSERS = {
+  edge: ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe"],
+  chrome: ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"],
+};
+const EXT_NAME = "PaperSharp 网页导出";
+const PORT = Number(arg("port", 9333));
+const FORMATS = (arg("formats", "pdf,png,jpeg,webp,svg,ico")).split(",").filter(Boolean);
+const PAGE = arg("page", "showcase");
+const EXPORT_TIMEOUT = Number(arg("timeout", 150)) * 1000;
+
+// setAutoAttach 会替我们抢先 attach 新 target，sessionId 只能从事件里拿（再 attachToTarget 会报 already attached）
+const autoSessions = new Map();   // targetId → sessionId
+
+main().catch((e) => { console.error("\n[e2e] 失败：", e); process.exitCode = 1; });
+
+async function main() {
+  mkdirSync(dlDir, { recursive: true });
+  const browser = BROWSERS[arg("browser", "edge")]?.find(existsSync);
+  if (!browser) { console.error(`找不到浏览器可执行文件（${arg("browser", "edge")}），用 --browser edge|chrome 指定`); process.exit(1); }
+
+  const servers = await startServers();
+  const profile = mkdtempSync(join(tmpdir(), "papersharp-e2e-"));
+  const proc = spawn(browser, [
+    ...(flag("headed") ? [] : ["--headless=new"]),
+    `--remote-debugging-port=${PORT}`,
+    `--user-data-dir=${profile}`,
+    `--load-extension=${extDir}`,
+    `--default-download-directory=${dlDir}`,
+    "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars",
+    "--window-size=1440,1000", "about:blank",
+  ], { stdio: "ignore" });
+
+  const logs = [];
+  const sessions = new Map();
+  let cdp = null;
+  try {
+    const version = await pollJson("/json/version", 30000);
+    cdp = new Cdp(version.webSocketDebuggerUrl);
+    await cdp.open();
+    cdp.onEvent((msg) => absorb(msg));
+    // 自动挂上所有新建 target（offscreen 文档是导出时才创建的），逐个开 Runtime 收 console
+    await cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+    cdp.onEvent(async (msg) => {
+      if (msg.method !== "Target.attachedToTarget") return;
+      const { sessionId, targetInfo } = msg.params;
+      autoSessions.set(targetInfo.targetId, sessionId);
+      if (sessions.has(sessionId)) return;
+      sessions.set(sessionId, targetInfo.url.includes("offscreen") ? "offscreen" : `target:${targetInfo.type}`);
+      try { await cdp.send("Runtime.enable", {}, sessionId); } catch { /* 忽略 */ }
+    });
+    console.log(`${basename(browser)} ${version.Browser} · CDP :${PORT} · 无头=${!flag("headed")}`);
+
+    const sw = await attachOurServiceWorker(cdp, sessions);
+    const extId = sw.url.match(/\/\/([^/]+)/)[1];
+    console.log(`扩展已装载：${EXT_NAME} (${extId})`);
+
+    const page = await attachTarget(cdp, sessions, (t) => t.type === "page", "page", async (t) => {
+      const { sessionId } = await cdp.send("Target.attachToTarget", { targetId: t.targetId, flatten: true });
+      await cdp.send("Runtime.enable", {}, sessionId);
+      await cdp.send("Page.enable", {}, sessionId);
+      return sessionId;
+    });
+
+    await cdp.send("Page.navigate", { url: `${PAGE_ORIGIN}/${PAGE}.html` }, page.sessionId);
+    await waitReady(cdp, page.sessionId);
+    await sleep(2000);   // content script 在 document_idle 挂载，再等阴影 DOM / canvas / 懒加载
+
+    const mounted = await evalIn(cdp, page.sessionId, `!!document.querySelector('[data-papersharp-ui]')`);
+    console.log(`测试页：${PAGE_ORIGIN}/${PAGE}.html · 右上角按钮已注入=${mounted}\n`);
+    if (!mounted) throw new Error("content script 未注入（检查扩展是否被浏览器策略禁用）");
+    await evalIn(cdp, page.sessionId, `window.__psTrace=[];addEventListener('message',e=>{if(e.data&&String(e.data.type||'').startsWith('papersharp:'))window.__psTrace.push(e.data)});1`);
+    await uiSmoke(cdp, page.sessionId);
+
+    const report = [];
+    for (const format of FORMATS) {
+      const t0 = Date.now();
+      let res;
+      try { res = await exportVia(cdp, page.sessionId, format); }
+      catch (e) { res = { ok: false, error: String(e.message || e) }; }
+      const row = { format, ok: !!res.ok, bytes: res.bytes || 0, ms: Date.now() - t0, filename: res.filename, error: res.error, warnings: res.warnings || [] };
+      report.push(row);
+      console.log(`${row.ok ? "✔" : "✘"} ${format.padEnd(5)} ${String(row.bytes).padStart(9)} B  ${(row.ms / 1000).toFixed(1)}s  ${row.error || ""}`);
+      if (row.warnings?.length) console.log(`   提示：${row.warnings.join(" / ")}`);
+      if (!row.ok && flag("diag")) {
+        console.log("   页面回执轨迹：" + JSON.stringify(await evalIn(cdp, page.sessionId, "window.__psTrace") || []).slice(0, 700));
+        console.log("   扩展侧日志：\n" + (logs.length ? logs.map((l) => `     [${l.label}/${l.level}] ${l.text}`).join("\n") : "     (无)"));
+      }
+    }
+
+    const items = (await evalInExtensionPage(cdp, sessions, `new Promise(r=>chrome.downloads.search({limit:40,orderBy:['-startTime']},r))`)) || [];
+    console.log(`\nchrome.downloads：`);
+    for (const d of items.slice(0, FORMATS.length)) {
+      const moved = normalize(d);
+      const size = d.fileSize || d.bytes || 0;   // blob 下载的 bytes 常报 0，用 fileSize
+      console.log(`  ${String(d.state).padEnd(9)} ${String(Math.round(size / 1024)).padStart(7)} KB  ${moved || d.filename}`);
+    }
+    writeFileSync(join(outDir, "report.json"), JSON.stringify({ report, downloads: items.slice(0, FORMATS.length), logs }, null, 2));
+    console.log(`\n报告：${join(outDir, "report.json")}`);
+    const failed = report.filter((r) => !r.ok);
+    if (failed.length) { console.log(`${failed.length} 个格式失败：${failed.map((f) => f.format).join(", ")}`); process.exitCode = 1; }
+  } finally {
+    cdp?.close();
+    proc.kill("SIGKILL");
+    servers.stop();
+    await sleep(400);
+  }
+
+  function absorb(msg) {
+    if (!msg.sessionId || !msg.method) return;
+    const label = sessions.get(msg.sessionId) || msg.sessionId;
+    const p = msg.params || {};
+    if (msg.method === "Runtime.consoleAPICalled") {
+      logs.push({ label, level: p.type, text: (p.args || []).map((a) => a.value ?? a.description ?? a.type).join(" ") });
+    } else if (msg.method === "Runtime.exceptionThrown") {
+      logs.push({ label, level: "error", text: p.exceptionDetails?.exception?.description || p.exceptionDetails?.text || "exception" });
+    }
+  }
+
+  /** 下载没落到 out/downloads 时（浏览器忽略了目录开关），复制一份回来，别污染用户下载目录 */
+  function normalize(d) {
+    if (!d.filename) return null;
+    if (dirname(d.filename).toLowerCase() === dlDir.toLowerCase()) return null;
+    const target = join(dlDir, basename(d.filename));
+    try { copyFileSync(d.filename, target); return target; } catch { return null; }
+  }
+}
+
+/** 逐个 chrome-extension service worker 问 manifest.name，认出我们自己的那个（内置组件扩展也在列表里）。 */
+async function attachOurServiceWorker(cdp, sessions) {
+  const tried = new Set();
+  for (let i = 0; i < 40; i++) {
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    for (const t of targetInfos.filter((x) => x.type === "service_worker" && !tried.has(x.targetId))) {
+      tried.add(t.targetId);
+      try {
+        const sessionId = autoSessions.get(t.targetId)
+          ?? (await cdp.send("Target.attachToTarget", { targetId: t.targetId, flatten: true })).sessionId;
+        await cdp.send("Runtime.enable", {}, sessionId);
+        const name = await evalIn(cdp, sessionId, `chrome.runtime.getManifest().name`);
+        if (name === EXT_NAME) { sessions.set(sessionId, "sw"); return { ...t, sessionId }; }
+      } catch { /* 休眠的 SW 连不上，下一轮再试 */ }
+    }
+    await sleep(500);
+  }
+  throw new Error(`没找到「${EXT_NAME}」的 service worker —— 品牌版 Chrome 会忽略 --load-extension，改用 Edge 或 --headed`);
+}
+
+async function attachTarget(cdp, sessions, match, label, attach) {
+  for (let i = 0; i < 60; i++) {
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    const t = targetInfos.find(match);
+    if (t) {
+      const sessionId = autoSessions.get(t.targetId)
+        ?? (attach ? await attach(t) : (await cdp.send("Target.attachToTarget", { targetId: t.targetId, flatten: true })).sessionId);
+      sessions.set(sessionId, label);
+      return { ...t, sessionId };
+    }
+    await sleep(500);
+  }
+  throw new Error(`没等到 ${label} 目标`);
+}
+
+/** 真鼠标点一次右上角按钮：closed shadow DOM 里够不着，但 elementFromPoint 会返回宿主，足以判定命中/展开。 */
+async function uiSmoke(cdp, sessionId) {
+  const vw = await evalIn(cdp, sessionId, `innerWidth`);
+  const fab = { x: vw - 56, y: 33 };
+  const hit = (x, y) => evalIn(cdp, sessionId, `!!document.elementFromPoint(${x},${y})?.hasAttribute('data-papersharp-ui')`);
+  const onFab = await hit(fab.x, fab.y);
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await cdp.send("Input.dispatchMouseEvent", { type, x: fab.x, y: fab.y, button: "left", clickCount: 1 }, sessionId);
+  }
+  await sleep(500);
+  const onCard = await hit(vw - 160, 140);
+  console.log(`UI 交互：按钮命中=${onFab} · 点击后面板展开=${onCard}\n`);
+  if (!onFab) throw new Error("右上角按钮不在预期位置（注入或层级有问题）");
+  if (!onCard) console.log("   ⚠ 点击后没在面板区域命中，可能几何变了 —— 用 --diag 看扩展侧日志\n");
+}
+
+async function exportVia(cdp, sessionId, format) {
+  const expression = `new Promise((resolve)=>{
+    const done=(e)=>{ if(e.data&&e.data.type==='papersharp:export-result'){ removeEventListener('message',done); resolve(e.data);} };
+    addEventListener('message',done);
+    postMessage({type:'papersharp:export', format:${JSON.stringify(format)}, width:900, scale:${format === "pdf" || format === "svg" ? 1 : 2}, quality:88, pageSize:'A4', icoSize:256, animationTime:1.0}, '*');
+    setTimeout(()=>resolve({type:'papersharp:export-result', ok:false, error:'页面侧等待超时'}), ${EXPORT_TIMEOUT});
+  })`;
+  const res = await withTimeout(
+    cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, timeout: EXPORT_TIMEOUT + 10000 }, sessionId),
+    EXPORT_TIMEOUT + 20000, `${format} 导出超时`);
+  if (res.exceptionDetails) throw new Error((res.exceptionDetails.exception?.description || res.exceptionDetails.text || "").slice(0, 300));
+  const value = res.result?.value;
+  if (!value) throw new Error("没有拿到导出回执");
+  return value;
+}
+
+async function evalIn(cdp, sessionId, expression) {
+  const r = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, sessionId);
+  if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails).slice(0, 300));
+  return r.result?.value;
+}
+
+async function waitReady(cdp, sessionId) {
+  for (let i = 0; i < 60; i++) {
+    if (await evalIn(cdp, sessionId, "document.readyState") === "complete") return;
+    await sleep(300);
+  }
+  throw new Error("页面未在 18s 内进入 complete");
+}
+
+/** 在扩展自己的上下文里求值（offscreen 优先，退回 service worker） */
+async function evalInExtensionPage(cdp, sessions, expression) {
+  const { targetInfos } = await cdp.send("Target.getTargets");
+  const candidates = targetInfos
+    .filter((t) => t.url.startsWith("chrome-extension://"))
+    .sort((a, b) => Number(b.url.includes("offscreen")) - Number(a.url.includes("offscreen")));
+  for (const t of candidates) {
+    try {
+      const sessionId = autoSessions.get(t.targetId)
+        ?? (await cdp.send("Target.attachToTarget", { targetId: t.targetId, flatten: true })).sessionId;
+      sessions.set(sessionId, t.url.includes("offscreen") ? "offscreen" : "sw");
+      await cdp.send("Runtime.enable", {}, sessionId);
+      const value = await evalIn(cdp, sessionId, expression);
+      if (value != null) return value;
+    } catch { /* 换下一个上下文 */ }
+  }
+  return null;
+}
+
+async function pollJson(path, timeoutMs) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    try { return await (await fetch(`http://127.0.0.1:${PORT}${path}`)).json(); } catch { await sleep(400); }
+  }
+  throw new Error("DevTools 端点未在超时内就绪（端口被占用？用 --port 换一个）");
+}
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+  ]);
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+class Cdp {
+  constructor(url) { this.url = url; this.seq = 0; this.pending = new Map(); this.listeners = []; }
+  onEvent(fn) { this.listeners.push(fn); }
+  open() {
+    this.ws = new WebSocket(this.url);
+    return new Promise((resolve, reject) => {
+      this.ws.addEventListener("open", () => resolve(), { once: true });
+      this.ws.addEventListener("error", (e) => reject(new Error("CDP 连接失败 " + (e.message || ""))));
+      this.ws.addEventListener("message", (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.id && this.pending.has(msg.id)) {
+          const { res, rej } = this.pending.get(msg.id);
+          this.pending.delete(msg.id);
+          msg.error ? rej(new Error(JSON.stringify(msg.error))) : res(msg.result);
+        } else if (msg.method) {
+          for (const fn of this.listeners) fn(msg);
+        }
+      });
+    });
+  }
+  send(method, params = {}, sessionId) {
+    const id = ++this.seq;
+    this.ws.send(JSON.stringify(sessionId ? { id, method, params, sessionId } : { id, method, params }));
+    return new Promise((res, rej) => this.pending.set(id, { res, rej }));
+  }
+  close() { try { this.ws?.close(); } catch { /* 已关闭 */ } }
+}

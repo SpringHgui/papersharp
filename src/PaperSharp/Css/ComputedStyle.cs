@@ -164,6 +164,15 @@ public sealed class ComputedStyle
     public string BreakAfter = "auto";       // auto | page
     public int Widows = 2;                   // 段落在分页后底部保留的最少行数
     public int Orphans = 2;                  // 段落在分页后顶部保留的最少行数
+
+    // 动画（确定性取帧）：animation 简写解析结果。仅当渲染传入 animationTime 时按该时刻求值覆盖样式。
+    public string AnimationName = "";        // 关联的 @keyframes 名（none/空 → 无动画）
+    public float AnimationDuration = 0f;     // 秒
+    public float AnimationDelay = 0f;        // 秒
+    public string AnimationTiming = "ease";  // ease | linear | ease-in | ease-out | ease-in-out | cubic-bezier() | steps()
+    public float AnimationIteration = 1f;    // 次数；infinite → float.PositiveInfinity
+    public string AnimationDirection = "normal"; // normal | reverse | alternate | alternate-reverse
+    public string AnimationFill = "none";    // none | forwards | backwards | both
 }
 
 public enum CssTextAlign { Left, Center, Right }

@@ -88,6 +88,20 @@ Console.WriteLine($"[gfonts] {(gfontCss.Length > 0 ? gfontCss.Count(c => c == '{
 RenderOne("m4", gfontCss);
 RenderOne("m5");
 RenderOne("m7");
+RenderOne("m8");
+RenderOne("m9");
+RenderAnimFrame("m9", 1.0);   // 动画样例：额外输出一张 animationTime=1s 的取帧，直观演示确定性取帧
+
+// 确定性取帧：同一资产在不同 animationTime 下渲染成不同帧
+void RenderAnimFrame(string name, double t)
+{
+    var html = File.ReadAllText(Path.Combine(assets, name + ".html"));
+    var css = File.ReadAllText(Path.Combine(assets, name + ".css"));
+    var png = Renderer.RenderPng(html, css, width: 794, baseDir: assets, scale: 2f, animationTime: t);
+    var path = Path.Combine(outDir, $"{name}@{t:0.#}s.png");
+    File.WriteAllBytes(path, png);
+    Console.WriteLine($"[{name}@{t:0.#}s] PNG {png.Length / 1024:N0} KB (2x, 取帧)");
+}
 
 // M4：同一模板一键出 PNG/JPEG/WebP/ICO/SVG
 void RenderFormats(string name)

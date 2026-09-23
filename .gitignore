@@ -21,3 +21,8 @@ src/PaperSharp.Wasm/_framework/
 src/PaperSharp.Wasm/smoke.png
 src/PaperSharp.Wasm/smoke.pdf
 src/PaperSharp.Wasm/smoke.svg
+
+# 浏览器插件：wasm 与中文字体由 extension/build.mjs 从 dotnet publish 产物同步；实测产物不入库
+/extension/papersharp/wasm/
+/extension/fonts/
+/extension/test/out/

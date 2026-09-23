@@ -12,7 +12,7 @@ public static class Fixture
     public const float PngScale = 2f;
 
     public static readonly string[] Samples =
-        { "invoice", "long", "flex", "img", "report", "pct", "polish", "inline", "table", "m1", "m2", "m3", "m4", "m5", "m7", "m8" };
+        { "invoice", "long", "flex", "img", "report", "pct", "polish", "inline", "table", "m1", "m2", "m3", "m4", "m5", "m7", "m8", "m9" };
 
     public static readonly string AssetsDir = Path.Combine(AppContext.BaseDirectory, "assets");
 

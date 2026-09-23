@@ -34,7 +34,7 @@ async function call(method, ...args) {
   return res.data;
 }
 
-/** @param {{html:string,css:string,format?:string,width?:number,scale?:number,quality?:number,pageSize?:string,icoSize?:number}} req */
+/** @param {{html:string,css:string,format?:string,width?:number,scale?:number,quality?:number,pageSize?:string,icoSize?:number,animationTime?:number}} req */
 export async function renderRaw(req) {
   const b64 = await call("Render", JSON.stringify(req));
   return b64ToBytes(b64);

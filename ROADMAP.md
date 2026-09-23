@@ -3,14 +3,14 @@
 > 对标：**takumi**（<https://github.com/kane50613/takumi>，Rust，JSX/HTML → OG 图 + 分页 PDF，多运行时）。
 > 我们的定位：**.NET 库，HTML/CSS → 文档（发票/报表/合同）+ 图卡**，不做多运行时与前端构建期能力。
 >
-> M1–M4 全部完成、M5 完成前半、M7（复杂文字）与并发安全化已完成（验收样例 `assets/m1–m5/m7.html`，全清单见 README「能力速览」）。本文只记录**剩余差距与下一步**。
+> M1–M4 全部完成、M5 完成前半、M7（复杂文字）与并发安全化已完成；M8（伪元素 `::before/::after` + 计数器、`background-clip: text` 渐变文字、`backdrop-filter` 毛玻璃）与 M9（`@keyframes`/`animation` 确定性取帧）已交付（验收样例 `assets/m1–m5/m7–m9.html`，全清单见 README「能力速览」）。本文只记录**剩余差距与下一步**。
 
 ## 差距清单（takumi 有 / 我们没有的，全量）
 
 | 领域 | 缺口 | 成本 | 备注 |
 |---|---|---|---|
 | 性能/架构 | **AngleSharp 层叠超线性**：2000 元素文档 buildDoc 21–74s | **高（但已量化收益）** | → **M6，待拍板** |
-| 分页/CSS | 伪元素 `::before/::after`、`@media`、`overflow: hidden`、`transform` | 低–中 | 真实网页高频；伪元素要在 StyleResolver 合成匿名 inline 片段 |
+| 分页/CSS | `@media`、`overflow: hidden`、`transform` | 低–中 | 伪元素 `::before/::after` + 计数器、`background-clip: text`、`backdrop-filter` 已于 M8 交付；`transform` 仍未做（依赖它的动画停在基线态） |
 | 定位 | `fixed`/`sticky` 视口语义 | 中 | 静态文档场景价值有限 |
 | 布局 | flex `align-content`（现简化为 flex-start） | 低 | |
 | 文本 | `text-wrap: pretty`、`lang` 汉字分形（zh/ja/ko） | 低–中 | locale 传 SKFont 即可分形 |
@@ -19,7 +19,7 @@
 | PDF | Tagged PDF / PDF/A / PDF/UA、附件（Factur-X XML） | 高 | Skia 后端不出结构树/XMP；`PdfEnhancer` 增量尾部已可挂载 → M5 剩余 |
 | 文字系统 | 嵌套双向（RTL 中整句引语）的完整 UAX#9；国旗 emoji（regional indicator 成对合成）；shaped run 的 letter-spacing | 中 | M7 已交付连写/bidi run/字素/字形回退，这些是其已知边界 |
 | 字体 | `@font-face` 的 `format()` 校验、`local()` | 低 | |
-| 输入 | 网络字体外的 JSX / Tailwind / 动画 GIF·APNG / WASM 多运行时 | — | **明确不做**（与主线冲突，见下） |
+| 输入 | 网络字体外的 JSX / Tailwind / 动画 GIF·APNG / WASM 多运行时 | — | JSX/Tailwind/WASM 绑定已有；动画 GIF·APNG **明确不做**（与静态文档定位冲突）——`@keyframes`/`animation` 改以「确定性取帧」交付（见 M9） |
 
 ## 里程碑
 
@@ -49,6 +49,18 @@ HarfBuzz shaping（阿拉伯连写）+ 轻量 bidi（grapheme 级强方向 run�
 依赖：`SkiaSharp.HarfBuzz`（2.88 有绑定，此前"无绑定"判断有误）+ `HarfBuzzSharp.NativeAssets.Linux`。
 已知边界：嵌套双向（单层 run 反转）、国旗 emoji、shaped run 内 letter-spacing、SVG 输出不做 shaping（由查看器重排）。
 
+### M8 · 伪元素 + 渐变文字 + 毛玻璃 —— ✅ 已完成（2026-09-23）
+
+`::before`/`::after` 生成内容（字符串 / `attr()` / 引号 / `url()` 图 / `counter()`·`counters()` 自动编号，含中文数字），行内与块级各自成盒、多级列表嵌套编号；`background-clip: text` 把背景铺进字形（渐变文字）；`backdrop-filter` 读取盒背后已绘像素做模糊（毛玻璃）。
+验收样例 `assets/m8.html`（伪元素 + 计数器全谱）；`background-clip: text` / `backdrop-filter` 走像素级断言（`PseudoElementTests` 等）。
+已知边界：`backdrop-filter` 仅位图路径生效（PDF/SVG 矢量路径跳过）；AngleSharp 对伪元素 UA 注入 `display:block`、吃掉 `counters()` 逗号、`counter-*`/`background-clip` computed 返回占位值——均按既有「原始 CSS 兜底」模式绕过（见 README「AngleSharp 坑位备忘」）。
+
+### M9 · 动画确定性取帧 —— ✅ 已完成（2026-09-23）
+
+解析 `@keyframes`（from/to、百分比、多选择器帧合并）+ `animation` 简写（duration/delay/timing 含 cubic-bezier·steps/iteration/direction/fill-mode）；渲染 API 加 `animationTime`（秒）参数，按该时刻求值插值覆盖样式，输出仍是**静态单帧、逐字节确定**。插值覆盖引擎已渲染的属性：opacity / color / background-color / font-size / letter-spacing / width / height / top·right·bottom·left / border-radius。Wasm `Api.Render`、JS `render(opts.animationTime)`、Tailwind `animate-pulse` 均已接线。
+验收样例 `assets/m9.html`（淡入 / pulse / 颜色 / 宽度圆角 / transform 边界声明）；`AnimationTests` 用盒中心像素通道做连续量断言（单调插值、fill 末态、alternate 对称、同刻逐字节确定、transform 与无动画逐字节一致）。
+已知边界：**`transform` 未实现** → `spin`/`ping`/`bounce` 等依赖变换的动画关键帧被解析但不生效（方块静止，不做假变换）；缓动按全局进度求值（多关键帧 + 非线性的严格 per-interval 语义是简化，两端点与常见单段动画正确）。
+
 ### 并发安全化（线程隔离）—— ✅ 已完成（2026-09-22）
 
 `RenderScope`（AsyncLocal）承载每请求私有的 @font-face 注册表与 SKTypeface 缓存；`ImageLoader` 缓存键编入 BaseDir；`StyleResolver` 文档级态（title/author/vars/unsupported）收进 `DocContext` 随根样式下发；`GoogleFonts` 每请求独立 HttpRequestMessage。
@@ -56,9 +68,10 @@ HarfBuzz shaping（阿拉伯连写）+ 轻量 bidi（grapheme 级强方向 run�
 
 ### 明确不做
 
-- 动画 GIF/WebP/APNG、视频帧 —— takumi 主打 OG 动画，我们是文档渲染器
-- JSX 输入、Tailwind 原子类 —— 属前端构建期，交上游预处理成 HTML+CSS
+- 动画 GIF/WebP/APNG、视频帧 —— takumi 主打 OG 动画，我们是文档渲染器；`@keyframes`/`animation` 改以「确定性取帧」交付（M9），输出恒为静态单帧
 - Cloudflare Workers/WASM 多运行时 —— 我们本就是 .NET；Native AOT 另议
+
+（JSX 输入与 Tailwind 原子类经 `js/papersharp` 层已支持，构建期预处理成 HTML+CSS 后喂给引擎。）
 
 ## 一页速览
 
@@ -71,4 +84,6 @@ HarfBuzz shaping（阿拉伯连写）+ 轻量 bidi（grapheme 级强方向 run�
 | M5 | 书签/链接/metadata ✅ · Tagged/PDF-A/附件 ❌ | 🟡 | 否（增量尾部已解） |
 | **M6** | **自研级联替换 AngleSharp.Css** | **⏳ 待拍板** | **是（移除一个依赖）** |
 | M7 | Arabic/bidi/emoji（HarfBuzz shaping + 字素 + 字形回退） | ✅ | 是（引 SkiaSharp.HarfBuzz） |
+| M8 | 伪元素 `::before/::after` + 计数器 / `background-clip: text` / `backdrop-filter` | ✅ | 否 |
+| M9 | `@keyframes`/`animation` 确定性取帧（非 transform 属性） | ✅ | 否 |
 | — | 并发安全化（RenderScope 每请求隔离） | ✅ | 否 |

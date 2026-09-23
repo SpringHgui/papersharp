@@ -28,20 +28,46 @@ public static partial class Api
             float width = root.TryGetProperty("width", out var w) ? (float)w.GetDouble() : 794f;
             float scale = root.TryGetProperty("scale", out var s) ? (float)s.GetDouble() : 1f;
             int quality = root.TryGetProperty("quality", out var q) ? q.GetInt32() : 90;
+            // 确定性取帧时刻（秒）；缺省则不做动画覆盖，走元素自身样式
+            double? animationTime = root.TryGetProperty("animationTime", out var at) ? at.GetDouble() : null;
 
             byte[] bytes = format switch
             {
-                "png" => Renderer.RenderPng(html, css, width, scale: scale),
-                "jpeg" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Jpeg, quality, scale: scale),
-                "webp" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Webp, quality, scale: scale),
-                "svg" => Renderer.RenderSvg(html, css, width),
+                "png" => Renderer.RenderPng(html, css, width, scale: scale, animationTime: animationTime),
+                "jpeg" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Jpeg, quality, scale: scale, animationTime: animationTime),
+                "webp" => Renderer.RenderImage(html, css, width, SKEncodedImageFormat.Webp, quality, scale: scale, animationTime: animationTime),
+                "svg" => Renderer.RenderSvg(html, css, width, animationTime: animationTime),
                 "pdf" => Renderer.RenderPdf(html, css,
-                    GetStr(root, "pageSize").Equals("letter", StringComparison.OrdinalIgnoreCase) ? PageSize.Letter : PageSize.A4),
+                    GetStr(root, "pageSize").Equals("letter", StringComparison.OrdinalIgnoreCase) ? PageSize.Letter : PageSize.A4,
+                    animationTime: animationTime),
                 "ico" => Renderer.RenderIco(html, css,
                     root.TryGetProperty("icoSize", out var ic) ? ic.GetInt32() : 32, width),
                 _ => throw new ArgumentException($"unsupported format: {format}"),
             };
             return Ok(Convert.ToBase64String(bytes));
+        }
+        catch (Exception e)
+        {
+            return Fail(e);
+        }
+    }
+
+    /// <summary>
+    /// 安装引擎的字形级兜底子集字体（FontManager 固定到 AppContext.BaseDirectory/assets/fonts/YaheiSub-*.ttf）。
+    /// 必须在首次 Render 前调用：EnsureSubsetLoaded 只尝试一次，之后所有未注册 family 的文本
+    /// 都落到该兜底字体——wasm 没有系统字体，不装则未知 font-family 的中文出豆腐块。
+    /// weight &gt;= 700 安装为 bold，否则 regular。
+    /// </summary>
+    [JSExport]
+    public static string InstallSubsetFont(string base64Data, int weight)
+    {
+        try
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, "assets", "fonts");
+            Directory.CreateDirectory(dir);
+            var name = weight >= 700 ? "YaheiSub-Bold.ttf" : "YaheiSub-Regular.ttf";
+            File.WriteAllBytes(Path.Combine(dir, name), Convert.FromBase64String(base64Data));
+            return Ok(name);
         }
         catch (Exception e)
         {

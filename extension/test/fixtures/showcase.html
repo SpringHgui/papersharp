@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>加油站日报 · 快照能力回归</title>
+<link rel="stylesheet" href="http://127.0.0.1:8392/app.css">
+<style>
+  /* 同源样式：body 级深色底（引擎只渲染 body，靠展平后的 body 规则保住） */
+  body { margin: 0; background: #0f172a; color: #e2e8f0; font-family: "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px; }
+  header.bar { position: fixed; top: 0; left: 0; right: 0; height: 44px; background: #1e293b; color: #fff;
+    display: flex; align-items: center; padding: 0 16px; font-size: 14px; }
+  h1 { font-size: 30px; margin: 56px 0 8px; }
+  h2 { font-size: 20px; margin: 24px 0 8px; color: #93c5fd; }
+  p { line-height: 1.7; }
+  .grad { font-size: 26px; font-weight: 700; background: linear-gradient(90deg, #f472b6, #38bdf8);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .card { background: #fff; color: #0f172a; }
+  .card p { font-size: 13px; }
+  .clip { width: 200px; height: 40px; overflow: hidden; background: #7c3aed; color: #fff; padding: 4px 8px; border-radius: 8px; }
+  .shift { position: relative; height: 60px; }
+  .shift .chip { position: absolute; left: 50%; top: 8px; transform: translate(-50%, 0); background: #f59e0b; color: #111; padding: 4px 10px; border-radius: 8px; }
+  .glass { position: relative; height: 90px; background: linear-gradient(120deg,#0ea5e9,#a855f7); border-radius: 12px; }
+  .glass .box { position: absolute; left: 20px; top: 20px; width: 220px; padding: 10px; border-radius: 10px;
+    background: rgba(255,255,255,.25); backdrop-filter: blur(6px); color: #fff; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; color: #0f172a; }
+  th, td { border: 1px solid #94a3b8; padding: 6px 10px; font-size: 13px; background: #fff; }
+  .strike { text-decoration: line-through; color: #f87171; }
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0% { opacity: 1 } 50% { opacity: .25 } 100% { opacity: 1 } }
+  svg.icon { width: 24px; height: 24px; fill: currentColor; color: #fbbf24; }
+</style>
+</head>
+<body>
+<header class="bar">固定顶栏（引擎无 fixed，导出时按文档流位置出现一次）</header>
+<main>
+  <h1>加油站日报 · 快照能力回归</h1>
+  <p>本页覆盖：跨源样式表、@layer、CSS 变量、媒体查询、flex 卡片、伪元素计数器、
+     <span class="strike">删除线文本</span>、内联 SVG、表格、表单控件、阴影 DOM、毛玻璃、渐变文字、动画取帧。</p>
+
+  <div class="hero"><span class="badge">跨源 background-image</span></div>
+
+  <div class="only-narrow">窄屏专属文案：媒体查询没被浏览器解析前不该出现</div>
+
+  <h2>今日班次</h2>
+  <div class="grid">
+    <div class="card"><h3>夜班 22:00–06:00</h3><p>汽油 12,480 L，柴油 6,210 L，车辆 418 次。地磅串口读重与海康车牌识别正常。</p></div>
+    <div class="card"><h3>白班 06:00–14:00</h3><p>汽油 9,870 L，柴油 3,120 L，车辆 302 次。IC 卡读写器更换一台。</p></div>
+    <div class="card"><h3>中班 14:00–22:00</h3><p>水分扣杂复核 37 车，皮重异常 2 车已站长授权红冲。</p></div>
+  </div>
+
+  <h2>导出格式清单</h2>
+  <ol class="counters">
+    <li>PDF —— 矢量分页，带书签与链接注释</li>
+    <li>PNG —— 整页长图，可 1×/2×/3×</li>
+    <li>JPEG / WebP —— 带质量参数</li>
+    <li>SVG —— 矢量，文字可选中</li>
+    <li>ICO —— 取左上方形区域</li>
+  </ol>
+
+  <h2>图片与画布</h2>
+  <p>
+    <img src="http://127.0.0.1:8392/logo.png" width="64" height="64" alt="跨源小图">
+    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=" width="32" height="32" alt="dataURI">
+    <img loading="lazy" src="http://127.0.0.1:8392/big.png" width="300" height="166" alt="懒加载大图">
+    <canvas id="cv" width="160" height="60" style="border:1px solid #64748b"></canvas>
+  </p>
+
+  <h2>溢出裁切与位移</h2>
+  <div class="clip">这一盒只有 40px 高，多余文字应该被裁掉：加油站、地磅收粮、车牌识别、IC 卡、水分扣杂、皮重红冲。</div>
+  <div class="shift"><span class="chip">translate(-50%) 居中（引擎无 transform，预期回到 left:50% 未位移处）</span></div>
+
+  <h2>毛玻璃与动画</h2>
+  <div class="glass"><div class="box">backdrop-filter: blur(6px)</div></div>
+  <p class="pulse">animation: pulse 2s —— 取帧 1s 时 opacity 应接近 0.25</p>
+  <p class="grad">background-clip: text 渐变文字</p>
+
+  <h2>表格与表单</h2>
+  <table>
+    <thead><tr><th colspan="2">油品</th><th>升数</th><th>金额</th></tr></thead>
+    <tbody>
+      <tr><td>92#</td><td>汽油</td><td>12,480</td><td>¥ 96,336</td></tr>
+      <tr><td>0#</td><td>柴油</td><td>6,210</td><td>¥ 49,680</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <input type="text" value="陕A·12345">
+    <input type="checkbox" checked> <span>已复核</span>
+    <select><option>选择班次</option><option selected>夜班</option></select>
+    <button type="button">提交日报</button>
+  </p>
+
+  <h2>阴影 DOM 与图标</h2>
+  <ps-tag label="开放 shadow root">内部文案由自定义元素渲染</ps-tag>
+  <svg class="icon" viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>
+
+  <h2>跨文档与外链</h2>
+  <iframe src="http://127.0.0.1:8392/frame.html" width="420" height="60" title="跨文档"></iframe>
+  <p><a href="https://example.com/report">查看原始日报链接（PDF 里应生成可点注释）</a></p>
+</main>
+<script>
+  const cv = document.getElementById("cv");
+  const g = cv.getContext("2d");
+  g.fillStyle = "#0b1220"; g.fillRect(0, 0, cv.width, cv.height);
+  g.fillStyle = "#22d3ee"; g.font = "16px system-ui"; g.fillText("画布 2D 文字", 12, 26);
+  g.strokeStyle = "#f472b6"; g.lineWidth = 3; g.strokeRect(6, 6, cv.width - 12, cv.height - 12);
+
+  class PsTag extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: "open" });
+      root.innerHTML = `<style>:host{display:inline-block} .box{border:1px dashed #22d3ee;padding:8px;border-radius:8px}
+        ::slotted(b){color:#f472b6}</style><div class="box"><slot></slot> —— <b>shadow 内部</b></div>`;
+    }
+  }
+  customElements.define("ps-tag", PsTag);
+  document.title = document.title;   // 保持标题，供默认文件名使用
+</script>
+</body>
+</html>

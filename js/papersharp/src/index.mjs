@@ -12,7 +12,7 @@ import { createCompiler } from "./tailwind.mjs";
 /**
  * 渲染一张图/一份 PDF。
  * @param {any|string} input JSX 元素（对象树）或 HTML 字符串
- * @param {{width?:number,height?:number,scale?:number,format?:string,css?:string,quality?:number,pageSize?:string}} [opts]
+ * @param {{width?:number,height?:number,scale?:number,format?:string,css?:string,quality?:number,pageSize?:string,animationTime?:number}} [opts]
  * @returns {Promise<Uint8Array>} 图片/PDF 字节
  */
 export async function render(input, opts = {}) {
@@ -32,6 +32,8 @@ export async function render(input, opts = {}) {
     format: opts.format ?? "png",
     quality: opts.quality,
     pageSize: opts.pageSize,
+    // 确定性取帧时刻（秒）：给定则按该时刻求值 @keyframes/animation 插值
+    animationTime: opts.animationTime,
   });
 }
 
