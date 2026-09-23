@@ -25,10 +25,17 @@ public static class PagePainter
         var itemRect = new SKRect(it.X, it.Y, it.X + Math.Max(it.W, it.TextWidth), it.Y + Math.Max(it.H, 0));
         var scope = VisualEffects.Begin(canvas, s, itemRect);
 
+        // background-clip:text：与 PNG 路径一致——背景改由字形承载
+        bool clipText = s.BackgroundClip == "text" && (s.Background != null || !s.BackgroundColor.Equals(SKColor.Empty));
+        float op = s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity;
+        var decorRect = new SKRect(it.X, it.Y, it.X + it.W, it.Y + it.H);
+        SKShader? fillShader = clipText ? s.Background?.BuildShader(decorRect, op) : null;
+        SKColor? fillOverride = clipText && fillShader == null ? s.BackgroundColor : null;
+
         if (it.DrawDecor)
         {
-            var r = new SKRect(it.X, it.Y, it.X + it.W, it.Y + it.H);
-            BoxPainter.PaintDecor(canvas, r, s);
+            var r = decorRect;
+            BoxPainter.PaintDecor(canvas, r, s, backgroundClippedToText: clipText);
 
             float cx = it.X + s.BorderWidthLeft + s.PaddingLeft;
             float cy = it.Y + s.BorderWidthTop + s.PaddingTop;
@@ -55,9 +62,10 @@ public static class PagePainter
 
         if (it.HasText)
             TextPainter.DrawLines(canvas, s, it.Box.Typeface, it.Box.WrappedLines!,
-                it.FirstLine, it.LineCount, it.TextLeft, it.TextTop, it.TextWidth, it.Box.LineLefts);
+                it.FirstLine, it.LineCount, it.TextLeft, it.TextTop, it.TextWidth, it.Box.LineLefts, fillShader, fillOverride);
         else if (it.Box.Lines != null && it.LineCount > 0)
-            TextPainter.DrawInlineLines(canvas, it.Box, it.TextLeft, it.TextTop, it.FirstLine, it.LineCount);
+            TextPainter.DrawInlineLines(canvas, it.Box, it.TextLeft, it.TextTop, it.FirstLine, it.LineCount, fillShader, fillOverride);
+        fillShader?.Dispose();
         VisualEffects.End(scope);
     }
 }

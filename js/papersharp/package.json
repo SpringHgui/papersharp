@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/index.mjs",
   "exports": {
-    ".": "./src/index.mjs"
+    ".": "./src/index.mjs",
+    "./jsx-runtime": "./src/jsx-runtime.mjs"
   },
   "files": [
     "src",

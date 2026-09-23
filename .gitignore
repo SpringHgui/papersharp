@@ -15,3 +15,9 @@ obj/
 node_modules/
 js/papersharp/wasm/
 js/example/output.png
+
+# smoke.mjs 跑通所需的 _framework（dotnet publish 产物拷入）+ 它写出的样张
+src/PaperSharp.Wasm/_framework/
+src/PaperSharp.Wasm/smoke.png
+src/PaperSharp.Wasm/smoke.pdf
+src/PaperSharp.Wasm/smoke.svg

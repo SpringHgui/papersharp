@@ -58,91 +58,9 @@ public static class MarginBoxRenderer
             switch (part.Kind)
             {
                 case ContentPartKind.Literal: sb.Append(part.Text); break;
-                case ContentPartKind.PageNumber: sb.Append(FormatNumber(pageIndex, part.CounterStyle)); break;
-                case ContentPartKind.TotalPages: sb.Append(FormatNumber(total, part.CounterStyle)); break;
+                case ContentPartKind.PageNumber: sb.Append(CounterStyle.Format(pageIndex, part.CounterStyle)); break;
+                case ContentPartKind.TotalPages: sb.Append(CounterStyle.Format(total, part.CounterStyle)); break;
             }
-        }
-        return sb.ToString();
-    }
-
-    static string FormatNumber(int num, string style)
-    {
-        return style switch
-        {
-            "cjk-ideographic" => ToCjkIdeographic(num),
-            "trad-chinese-informal" => ToTradChineseInformal(num),
-            _ => num.ToString(),
-        };
-    }
-
-    /// <summary>中文数字（简体）：一二三四五六七八九十百千万</summary>
-    static string ToCjkIdeographic(int num)
-    {
-        if (num == 0) return "零";
-        if (num < 0) return "-" + ToCjkIdeographic(-num);
-
-        string[] digits = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
-        string[] units = { "", "十", "百", "千", "万", "十", "百", "千", "亿" };
-
-        var sb = new System.Text.StringBuilder();
-        int unitIdx = 0;
-        bool lastWasZero = false;
-
-        while (num > 0)
-        {
-            int digit = num % 10;
-            num /= 10;
-
-            if (digit == 0)
-            {
-                if (!lastWasZero && sb.Length > 0) sb.Insert(0, "零");
-                lastWasZero = true;
-            }
-            else
-            {
-                if (unitIdx == 1 && digit == 1 && num == 0)
-                    sb.Insert(0, units[unitIdx]); // 10-19: 十、十一...十九（不带"一"）
-                else
-                    sb.Insert(0, digits[digit] + units[unitIdx]);
-                lastWasZero = false;
-            }
-            unitIdx++;
-        }
-        return sb.ToString();
-    }
-
-    /// <summary>传统中文数字（大写）：壹贰叁肆伍陆柒捌玖拾佰仟</summary>
-    static string ToTradChineseInformal(int num)
-    {
-        if (num == 0) return "零";
-        if (num < 0) return "-" + ToTradChineseInformal(-num);
-
-        string[] digits = { "零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖" };
-        string[] units = { "", "拾", "佰", "仟", "万", "拾", "佰", "仟", "亿" };
-
-        var sb = new System.Text.StringBuilder();
-        int unitIdx = 0;
-        bool lastWasZero = false;
-
-        while (num > 0)
-        {
-            int digit = num % 10;
-            num /= 10;
-
-            if (digit == 0)
-            {
-                if (!lastWasZero && sb.Length > 0) sb.Insert(0, "零");
-                lastWasZero = true;
-            }
-            else
-            {
-                if (unitIdx == 1 && digit == 1 && num == 0)
-                    sb.Insert(0, units[unitIdx]);
-                else
-                    sb.Insert(0, digits[digit] + units[unitIdx]);
-                lastWasZero = false;
-            }
-            unitIdx++;
         }
         return sb.ToString();
     }

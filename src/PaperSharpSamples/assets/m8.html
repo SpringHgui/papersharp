@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>M8 伪元素与计数器验收</title>
+<link rel="stylesheet" href="m8.css">
+</head>
+<body>
+<h1>M8 · 伪元素 <code>::before / ::after</code> 与 CSS 计数器</h1>
+
+<h2>一、行内 content：标记、attr()、引号</h2>
+<p class="note">行内提示文字，前面挂一个装饰标记。</p>
+<p class="cite">引用一段话</p>
+<div class="kv" data-label="状态">已发布</div>
+<div class="kv" data-label="版本">v2.4.0</div>
+
+<h2>二、自动编号 counter() / counters()（章节号）</h2>
+<section class="doc">
+  <h3>引言</h3>
+  <h3>方法</h3>
+  <h3>结论</h3>
+</section>
+
+<h2>三、有序列表 counters() 多级 + 中文数字</h2>
+<ol class="outline">
+  <li>第一章
+    <ol>
+      <li>小节 A</li>
+      <li>小节 B</li>
+    </ol>
+  </li>
+  <li>第二章</li>
+</ol>
+
+<h2>四、块级伪元素：装饰条 / 分隔线</h2>
+<div class="card">
+  <p>顶部红条 + 底部蓝条均由 <code>::before/::after</code> 生成（<code>content:""</code> 空串成块）。</p>
+</div>
+
+<h2>五、url() 图片伪元素（行内替换）</h2>
+<p class="with-icon">这条文字前挂了一个二维码图标。</p>
+
+<h2>六、content 计数徽标（badge）</h2>
+<ul class="tags">
+  <li>布局</li>
+  <li>选择器</li>
+  <li>绘制</li>
+</ul>
+
+</body>
+</html>

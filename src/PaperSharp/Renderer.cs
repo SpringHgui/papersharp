@@ -144,7 +144,7 @@ public static class Renderer
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.White);
         if (scale != 1f) canvas.Scale(scale);   // 之后 Painter 仍用 CSS px 坐标，被整体放大到设备像素
-        Painter.Paint(canvas, root);
+        Painter.Paint(canvas, root, surface);
         return (surface, layoutH);
     }
 

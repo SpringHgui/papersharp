@@ -24,6 +24,17 @@ public sealed class ComputedStyle
     /// <summary>该块是否是纯 inline 格式化上下文（非 flex/table 块，含文本或行内元素，且无块级子元素）。</summary>
     public bool IsInlineFC;
 
+    /// <summary>注入了行内伪元素（::before/::after 且 display 非 block）——强制 owner 走 inline 格式化上下文。</summary>
+    public bool HasGeneratedInline;
+
+    /// <summary>伪元素生成盒（未设 content 或 content:none/normal 时为 null）。counter 值在文档序后处理里回填。</summary>
+    public PseudoGen? Before;
+    public PseudoGen? After;
+
+    /// <summary>CSS 计数器：counter-reset / counter-increment 原始声明值（后处理 pass 解析）。</summary>
+    public string CounterReset = "";
+    public string CounterIncrement = "";
+
     /// <summary>文档级元数据（&lt;title&gt;/&lt;meta&gt;），仅挂在 BuildDocument 返回的根节点上。</summary>
     public DocumentInfo? Document;
 
@@ -119,6 +130,7 @@ public sealed class ComputedStyle
     public SKColor Color = SKColors.Black;
     public SKColor BackgroundColor = SKColor.Empty;
     public GradientSpec? Background;     // background-image: linear/radial-gradient(...)
+    public string BackgroundClip = "border-box"; // border-box | padding-box | text（text：背景裁剪到字形=渐变文字）
     public BoxShadow? Shadow;
     public float BorderRadiusTopLeft, BorderRadiusTopRight, BorderRadiusBottomRight, BorderRadiusBottomLeft;
     public float Opacity = 1f;
@@ -128,7 +140,8 @@ public sealed class ComputedStyle
     public string CornerShape = "round";     // round | squircle（配合 border-radius）
     public string? ClipPath;                 // clip-path 原始值（inset/circle/polygon）
     public GradientSpec? MaskImage;          // mask-image: linear-gradient(...)（alpha 用渐变）
-    public CssFilter? Filter;                // filter: blur() / drop-shadow()
+    public CssFilter? Filter;                // filter: blur() / drop-shadow()（前景）
+    public CssFilter? BackdropFilter;        // backdrop-filter: 模糊/滤镜作用于盒背后的已绘内容（仅光栅/PNG 路径）
     public string? SvgMarkup;                // 内联 <svg> 的标记（替换元素渲染）
 
     // 文本

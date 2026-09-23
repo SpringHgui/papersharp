@@ -39,7 +39,7 @@ public static class StyleResolver
         """;
 
     // AngleSharp.Css 不实现的属性（computed/declared 都拿不到），从原始 CSS 里按选择器兜底扫出来。
-    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image" };
+    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -61,6 +61,10 @@ public static class StyleResolver
         public Dictionary<string, Dictionary<string, string>> UnsupportedMap = new();
         public Dictionary<string, Dictionary<string, string>> VarMap = new(StringComparer.OrdinalIgnoreCase);
         public string? Title, Author, Description, Keywords;
+        public bool HasPseudoRules;   // CSS 里出现 ::before/::after 才做伪元素（否则零开销，既有样例不回归）
+        // 伪元素显式声明的 display（"末token::before/after" → 值）。AngleSharp 对伪元素 UA 默认注入
+        // display:block（computed/declared 都是），无法据其判断作者意图，故从原始 CSS 扫显式声明。
+        public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public static ComputedStyle BuildDocument(string htmlBody, string userCss)
@@ -78,6 +82,9 @@ public static class StyleResolver
         }
         ScanUnsupported(userCss, ctx);
         ScanVars(userCss, ctx);
+        // 伪元素开销较大（每元素多两次 computed 层叠），仅当 CSS 里确有 ::before/::after 规则时才启用
+        ctx.HasPseudoRules = Regex.IsMatch(userCss ?? "", @"::?(before|after)\b", RegexOptions.IgnoreCase);
+        if (ctx.HasPseudoRules) ScanPseudoDisplay(userCss, ctx);
         // 调用方常把整份 HTML 文档传进来：抽 <title> 供元数据用，只把 <body> 内容当正文，
         // 否则 head 里的 meta/title 会被当成可见块渲染。
         var mt = Regex.Match(htmlBody, @"<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -103,6 +110,7 @@ public static class StyleResolver
         var window = doc.DefaultView ?? throw new InvalidOperationException("no window (Did WithCss() get applied?)");
 
         var root = Walk(window, body, null, ctx);
+        if (ctx.HasPseudoRules) PseudoContent.Apply(root);   // 文档序求值 counter + 注入伪元素匿名盒
         root.Document = new DocumentInfo(ctx.Title, ctx.Author, ctx.Description, ctx.Keywords);
         return root;
     }
@@ -317,7 +325,87 @@ public static class StyleResolver
         bool blockish = cs.Display == "block" || cs.Display == "table-cell";
         cs.IsInlineFC = blockish && !hasBlockChild && (hasInlineEl || hasBr || (hasImgChild && cs.TextContent != null));
 
+        // 伪元素 ::before/::after：仅当 CSS 里确有伪元素规则时才建生成盒（content 片段 + 自身样式），
+        // 实际注入与 counter 回填在 BuildDocument 末尾的 PseudoContent.Apply 文档序 pass 里做。
+        if (ctx.HasPseudoRules)
+        {
+            cs.Before = BuildPseudoGen(window, element, cs, ctx, "::before");
+            cs.After = BuildPseudoGen(window, element, cs, ctx, "::after");
+        }
+
         return cs;
+    }
+
+    /// <summary>为一个伪元素建生成盒：读 content（不成盒则返回 null）+ 伪元素自身 computed 样式（display 归一为 inline 缺省）。</summary>
+    static PseudoGen? BuildPseudoGen(IWindow window, IElement element, ComputedStyle owner, DocContext ctx, string pseudo)
+    {
+        string Content()
+        {
+            // 用 AngleSharp computed 判定伪元素是否成盒并取串：它做真正的选择器匹配（避免按 token 兜底把
+            // `ul.tags li::after` 泄漏到 `ol.outline li`）。counters(a,',') 会被它重序列化成 counters(a ,)
+            // （吞逗号），交由 PseudoContent.Parse 的空格/逗号双兼容解析还原。
+            try
+            {
+                var c = window.GetComputedStyle(element, pseudo).GetPropertyValue("content");
+                return ExpandVars(c ?? "", element, ctx);
+            }
+            catch { return ""; }
+        }
+        var runs = PseudoContent.Parse(Content(), name => element.GetAttribute(name));
+        if (runs == null) return null;   // none / normal / 未设 → 不生成盒
+
+        var style = ReadStyle(window, element, owner, ctx, pseudo);
+        // display：AngleSharp 对伪元素 UA 默认注入 display:block（computed/declared 都是），无法据此判断作者意图；
+        // 故以「作者是否在原始 CSS 里显式声明 display」为准——未声明则按 CSS 规范初值 inline。
+        var declaredDisp = LookupPseudoMap(ctx.PseudoDisplay, element, pseudo) ?? "";
+        style.Display = string.IsNullOrWhiteSpace(declaredDisp) || declaredDisp == "normal"
+            ? "inline" : declaredDisp;
+        style.Children = new();
+        style.InlinePieces = new();
+        style.TextContent = null;
+        style.Before = style.After = null;
+        style.HasGeneratedInline = false;
+        return new PseudoGen { Style = style, Runs = runs };
+    }
+
+    /// <summary>扫原始 CSS：记录每个伪元素规则里显式声明的 display 与 content 原文（键 = 末段简单选择器 token + ::before/::after）。</summary>
+    static void ScanPseudoDisplay(string css, DocContext ctx)
+    {
+        if (string.IsNullOrWhiteSpace(css)) return;
+        css = Regex.Replace(css, @"/\*.*?\*/", "", RegexOptions.Singleline);
+        foreach (Match m in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
+        {
+            var sel = m.Groups[1].Value;
+            string suffix;
+            if (Regex.IsMatch(sel, @"::?before\b", RegexOptions.IgnoreCase)) suffix = "::before";
+            else if (Regex.IsMatch(sel, @"::?after\b", RegexOptions.IgnoreCase)) suffix = "::after";
+            else continue;
+            var body = m.Groups[2].Value;
+            var dm = Regex.Match(body, @"(?:^|[;\s])display\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
+            foreach (var selPart in sel.Split(','))
+            {
+                var stripped = Regex.Replace(selPart, @"::?(before|after)", " ", RegexOptions.IgnoreCase);
+                var toks = Regex.Split(stripped.Trim(), @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
+                var last = toks.Length > 0 ? toks[^1] : "";
+                last = Regex.Replace(last, @"[:\[].*$", "");   // 去伪类/属性段
+                if (last.Length == 0) continue;
+                if (dm.Success) ctx.PseudoDisplay[last + suffix] = dm.Groups[1].Value.Trim().ToLowerInvariant();
+            }
+        }
+    }
+
+    /// <summary>按元素 class/id/tag 命中伪元素原始 CSS 索引（就近优先 class &gt; id &gt; tag）。</summary>
+    static string? LookupPseudoMap(Dictionary<string, string> map, IElement el, string pseudo)
+    {
+        var suffix = pseudo.Contains("before", StringComparison.OrdinalIgnoreCase) ? "::before" : "::after";
+        string? Get(string tok) => map.TryGetValue(tok + suffix, out var v) ? v : null;
+        var cls = el.GetAttribute("class");
+        if (!string.IsNullOrWhiteSpace(cls))
+            foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            { var v = Get("." + c); if (v != null) return v; }
+        var id = el.GetAttribute("id");
+        if (!string.IsNullOrWhiteSpace(id)) { var v = Get("#" + id); if (v != null) return v; }
+        return Get(el.TagName.ToLowerInvariant());
     }
 
     static string ApplyTransform(string text, string mode)
@@ -335,7 +423,7 @@ public static class StyleResolver
         return sb.ToString();
     }
 
-    static ComputedStyle ReadStyle(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx)
+    static ComputedStyle ReadStyle(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx, string? pseudo = null)
     {
         var s = new ComputedStyle { Parent = parent };
 
@@ -343,8 +431,9 @@ public static class StyleResolver
         // 但它对某些值（如 radial-gradient）在 Compute() 里会抛 NullReferenceException——
         // 一旦抛异常该元素整个 computed 都拿不到。这里 try/catch 兜住：拿不到就退回声明值
         // （GetDeclarations，不触发 Compute）+ 父级继承，绝不让渲染崩。
+        // pseudo 非空时读伪元素（::before/::after）的 computed，实测 AngleSharp 支持并返回 content。
         ICssStyleDeclaration? computed = null;
-        try { computed = window.GetComputedStyle(element); }
+        try { computed = window.GetComputedStyle(element, pseudo); }
         catch { /* 该元素 computed 不可用，下面全部走 Spec 兜底 */ }
         string Get(string prop)
         {
@@ -365,7 +454,7 @@ public static class StyleResolver
         // GetDeclarations 返回的是做完 cascade 排序、但未经设备折算的原始声明值，
         // 其中的百分比被原样保留。需要按包含块解析的盒子尺寸属性用它兜底。
         ICssStyleDeclaration? decls = null;
-        try { decls = window.GetStyleCollection().GetDeclarations(element, null); }
+        try { decls = window.GetStyleCollection().GetDeclarations(element, pseudo); }
         catch { /* 拿不到声明值时退回 computed，不让渲染崩 */ }
         string Spec(string prop)
         {
@@ -532,6 +621,9 @@ public static class StyleResolver
         // conic-gradient 等 AngleSharp 不认识的写法：从原始 CSS 兜底
         s.Background = CssValueParser.ParseGradient(
             Lookup("background-image", element, Lookup("background", element, bgi, ctx), ctx));
+        // background-clip: text（渐变文字）——AngleSharp 会把 computed 判成 "border-box"（吞掉作者的 text），
+        // 故只信原始 CSS 兜底表（传空 current 强制走 UnsupportedMap 的 class/id/tag 命中）。
+        s.BackgroundClip = FirstNonEmpty(FirstToken(Lookup("background-clip", element, "", ctx)), "border-box");
 
         // 进阶视觉：blend / clip / mask / filter / squircle（AngleSharp 多不支持，走原始 CSS 兜底）
         s.MixBlendMode = CssValueParser.ParseKeyword(Lookup("mix-blend-mode", element, Raw("mix-blend-mode"), ctx), "normal");
@@ -540,11 +632,19 @@ public static class StyleResolver
         s.ClipPath = string.IsNullOrWhiteSpace(cp) || cp == "none" ? null : cp;
         s.MaskImage = CssValueParser.ParseGradient(Lookup("mask-image", element, Raw("mask-image"), ctx));
         s.Filter = CssValueParser.ParseFilter(Lookup("filter", element, Raw("filter"), ctx));
+        // backdrop-filter：AngleSharp 不认，走原始 CSS 兜底（传空 current 强制查表）
+        s.BackdropFilter = CssValueParser.ParseFilter(Lookup("backdrop-filter", element, "", ctx));
+
+        // CSS 计数器声明：AngleSharp 常把未实现的 counter-* computed 成 "none"，令 Lookup 兜底失效；
+        // 故把 none/空视为「无声明」，强制走原始 CSS 兜底（按 class>id>tag 命中）。
+        s.CounterReset = Lookup("counter-reset", element, CleanCounter(Raw("counter-reset")), ctx) ?? "";
+        s.CounterIncrement = Lookup("counter-increment", element, CleanCounter(Raw("counter-increment")), ctx) ?? "";
 
         return s;
     }
 
     static string FirstToken(string v) => (v ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+    static string CleanCounter(string? v) { v = (v ?? "").Trim(); return v.Length == 0 || v.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : v; }
     static float FirstRadius(string v, float fontSize)
     {
         var tok = FirstToken(v);

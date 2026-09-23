@@ -1,10 +1,16 @@
-// 存为 image.tsx，运行 `bun image.tsx` 即可写出 1200×630 的 output.png
-import { renderToFile } from "papersharp";
+import { render } from "papersharp";
+import { writeFile } from "node:fs/promises";
 
-await renderToFile(
-  "./output.png",
-  <div tw="w-full h-full flex items-center justify-center bg-linear-to-b from-blue-100 to-red-50">
-    <h1 tw="text-6xl font-bold text-slate-800">Hello from PaperSharp</h1>
+const png = await render(
+  <div
+    style={{
+      fontSize: 72,
+      background: "linear-gradient(to bottom right, #fff7ed, #fecaca)",
+    }}
+    tw="w-full h-full flex items-center justify-center"
+  >
+    Hello PaperSharp
   </div>,
   { width: 1200, height: 630 },
 );
+await writeFile("hello.png", png);

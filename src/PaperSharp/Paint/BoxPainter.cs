@@ -9,7 +9,7 @@ namespace PaperSharp.Paint;
 /// </summary>
 public static class BoxPainter
 {
-    public static void PaintDecor(SKCanvas canvas, SKRect r, ComputedStyle s)
+    public static void PaintDecor(SKCanvas canvas, SKRect r, ComputedStyle s, bool backgroundClippedToText = false)
     {
         float opacity = s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity;
         if (opacity <= 0.001f) return;
@@ -21,8 +21,8 @@ public static class BoxPainter
 
         if (s.Shadow != null) PaintShadow(canvas, r, s, radii, rounded, sq, opacity);
 
-        // 背景
-        bool hasBg = !s.BackgroundColor.Equals(SKColor.Empty) || s.Background != null;
+        // 背景（background-clip:text 时不铺满盒矩形——改由文字承载，见 Painter）
+        bool hasBg = !backgroundClippedToText && (!s.BackgroundColor.Equals(SKColor.Empty) || s.Background != null);
         if (hasBg)
         {
             using var p = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill };

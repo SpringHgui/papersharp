@@ -97,4 +97,38 @@ public static class VisualEffects
         "luminosity" => SKBlendMode.Luminosity,
         _ => SKBlendMode.SrcOver,
     };
+
+    /// <summary>
+    /// backdrop-filter：把盒背后【已绘】像素快照、套滤镜（模糊等）、裁剪回盒矩形，再让盒自身半透明背景叠其上。
+    /// 仅光栅画布（PNG 路径，surface 非空）能快照 backdrop；PDF 矢量画布无 surface → 静默跳过（backdrop 是位图效果）。
+    /// 在盒装饰绘制之前调用。cssRect 为 border-box（CSS 坐标，画布可能已 scale）。
+    /// </summary>
+    public static void ApplyBackdrop(SKCanvas canvas, SKSurface? surface, ComputedStyle s, SKRect cssRect)
+    {
+        if (surface == null || s.BackdropFilter == null) return;
+        var filter = s.BackdropFilter.Build();
+        if (filter == null) return;
+        var m = canvas.TotalMatrix;
+        var dev = m.MapRect(cssRect);
+        using var snap = surface.Snapshot();   // 全画布已绘内容（设备像素）
+        if (snap == null) { filter.Dispose(); return; }
+        float sx = m.ScaleX > 0 ? m.ScaleX : 1f;
+        canvas.Save();
+        canvas.SetMatrix(SKMatrix.Identity);
+        float tl = s.BorderRadiusTopLeft * sx, tr = s.BorderRadiusTopRight * sx,
+              br = s.BorderRadiusBottomRight * sx, bl = s.BorderRadiusBottomLeft * sx;
+        if (tl > 0 || tr > 0 || br > 0 || bl > 0)
+        {
+            using var path = new SKPath();
+            var rr = new SKRoundRect();
+            rr.SetRectRadii(dev, new[] { new SKPoint(tl, tl), new SKPoint(tr, tr), new SKPoint(br, br), new SKPoint(bl, bl) });
+            path.AddRoundRect(rr);
+            canvas.ClipPath(path);
+        }
+        else canvas.ClipRect(dev);
+        using (var p = new SKPaint { IsAntialias = true, ImageFilter = filter })
+            canvas.DrawImage(snap, 0, 0, p);   // 套模糊滤镜回绘，clip 限定在盒内 = backdrop 模糊
+        canvas.Restore();
+        filter.Dispose();
+    }
 }

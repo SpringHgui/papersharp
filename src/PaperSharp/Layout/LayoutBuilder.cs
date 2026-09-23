@@ -795,7 +795,15 @@ public static class LayoutBuilder
                 }
                 else
                 {
-                    MeasureWithContentWidth(c, box.ContentWidth, childCH);
+                    // column 的交叉轴是宽：显式宽 > stretch 撑满 > 内容收缩。
+                    // 旧代码无条件把子项宽拉成容器宽，既吞掉 width:100px，也让 align-items:center 无从居中。
+                    bool stretch = c.Style.AlignSelf == "stretch" || (c.Style.AlignSelf == "auto" && stretchDefault);
+                    if (!stretch && c.Style.Width.IsAuto)
+                    {
+                        float decoW = MainDeco(c, isRow: true);   // isRow 分支即"水平方向装饰"：左右 margin/border/padding
+                        MeasureWithContentWidth(c, Math.Max(0, Math.Min(IntrinsicContentWidth(c), box.ContentWidth - decoW)), childCH);
+                    }
+                    else MeasureWithContentWidth(c, ResolveWidth(c.Style.Width, box.ContentWidth, c.Style), childCH);
                     c.ContentHeight = lineFinal[i];
                     lineCrossMax = Math.Max(lineCrossMax, c.TotalWidth);
                 }
@@ -1406,7 +1414,10 @@ public static class LayoutBuilder
         float crossFree = crossSize - totalCross;
         float crossCursor, crossBetween;
 
-        // align-content 目前简化为 flex-start（默认）
+        // align-content 暂只支持 normal/stretch：单行容器有确定交叉尺寸时，线交叉尺寸取容器内交叉尺寸，
+        // 否则行内自由空间无处安放，align-items 的 center/flex-end 只会在"最高子项"那条线里居中。
+        bool stretchSingleLine = box.FlexLines.Count == 1 && crossFree > 0.5f;
+
         crossCursor = 0;
         crossBetween = gap;
 
@@ -1414,6 +1425,7 @@ public static class LayoutBuilder
         float crossPos = crossCursor;
         foreach (var line in box.FlexLines)
         {
+            float lineCross = stretchSingleLine ? crossSize : line.CrossSize;
             // 计算该行主轴起始位置和间距
             float lineMainUsed = gap * (line.ItemIndices.Count - 1);
             foreach (int idx in line.ItemIndices)
@@ -1439,8 +1451,8 @@ public static class LayoutBuilder
                 string align = c.Style.AlignSelf == "auto" ? s.AlignItems : c.Style.AlignSelf;
                 float crossOff = align switch
                 {
-                    "center" => Math.Max(0, (line.CrossSize - cf) / 2),
-                    "flex-end" or "end" => Math.Max(0, line.CrossSize - cf),
+                    "center" => Math.Max(0, (lineCross - cf) / 2),
+                    "flex-end" or "end" => Math.Max(0, lineCross - cf),
                     _ => 0, // flex-start / stretch
                 };
 
@@ -1452,7 +1464,7 @@ public static class LayoutBuilder
                 cursor += (isRow ? c.TotalWidth : c.TotalHeight) + between;
             }
 
-            crossPos += line.CrossSize + crossBetween;
+            crossPos += lineCross + crossBetween;
         }
 
         PlaceAbsChildren(box, cb);

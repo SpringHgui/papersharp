@@ -15,7 +15,8 @@ public static class TextPainter
     /// 画 lines[firstLine..firstLine+lineCount)。每段的样式（字体/色/背景/字距/装饰）取自 frag 自己的 ComputedStyle。
     /// </summary>
     public static void DrawInlineLines(SKCanvas canvas, BlockBox box,
-        float contentLeft, float contentTop, int firstLine, int lineCount)
+        float contentLeft, float contentTop, int firstLine, int lineCount,
+        SKShader? fillShader = null, SKColor? fillOverride = null)
     {
         var lines = box.Lines;
         if (lines == null || lineCount <= 0) return;
@@ -28,12 +29,13 @@ public static class TextPainter
             float lineLeft = contentLeft + ln.Left;
             float baseline = y + ln.Baseline;
             foreach (var f in ln.Frags)
-                if (f.Text != null) DrawRun(canvas, f, lineLeft + f.X, baseline + f.AlignDY);
+                if (f.Text != null) DrawRun(canvas, f, lineLeft + f.X, baseline + f.AlignDY, fillShader, fillOverride);
             y += ln.Height;
         }
     }
 
-    static void DrawRun(SKCanvas canvas, InlineFrag f, float x, float baseline)
+    static void DrawRun(SKCanvas canvas, InlineFrag f, float x, float baseline,
+        SKShader? fillShader = null, SKColor? fillOverride = null)
     {
         var s = f.Style;
         byte alpha = (byte)Math.Round(Clamp01(s.Opacity) * 255);
@@ -53,7 +55,7 @@ public static class TextPainter
         }
 
         var typeface = FontManager.Get(s.FontFamily, s.FontWeight);
-        var color = s.Color.WithAlpha(alpha);
+        var color = (fillOverride ?? s.Color).WithAlpha(alpha);
         using var paint = new SKPaint
         {
             Color = color,
@@ -63,16 +65,19 @@ public static class TextPainter
             SubpixelText = true,
             Style = SKPaintStyle.Fill,
         };
+        if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         DrawSpaced(canvas, f.Text!, x, baseline, paint, s.LetterSpacing);
         DrawDecoration(canvas, s, x, baseline, f.Width, color);
     }
-    /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。lefts 为每行左缩进（环绕浮动），可 null。</summary>
+    /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。lefts 为每行左缩进（环绕浮动），可 null。
+    /// fillShader/fillOverride 用于 background-clip:text（把背景渐变当作字形填充）。</summary>
     public static void DrawLines(SKCanvas canvas, ComputedStyle s, SKTypeface typeface,
-        string[] lines, int first, int count, float left, float top, float width, float[]? lefts = null)
+        string[] lines, int first, int count, float left, float top, float width, float[]? lefts = null,
+        SKShader? fillShader = null, SKColor? fillOverride = null)
     {
         if (lines == null || count <= 0) return;
         byte alpha = (byte)Math.Round(Clamp01(s.Opacity) * 255);
-        var color = s.Color.WithAlpha(alpha);
+        var color = (fillOverride ?? s.Color).WithAlpha(alpha);
 
         using var paint = new SKPaint
         {
@@ -83,6 +88,7 @@ public static class TextPainter
             SubpixelText = true,
             Style = SKPaintStyle.Fill,
         };
+        if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         float ls = s.LetterSpacing;
         float lineHeight = s.FontSize * s.LineHeightFactor;
         float baseline = top + s.FontSize;
