@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qoder 价格方案</title>
+<style>
+  :root {
+    --bg: #f0f0ec;
+    --card: #fff;
+    --ink: #1c1d1f;
+    --ink-2: #55585e;
+    --ink-3: #8b8f96;
+    --line: #e4e4df;
+    --green: #1d6142;
+    --green-ink: #1f8a55;
+    --green-soft: #eef6f0;
+    --radius: 12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { width: 1488px; max-width: calc(100% - 48px); margin: 0 auto; }
+
+  /* ---------- nav ---------- */
+  .nav {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(240, 240, 236, .86);
+    backdrop-filter: blur(10px);
+  }
+  .nav-inner {
+    height: 76px;
+    display: flex;
+    align-items: center;
+    gap: 40px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 600; letter-spacing: .2px; }
+  .menu { display: flex; align-items: center; gap: 34px; font-size: 16px; color: var(--ink-2); }
+  .menu a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+  .menu a:hover { color: var(--ink); }
+  .menu a.on { color: var(--ink); font-weight: 600; }
+  .menu .dot { position: relative; }
+  .menu .dot::after {
+    content: ""; position: absolute; top: -3px; right: -7px;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--green-ink);
+  }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 26px; font-size: 16px; color: var(--ink-2); }
+  .nav-right a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+  .nav-right a:hover { color: var(--ink); }
+  .btn-ghost {
+    height: 40px; padding: 0 22px; border-radius: 999px;
+    background: #fff; color: var(--ink); font-size: 16px;
+    display: inline-flex; align-items: center; border: 1px solid var(--line);
+    cursor: pointer; font-family: inherit;
+  }
+
+  /* ---------- hero ---------- */
+  .hero { text-align: center; padding: 68px 0 0; }
+  .chip {
+    display: inline-block; padding: 7px 18px; border-radius: 999px;
+    background: rgba(255, 255, 255, .55); border: 1px solid var(--line);
+    font-size: 14px; color: var(--ink-2);
+  }
+  .hero h1 { margin-top: 34px; font-size: 44px; font-weight: 600; letter-spacing: .5px; }
+  .hero .sub { margin-top: 26px; font-size: 18px; line-height: 1.75; color: var(--ink-3); }
+
+  /* ---------- switcher ---------- */
+  .switcher { margin-top: 52px; display: flex; align-items: center; }
+  .seg {
+    margin: 0 auto;
+    display: flex; padding: 5px; border-radius: 999px;
+    background: #e4e4df;
+  }
+  .seg button {
+    border: 0; background: transparent; cursor: pointer; font-family: inherit;
+    height: 44px; padding: 0 30px; border-radius: 999px;
+    font-size: 16px; color: var(--ink-3);
+  }
+  .seg button.on { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, .07); }
+  .more {
+    position: absolute; right: 0; font-size: 16px; color: var(--ink-2);
+    text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .switcher { position: relative; }
+
+  /* ---------- plans ---------- */
+  .plans { margin-top: 52px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; align-items: start; }
+  .plan {
+    position: relative; overflow: hidden;
+    background: var(--card); border-radius: var(--radius);
+    border: 1px solid transparent;
+    padding: 34px 26px 30px;
+    min-height: 574px;
+  }
+  .plan::before {
+    content: ""; position: absolute; top: -104px; right: -84px;
+    width: 200px; height: 200px; border-radius: 50%;
+    border: 26px solid rgba(0, 0, 0, .028);
+  }
+  .plan.featured { border-color: var(--green); }
+  .plan.featured::before { border-color: rgba(29, 97, 66, .07); }
+
+  .plan h3 { font-size: 21px; font-weight: 600; }
+  .price { margin-top: 22px; display: flex; align-items: baseline; gap: 8px; }
+  .price b { font-size: 40px; font-weight: 700; letter-spacing: -.5px; }
+  .price span { font-size: 15px; color: var(--ink-3); }
+
+  .cta {
+    margin-top: 30px; width: 100%; height: 46px; border: 0; border-radius: 8px;
+    background: #e6e6e2; color: var(--ink); font-size: 16px; cursor: pointer;
+    font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  }
+  .cta:hover { background: #dcdcd7; }
+  .cta.primary { background: var(--green); color: #fff; }
+  .cta.primary:hover { background: #17553a; }
+
+  .incl { margin-top: 30px; font-size: 14px; color: var(--ink-3); }
+  ul.feats { margin-top: 16px; display: flex; flex-direction: column; gap: 15px; }
+  ul.feats li { display: flex; align-items: flex-start; gap: 10px; font-size: 15px; line-height: 1.5; color: var(--ink); }
+  ul.feats li em { font-style: normal; color: var(--ink-3); }
+  .tick { flex: none; margin-top: 2px; }
+  .gift { flex: none; margin-top: 1px; }
+  .info {
+    display: inline-flex; vertical-align: -2px; margin-left: 4px;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid #b9bdc3; color: #9aa0a6;
+    font-size: 10px; align-items: center; justify-content: center; font-style: normal;
+  }
+
+  .bonus {
+    margin-top: 18px; padding: 14px 16px; border-radius: 8px;
+    background: var(--green-soft);
+  }
+  .bonus .top { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 600; }
+  .bonus .tag {
+    padding: 2px 8px; border-radius: 5px; border: 1px solid #a9d3ba;
+    color: var(--green-ink); font-size: 12px; font-weight: 400; background: #fff;
+  }
+  .bonus .note { margin-top: 9px; font-size: 13px; color: #7d848c; }
+
+  /* ---------- resource packs ---------- */
+  .section-title { margin: 78px 0 34px; font-size: 26px; font-weight: 600; }
+  .pack {
+    background: var(--card); border-radius: var(--radius);
+    width: 734px; max-width: 100%; padding: 34px 34px 40px;
+  }
+  .pack-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+  .pack-head h3 { font-size: 21px; font-weight: 600; }
+  .applies {
+    padding: 5px 12px; border-radius: 6px; border: 1px solid #b9dcc6;
+    color: var(--green-ink); font-size: 13px; white-space: nowrap;
+  }
+  .pack .price b { font-size: 34px; }
+  .pack .valid { margin-top: 18px; font-size: 15px; color: var(--ink-2); }
+
+  /* ---------- light sections ---------- */
+  .band { background: #fff; margin-top: 96px; }
+  .band .wrap { padding-top: 96px; }
+
+  /* ---------- comparison table ---------- */
+  .band h2.sec { font-size: 30px; font-weight: 600; margin-bottom: 44px; }
+  .table-scroll { overflow-x: auto; }
+  .table {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden;
+    background: #fcfcfa;
+    min-width: 1100px;
+  }
+  .tr {
+    display: grid;
+    grid-template-columns: 236px repeat(5, 1fr);
+    align-items: center;
+  }
+  .tr > div, .r > div { padding: 0 24px; }
+  .tr > div:first-child, .grp > .cat { padding-left: 32px; }
+  .tr.head { background: #f6f6f3; min-height: 143px; }
+  .tr.head .t { font-size: 20px; font-weight: 600; }
+  .tr.head .d { margin-top: 12px; font-size: 15px; color: var(--ink-3); }
+  .grp { display: grid; grid-template-columns: 236px 1fr; border-top: 1px solid #ececea; }
+  .grp:first-of-type, .tr.head + .grp { border-top: 0; }
+  .grp > .cat { align-self: start; padding-top: 36px; font-size: 17px; color: var(--ink-2); }
+  .grp > .body { display: flex; flex-direction: column; }
+  .r { display: grid; grid-template-columns: repeat(5, 1fr); min-height: 105px; align-items: center; }
+  .r .feat { font-size: 17px; }
+  .val { display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--ink-2); line-height: 1.5; }
+  .val.none { color: #6b7280; }
+  .yes {
+    flex: none; width: 22px; height: 22px; border-radius: 50%;
+    background: #74c47d; color: #fff; font-size: 13px; line-height: 22px;
+    text-align: center;
+  }
+
+  /* ---------- faq ---------- */
+  .faq-grid { display: grid; grid-template-columns: 620px 1fr; gap: 48px; padding-bottom: 120px; }
+  .faq-head h2 { font-size: 40px; font-weight: 600; }
+  .faq-head .sub { margin-top: 24px; font-size: 18px; color: var(--ink-3); }
+  .faq-head .quote { margin-top: 440px; font-size: 18px; line-height: 1.7; color: var(--ink-3); max-width: 420px; }
+  .qa {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    padding: 34px 4px; border-bottom: 1px solid #ececea;
+    font-size: 24px; cursor: pointer;
+  }
+  .qa .plus { flex: none; width: 20px; height: 20px; transition: transform .22s ease; }
+  .qa.open .plus { transform: rotate(45deg); }
+
+  /* ---------- footer ---------- */
+  .footer { background: #f2f2ef; padding: 84px 0 56px; margin-top: 0; }
+  .foot-grid { display: grid; grid-template-columns: 440px 1fr; gap: 48px; }
+  .foot-brand .mark { width: 46px; height: 46px; }
+  .foot-brand .slogan { margin-top: 44px; font-size: 28px; font-weight: 500; letter-spacing: .5px; }
+  .socials { margin-top: 46px; display: flex; align-items: center; gap: 34px; }
+  .socials a { color: #9a9a94; display: inline-flex; }
+  .socials a:hover { color: var(--ink); }
+  .cols { display: grid; grid-template-columns: repeat(5, 1fr); gap: 24px; }
+  .col { display: flex; flex-direction: column; }
+  .col + .col { margin-top: 0; }
+  .col h4 { font-size: 16px; font-weight: 400; color: var(--ink-3); margin-bottom: 26px; }
+  .col h4:not(:first-child) { margin-top: 46px; }
+  .col a { font-size: 16px; color: #24262a; text-decoration: none; margin-bottom: 26px; }
+  .col a:hover { color: var(--green); }
+  .foot-bottom {
+    margin-top: 96px;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
+  }
+  .foot-bottom .copy { font-size: 15px; line-height: 1.9; color: var(--ink-3); }
+  .to-top {
+    display: inline-flex; align-items: center; gap: 10px;
+    height: 52px; padding: 0 26px; border-radius: 10px;
+    background: #fff; border: 1px solid var(--line);
+    font-size: 15px; color: var(--ink-2); text-decoration: none; cursor: pointer;
+    font-family: inherit;
+  }
+  .to-top:hover { color: var(--ink); }
+
+  /* 断点取 900/560：PaperSharp 的渲染设备视口固定按 1024 折算，断点若 ≥1024 会在导出时恒命中 */
+  @media (max-width: 900px) {
+    .plans { grid-template-columns: repeat(2, 1fr); }
+    .menu { display: none; }
+    .faq-grid { grid-template-columns: 1fr; }
+    .faq-head .quote { margin-top: 40px; }
+    .foot-grid { grid-template-columns: 1fr; }
+    .cols { grid-template-columns: repeat(3, 1fr); row-gap: 48px; }
+  }
+  @media (max-width: 560px) {
+    .plans { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 32px; }
+    .more { display: none; }
+    .cols { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap nav-inner">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+        <path d="M13 2.5c5.8 0 10.5 4.7 10.5 10.5 0 2.5-.9 4.8-2.3 6.6l2 2.2-2.4 2.1-2.1-2.3A10.4 10.4 0 0 1 13 23.5C7.2 23.5 2.5 18.8 2.5 13S7.2 2.5 13 2.5Z" stroke="#1c1d1f" stroke-width="1.8"/>
+        <circle cx="13" cy="13" r="3.4" fill="#1c1d1f"/>
+      </svg>
+      Qoder
+    </div>
+    <div class="menu">
+      <a href="#" class="dot">产品
+        <svg width="10" height="6" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="#8b8f96" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+      </a>
+      <a href="#">
+        <svg width="10" height="6" viewBox="0 0 10 6" style="margin-right:5px"><path d="M1 1l4 4 4-4" stroke="#8b8f96" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+        企业及集成
+      </a>
+      <a href="#" class="on">价格</a>
+      <a href="#">能力市场</a>
+      <a href="#">
+        <svg width="10" height="6" viewBox="0 0 10 6" style="margin-right:5px"><path d="M1 1l4 4 4-4" stroke="#8b8f96" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+        资源
+      </a>
+      <a href="#">活动</a>
+    </div>
+    <div class="nav-right">
+      <a href="#">访问中国站
+        <svg width="11" height="11" viewBox="0 0 12 12"><path d="M3 9L9 3M9 3H4.2M9 3v4.8" stroke="#55585e" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+      </a>
+      <a href="#" aria-label="语言">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="#55585e" stroke-width="1.4"/><path d="M2 10h16M10 2c2.4 2.2 2.4 13.8 0 16M10 2C7.6 4.2 7.6 15.8 10 18" stroke="#55585e" stroke-width="1.4"/></svg>
+      </a>
+      <a href="#">登录</a>
+      <button class="btn-ghost">下载</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero wrap">
+  <span class="chip">Qwen3.8-Flash 限时免费使用</span>
+  <h1>Qoder 价格方案</h1>
+  <p class="sub">选择最适合你编码、构建与协作方式的 Qoder 订阅计划。<br>可先从小规模开始，随着工作流的成长随时升级。</p>
+</header>
+
+<div class="switcher wrap">
+  <div class="seg">
+    <button class="on">个人订阅</button>
+    <button>企业订阅</button>
+  </div>
+  <a class="more" href="#">了解更多
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 9L9 3M9 3H4.2M9 3v4.8" stroke="#55585e" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+  </a>
+</div>
+
+<main class="wrap">
+  <section class="plans">
+
+    <article class="plan">
+      <h3>体验版</h3>
+      <div class="price"><b>$0</b><span>/月</span></div>
+      <button class="cta">
+        <svg width="15" height="15" viewBox="0 0 16 16"><path d="M1.5 3.2l5.6-.8v5.1H1.5V3.2Zm0 9.3l5.6.8v-5H1.5v4.2ZM8.1 2.2l6.4-1v6.3H8.1V2.2Zm0 11.6 6.4 1V8.5H8.1v5.3Z" fill="#1c1d1f"/></svg>
+        下载
+      </button>
+      <p class="incl">包括：</p>
+      <ul class="feats">
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>为期 2 周的试用及 300 Credits</li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>有限次代码补全与编码预测</li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>支持自有 API Key 接入（BYOK）</li>
+      </ul>
+    </article>
+
+    <article class="plan featured">
+      <h3>Pro</h3>
+      <div class="price"><b>$20</b><span>/月</span></div>
+      <button class="cta primary">订阅</button>
+      <p class="incl">包含免费的全部功能，同时：</p>
+      <div class="bonus">
+        <div class="top">
+          <svg class="gift" width="17" height="17" viewBox="0 0 18 18" fill="none"><path d="M2.5 6.5h13v4h-13v-4Zm1.5 4v5h8v-5M9 6.5V16" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 6.5S7.8 2 5.6 2.7C3.9 3.3 4.6 6.5 9 6.5Zm0 0s1.2-4.5 3.4-3.8C14.1 3.3 13.4 6.5 9 6.5Z" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          4,000 Credits <span class="tag">限时</span>
+        </div>
+        <div class="note">首购送 2,000 Credits<i class="info">i</i></div>
+      </div>
+      <ul class="feats">
+        <li><svg class="gift" width="17" height="17" viewBox="0 0 18 18" fill="none"><path d="M2.5 6.5h13v4h-13v-4Zm1.5 4v5h8v-5M9 6.5V16" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 6.5S7.8 2 5.6 2.7C3.9 3.3 4.6 6.5 9 6.5Zm0 0s1.2-4.5 3.4-3.8C14.1 3.3 13.4 6.5 9 6.5Z" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/></svg><span>续费送 1,000 Credits<i class="info">i</i></span></li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>2,000 Credits</li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>更多的对话与智能体请求数</li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Quest 模式和 Repo Wiki 功能</li>
+      </ul>
+    </article>
+
+    <article class="plan">
+      <h3>Pro+</h3>
+      <div class="price"><b>$60</b><span>/月</span></div>
+      <button class="cta">订阅</button>
+      <p class="incl">包含 Pro 的全部功能，同时：</p>
+      <ul class="feats" style="margin-top:22px">
+        <li><svg class="gift" width="17" height="17" viewBox="0 0 18 18" fill="none"><path d="M2.5 6.5h13v4h-13v-4Zm1.5 4v5h8v-5M9 6.5V16" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 6.5S7.8 2 5.6 2.7C3.9 3.3 4.6 6.5 9 6.5Zm0 0s1.2-4.5 3.4-3.8C14.1 3.3 13.4 6.5 9 6.5Z" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/></svg><span>首购送 6,000 Credits，续费送 1,000 Credits<i class="info">i</i></span></li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>6,000 Credits</li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>优先体验新功能</li>
+      </ul>
+    </article>
+
+    <article class="plan">
+      <h3>Ultra</h3>
+      <div class="price"><b>$200</b><span>/月</span></div>
+      <button class="cta">订阅</button>
+      <p class="incl">包含 Pro+ 的全部功能，同时：</p>
+      <ul class="feats" style="margin-top:22px">
+        <li><svg class="gift" width="17" height="17" viewBox="0 0 18 18" fill="none"><path d="M2.5 6.5h13v4h-13v-4Zm1.5 4v5h8v-5M9 6.5V16" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 6.5S7.8 2 5.6 2.7C3.9 3.3 4.6 6.5 9 6.5Zm0 0s1.2-4.5 3.4-3.8C14.1 3.3 13.4 6.5 9 6.5Z" stroke="#1f8a55" stroke-width="1.4" stroke-linejoin="round"/></svg><span>续费送 1,000 Credits<i class="info">i</i></span></li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>20,000 Credits</li>
+        <li><svg class="tick" width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.6l3.4 3.3 7.1-7.6" stroke="#1f8a55" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>优先体验新功能</li>
+      </ul>
+    </article>
+
+  </section>
+
+  <h2 class="section-title">资源包</h2>
+  <section class="pack">
+    <div class="pack-head">
+      <h3>个人资源包</h3>
+      <span class="applies">适用于 Pro &amp; Pro+ &amp; Ultra</span>
+    </div>
+    <div class="price"><b>$20</b><span>/1,500 Credits</span></div>
+    <p class="valid">有效期：自购买日起 1 个月</p>
+  </section>
+</main>
+</body></html>

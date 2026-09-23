@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Css;
@@ -24,6 +24,8 @@ public static class StyleResolver
         h2 { font-size: 24px; font-weight: bold; margin: 20px 0; }
         h3 { font-size: 19px; font-weight: bold; margin: 19px 0; }
         p { margin: 16px 0; }
+        /* 本表按 author 源注入：作者写了 margin（含 `* { margin:0 }` 重置）时由 AuthorMargins 微级联裁决，
+           不会像现在这样被这里的元素选择器反向压过重置；无作者声明才落到本表/内置 UA 默认值。 */
         div, section, article, header, footer, main { display: block; }
         /* 行内级元素默认 display:inline（AngleSharp 未必内置 UA 表，显式声明以驱动 inline 格式化上下文检测） */
         a, span, em, i, strong, b, u, s, small, code, label, cite, abbr, mark, sub, sup, tt, kbd, var, q, ins, del, time { display: inline; }
@@ -36,6 +38,8 @@ public static class StyleResolver
         td, th { display: table-cell; padding: 1px; vertical-align: middle; }
         th { font-weight: bold; }
         caption { display: table-caption; }
+        /* 表单控件 UA 默认：按钮文字水平+垂直居中（浏览器把 button 当弹性盒居中），输入/按钮继承字体 */
+        button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
         """;
 
     // AngleSharp.Css 不实现的属性（computed/declared 都拿不到），从原始 CSS 里按选择器兜底扫出来。
@@ -66,6 +70,8 @@ public static class StyleResolver
         // display:block（computed/declared 都是），无法据其判断作者意图，故从原始 CSS 扫显式声明。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, List<Keyframe>> Keyframes = new();   // @keyframes 表（渲染传 animationTime 时按时刻取帧）
+        public AuthorMargins? Margins;      // margin 作者源微级联索引（见 AuthorMargins）
+        public float ViewportWidth = 1024;  // 供 Margins 的 @media 条件判定
         // 伪元素作用域 token 集（.cls / #id / tag）：只有 CSS 里所有伪元素选择器都能约成这种 token 时才非 null，
         // 用来跳过「明显不可能有 ::before/::after 的元素」——每次 GetComputedStyle(el, pseudo) 是一整轮层叠
         // （实测 1.7ms/元素/次，伪元素前后各一次 + 各自样式再一次 → 每元素最多多花 ~5ms），是快照类输入最大的开销。
@@ -77,7 +83,7 @@ public static class StyleResolver
         public FlatCascade? Flat;
     }
 
-    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false)
+    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false, float viewportWidth = 1024)
     {
         var ctx = new DocContext { Precomputed = precomputed };
         // 支持整份 HTML 内嵌 <style>：内容并入 userCss（参数在前、内嵌在后，符合后定义覆盖的层叠顺序），
@@ -92,6 +98,10 @@ public static class StyleResolver
         }
         ScanUnsupported(userCss, ctx);
         ScanVars(userCss, ctx);
+        // margin 作者源微级联（见 AuthorMargins）：AngleSharp 的 UA 源比较按特异度而非源，
+        // `* { margin:0 }` 压不住 h4 等内置默认；作者声明了 margin 时由本索引裁决。
+        ctx.Margins = AuthorMargins.Parse(userCss ?? "");
+        ctx.ViewportWidth = viewportWidth;
         // 展平快照（precomputed）才试建类名索引；CSS 里只要还有 @rule/组合器/特异度竞争就返回 null，整份走老路。
         if (precomputed) ctx.Flat = FlatCascade.TryBuild(userCss);
         // 伪元素开销较大（每元素多两次 computed 层叠），仅当 CSS 里确有 ::before/::after 规则时才启用
@@ -116,7 +126,9 @@ public static class StyleResolver
             $"</head><body>{htmlBody}</body></html>";
 
         // 注册 render device：AngleSharp.Css 计算 em/rem/% 等相对单位时需要非空渲染尺寸，
-        var renderDevice = new DefaultRenderDevice { FontSize = 16, ViewPortWidth = 1024, ViewPortHeight = 1024 };
+        // 否则 GetComputedStyle 会对这些值抛 ArgumentException。
+        // ViewPortWidth 用真实排版宽度：@media (max-width/min-width) 据此判定，否则恒按 1024 命中/落空。
+        var renderDevice = new DefaultRenderDevice { FontSize = 16, ViewPortWidth = (int)Math.Max(1, viewportWidth), ViewPortHeight = 1024 };
         var config = Configuration.Default.WithCss().WithRenderDevice(renderDevice);
         var context = BrowsingContext.New(config);
         using var doc = context.OpenAsync(req => req.Content(fullHtml)).GetAwaiter().GetResult();
@@ -289,6 +301,23 @@ public static class StyleResolver
         if (cs.Tag == "a")
             cs.LinkHref = element.GetAttribute("href");
 
+        // <input>：读取 type / checked / placeholder。文本类控件无值时以 placeholder 占位显示；
+        // checkbox/radio 由绘制层据 InputType 画原生方框/圆框（无子盒，提前返回）。
+        if (cs.Tag == "input")
+        {
+            cs.InputType = (element.GetAttribute("type") ?? "text").ToLowerInvariant();
+            cs.InputChecked = element.HasAttribute("checked");
+            if (cs.InputType is "checkbox" or "radio") return cs;
+            var ph = element.GetAttribute("placeholder");
+            if (!string.IsNullOrEmpty(ph))
+            {
+                cs.PlaceholderText = ph;
+                cs.TextContent = ph;   // 走块/inline 文本路径绘制
+                cs.Color = new SKColor(0x9a, 0xa0, 0xa8);  // 占位符弱化灰（浏览器 ::placeholder 观感）
+            }
+            return cs;
+        }
+
         // 内联 <svg>：整体捕获为替换内容，内部节点不成盒
         if (cs.Tag == "svg")
         {
@@ -460,7 +489,7 @@ public static class StyleResolver
         return Get(el.TagName.ToLowerInvariant());
     }
 
-    static string ApplyTransform(string text, string mode)
+    internal static string ApplyTransform(string text, string mode)
     {
         if (mode == "uppercase") return text.ToUpperInvariant();
         if (mode == "lowercase") return text.ToLowerInvariant();
@@ -550,6 +579,18 @@ public static class StyleResolver
         string Size0(string prop) { var v = Val(prop); return v.Length == 0 && flat != null ? "0px" : v; }
 
         s.Display = FirstNonEmpty(Raw("display"), "block"); // display 不继承
+        // flex/grid 子项按 CSS 规范"块级化"（blockify）：inline→block、inline-block→block、
+        // inline-flex→flex、inline-grid→grid、inline-table→table。否则行内级子项（如 flex 里的 <span>
+        // 混排文本+链接）不会建立 inline 格式化上下文，导致其行内子元素被当成块逐行堆叠。
+        if (parent is { Display: "flex" or "inline-flex" or "grid" or "inline-grid" })
+            s.Display = s.Display switch
+            {
+                "inline" or "inline-block" => "block",
+                "inline-flex" => "flex",
+                "inline-grid" => "grid",
+                "inline-table" => "table",
+                _ => s.Display,
+            };
         s.BoxSizing = CssValueParser.ParseKeyword(Raw("box-sizing"), "content-box");
         s.BorderCollapse = CssValueParser.ParseKeyword(Raw("border-collapse"), "separate");
         s.BorderSpacing = Math.Max(0, CssValueParser.ToPixels(FirstToken(Raw("border-spacing")), s.FontSize));
@@ -560,7 +601,13 @@ public static class StyleResolver
         s.FontFamily = FirstNonEmpty(CssValueParser.ParseFirstFontFamily(Raw("font-family")), parent?.FontFamily, "sans-serif")!;
         s.FontWeight = CssValueParser.ParseFontWeight(Raw("font-weight"), parent?.FontWeight ?? 400);
         s.Color = CssValueParser.ParseColor(Raw("color")) ?? parent?.Color ?? SKColors.Black;
-        s.BackgroundColor = CssValueParser.ParseColor(Raw("background-color")) ?? SKColor.Empty;
+        // background 简写用 var() 时（如 body { background: var(--bg) }），AngleSharp 不会把展开后的
+        // 色值折进 computed background-color（拿到 transparent/空），导致页面背景不画、卡片像浮在白底上。
+        // 故 computed 透明/缺失时，从已 ExpandVars 的 background 声明简写里补取"顶层纯色分量"。
+        var bgc = CssValueParser.ParseColor(Raw("background-color"));
+        if (bgc == null || bgc.Value.Alpha == 0)
+            bgc = ExtractBackgroundColor(Spec("background")) ?? bgc;
+        s.BackgroundColor = bgc ?? SKColor.Empty;
         s.LineHeightFactor = CssValueParser.ParseLineHeight(Val("line-height"));
         // direction：computed 拿不到时按 CSS 继承语义手动取父级；RTL 段落里 text-align 的
         // start/end 按书写方向解析（start→右），未显式设置时默认右对齐。
@@ -578,10 +625,25 @@ public static class StyleResolver
 
         // margin / padding：按 longhand 读声明值（保留 %），布局期按包含块宽解析。
         // CSS 里 margin/padding 的百分比一律相对包含块的**行内尺寸（宽）**，横竖同基准。
-        s.MarginTopCss = CssValueParser.ParseSize(Size0("margin-top"), s.FontSize);
-        s.MarginRightCss = CssValueParser.ParseSize(Size0("margin-right"), s.FontSize);
-        s.MarginBottomCss = CssValueParser.ParseSize(Size0("margin-bottom"), s.FontSize);
-        s.MarginLeftCss = CssValueParser.ParseSize(Size0("margin-left"), s.FontSize);
+        // margin 不走继承，声明值即权威：AngleSharp 的 computed 会让内置 UA 的 margin-block-start
+        // 穿透作者 `* { margin:0 }` 重置（h4 实测返回 1.12em），故声明值优先、无声明才退 computed。
+        string MarginVal(string prop)
+        {
+            if (flat != null) return Size0(prop);   // 快照路径：浏览器已算好 used value，缺值即 0，Spec≡Get 无声明可谈
+            if (ctx.Margins != null && ctx.Margins.TryGet(element, ctx.ViewportWidth, prop, out var mv)) return mv;
+            var sp = Spec(prop);
+            return string.IsNullOrWhiteSpace(sp) ? Get(prop) : sp;
+        }
+        s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);
+        s.MarginRightCss = CssValueParser.ParseSize(MarginVal("margin-right"), s.FontSize);
+        s.MarginBottomCss = CssValueParser.ParseSize(MarginVal("margin-bottom"), s.FontSize);
+        s.MarginLeftCss = CssValueParser.ParseSize(MarginVal("margin-left"), s.FontSize);
+        // 作者是否真的写了 auto：AngleSharp 对未声明的 margin 也返回空串，令 CssSize.IsAuto 无法区分
+        // "auto" 与 "没设"。computed 值里 "auto" 才是真自动边距（快照路径浏览器已折成解析后 px，恒非 auto）。
+        s.MarginTopAuto = IsAutoKw(Get("margin-top"));
+        s.MarginRightAuto = IsAutoKw(Get("margin-right"));
+        s.MarginBottomAuto = IsAutoKw(Get("margin-bottom"));
+        s.MarginLeftAuto = IsAutoKw(Get("margin-left"));
         s.PaddingTopCss = CssValueParser.ParseSize(Size0("padding-top"), s.FontSize);
         s.PaddingRightCss = CssValueParser.ParseSize(Size0("padding-right"), s.FontSize);
         s.PaddingBottomCss = CssValueParser.ParseSize(Size0("padding-bottom"), s.FontSize);
@@ -723,6 +785,39 @@ public static class StyleResolver
         return s;
     }
 
+    // 从 background 简写里取顶层纯色分量：逐个 depth-0 token 试 ParseColor，
+    // 跳过 linear-gradient(...)/url(...)/no-repeat 等非色值 token。
+    static SKColor? ExtractBackgroundColor(string decl)
+    {
+        foreach (var tok in TopLevelTokens(decl))
+        {
+            var c = CssValueParser.ParseColor(tok);
+            if (c != null && c.Value.Alpha > 0) return c;
+        }
+        return null;
+    }
+
+    // 按 depth-0 空格切分：括号内（含 rgb()/rgba() 的逗号、渐变端点）不拆，保证函数值留成单个 token。
+    static IEnumerable<string> TopLevelTokens(string v)
+    {
+        if (string.IsNullOrEmpty(v)) yield break;
+        var cur = new StringBuilder();
+        int depth = 0;
+        for (int i = 0; i < v.Length; i++)
+        {
+            char ch = v[i];
+            if (ch == '(') { depth++; cur.Append(ch); }
+            else if (ch == ')') { if (depth > 0) depth--; cur.Append(ch); }
+            else if (ch == ' ' && depth == 0)
+            {
+                if (cur.Length > 0) { yield return cur.ToString(); cur.Clear(); }
+            }
+            else cur.Append(ch);
+        }
+        if (cur.Length > 0) yield return cur.ToString();
+    }
+
+    static bool IsAutoKw(string v) => v.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
     static string FirstToken(string v) => (v ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
     static string CleanCounter(string? v) { v = (v ?? "").Trim(); return v.Length == 0 || v.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : v; }
     static float FirstRadius(string v, float fontSize)

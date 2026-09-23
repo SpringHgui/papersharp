@@ -52,7 +52,7 @@ public static class InlineLayout
             }
             var c = piece.Child;
             if (c == null || c.Display == "none") continue;
-            if (c.Display == "inline-block" || c.Tag is "img" or "svg")
+            if (c.Display is "inline-block" or "inline-flex" or "inline-grid" || c.Tag is "img" or "svg")
                 list.Add(new InlineAtom { Style = c, Box = factory(c) });
             else
                 list.AddRange(BuildAtoms(c, factory));   // 普通 inline：递归摊平

@@ -23,6 +23,26 @@ if (args.Length > 1 && args[0] == "cold")
     Benchmark.Cold(assets, args[1]);
     return;
 }
+// 单文件模式：dotnet run -- html <name>
+// 读 assets/<name>.html（样式内嵌于 <style>），导出 PDF + PNG，用于快速看整页效果。
+if (args.Length > 1 && args[0] == "html")
+{
+    var name = args[1];
+    var html = File.ReadAllText(Path.Combine(assets, name + ".html"));
+    float pageW = args.Length > 2 && float.TryParse(args[2], out var w) ? w : 1284;
+
+    var pdf = Renderer.RenderPdf(html, "", baseDir: assets);
+    var pdfPath = Path.Combine(outDir, name + ".pdf");
+    File.WriteAllBytes(pdfPath, pdf);
+
+    var png = Renderer.RenderPng(html, "", width: pageW, baseDir: assets, scale: 2f);
+    var pngPath = Path.Combine(outDir, name + ".png");
+    File.WriteAllBytes(pngPath, png);
+
+    Console.WriteLine($"[{name}]  PDF {pdf.Length / 1024:N0} KB  ·  PNG {png.Length / 1024:N0} KB (2x, w={pageW:0})");
+    Console.WriteLine($"  → {pdfPath}\n  → {pngPath}");
+    return;
+}
 if (args.Length > 0 && args[0] == "scale")
 {
     Benchmark.ScaleOnly(assets);
@@ -48,12 +68,14 @@ if (args.Length > 1 && args[0] == "tree")
 {
     var html = File.ReadAllText(Path.Combine(assets, args[1] + ".html"));
     var css = File.ReadAllText(Path.Combine(assets, args[1] + ".css"));
-    var doc = PaperSharp.Css.StyleResolver.BuildDocument(html, css);
+    float treeW = args.Length > 2 && float.TryParse(args[2], out var tw2) ? tw2 : 794;
+    var doc = PaperSharp.Css.StyleResolver.BuildDocument(html, css, viewportWidth: treeW);
     var root = PaperSharp.Layout.LayoutBuilder.ToBoxTree(doc);
-    PaperSharp.Layout.LayoutBuilder.Measure(root, 794);
+    PaperSharp.Layout.LayoutBuilder.Measure(root, treeW);
+    PaperSharp.Layout.LayoutBuilder.Position(root, 0, 0);
     void Dump(PaperSharp.Layout.BlockBox b, int d)
     {
-        Console.WriteLine(new string(' ', d * 2) + $"<{b.Style.Tag}> display={b.Style.Display} w={b.ContentWidth} h={b.ContentHeight} kids={b.Children.Count} gridInfo={b.GridInfo != null} lines={b.Lines?.Count ?? -1} wl={b.WrappedLines?.Length ?? -1}"
+        Console.WriteLine(new string(' ', d * 2) + $"<{b.Style.Tag}> display={b.Style.Display} x={b.BorderX} y={b.BorderY} w={b.ContentWidth} h={b.ContentHeight} kids={b.Children.Count} gridInfo={b.GridInfo != null} lines={b.Lines?.Count ?? -1} wl={b.WrappedLines?.Length ?? -1}"
             + (b.Style.MixBlendMode != "normal" || b.Style.ClipPath != null || b.Style.MaskImage != null || b.Style.Filter != null || b.Style.CornerShape != "round"
                ? $" FX[blend={b.Style.MixBlendMode} clip={b.Style.ClipPath} mask={b.Style.MaskImage != null} filt={b.Style.Filter != null} shape={b.Style.CornerShape}]" : "")
             + (b.WrappedLines is { Length: > 0 } ? $" tw={b.Style.TextWrap} va={b.Style.VerticalAlign} tf={b.Style.TextFit} fs={b.Style.FontSize} L0=[{b.WrappedLines[0]}]" : ""));

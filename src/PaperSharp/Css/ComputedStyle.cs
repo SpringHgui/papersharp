@@ -19,6 +19,13 @@ public sealed class ComputedStyle
     /// <summary>&lt;a&gt; 的 href（PDF 链接注释 / 书签用），其余元素为 null。</summary>
     public string? LinkHref;
 
+    /// <summary>&lt;input&gt; 的 type（text/tel/checkbox/radio…），其余元素为空。</summary>
+    public string InputType = "";
+    /// <summary>&lt;input&gt; 无值时以 placeholder 文本占位显示（用弱化色绘制）。</summary>
+    public string? PlaceholderText;
+    /// <summary>复选/单选框是否处于选中态（HTML checked 属性）。</summary>
+    public bool InputChecked;
+
     /// <summary>有序行内片段（文本 / 行内子元素），仅用于 inline 格式化上下文，保留 DOM 顺序。</summary>
     public List<InlinePiece> InlinePieces = new();
     /// <summary>该块是否是纯 inline 格式化上下文（非 flex/table 块，含文本或行内元素，且无块级子元素）。</summary>
@@ -42,7 +49,12 @@ public sealed class ComputedStyle
     public ComputedStyle CloneShallow() => (ComputedStyle)MemberwiseClone();
 
     /// <summary>display 是否行内级（inline / inline-block）。</summary>
-    public static bool IsInlineLevel(string display) => display == "inline" || display == "inline-block";
+    public static bool IsInlineLevel(string display) => display is "inline" or "inline-block" or "inline-flex" or "inline-grid";
+
+    /// <summary>是否为 flex 容器（含 inline-flex）：布局测量按 flex 走。</summary>
+    public static bool IsFlexDisplay(string display) => display is "flex" or "inline-flex";
+    /// <summary>是否为 grid 容器（含 inline-grid）：布局测量按 grid 走。</summary>
+    public static bool IsGridDisplay(string display) => display is "grid" or "inline-grid";
 
     // 布局开关
     public string Display = "block"; // block | flex | none | inline | inline-block | table | table-row | table-cell | ...
@@ -88,6 +100,9 @@ public sealed class ComputedStyle
     // border-width 无百分比（CSS 不接受），故只有 float。
     public CssSize MarginTopCss, MarginRightCss, MarginBottomCss, MarginLeftCss;
     public CssSize PaddingTopCss, PaddingRightCss, PaddingBottomCss, PaddingLeftCss;
+
+    // 作者是否显式写了 auto 边距（区别于未声明）：margin:auto 居中/靠右判定用这个，别用 CssSize.IsAuto。
+    public bool MarginTopAuto, MarginRightAuto, MarginBottomAuto, MarginLeftAuto;
 
     /// <summary>
     /// 把 margin/padding 的声明值按包含块行内尺寸（宽）解析成 px，写入对应的 float 字段。

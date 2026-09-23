@@ -186,7 +186,20 @@ public static class FontManager
 
         var slant = SKFontStyleSlant.Upright;
         var width = SKFontStyleWidth.Normal;
-        var style = weight >= 700 ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal;
+        // 按 CSS 字重映射到 Skia 字重枚举，交给系统字体管理器就近匹配真实字面。
+        // 旧代码把 <700 一律压成 Normal，导致 500/600 的标题、按钮比浏览器明显偏细。
+        var style = weight switch
+        {
+            >= 900 => SKFontStyleWeight.Black,
+            >= 800 => SKFontStyleWeight.ExtraBold,
+            >= 700 => SKFontStyleWeight.Bold,
+            >= 600 => SKFontStyleWeight.SemiBold,
+            >= 500 => SKFontStyleWeight.Medium,
+            >= 400 => SKFontStyleWeight.Normal,
+            >= 300 => SKFontStyleWeight.Light,
+            >= 200 => SKFontStyleWeight.ExtraLight,
+            _ => SKFontStyleWeight.Thin,
+        };
         var fontStyle = new SKFontStyle(style, width, slant);
 
         var candidates = Fallbacks.TryGetValue(family, out var list) ? list : new[] { family };

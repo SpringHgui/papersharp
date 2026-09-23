@@ -83,6 +83,10 @@ public static class Painter
         float contentX = box.BorderX + s.BorderWidthLeft + s.PaddingLeft;
         float contentY = box.BorderY + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
 
+        // 原生表单控件：checkbox/radio 作者样式通常无框，按浏览器观感自绘一个方框/圆框。
+        if (s.Tag == "input" && s.InputType is "checkbox" or "radio")
+            PaintNativeControl(canvas, s, borderRect);
+
         if (box.Image != null)
         {
             var dst = new SKRect(contentX, contentY, contentX + box.ContentWidth, contentY + box.ContentHeight);
@@ -114,6 +118,35 @@ public static class Painter
         }
         fillShader?.Dispose();
         VisualEffects.End(scope);
+    }
+
+    /// <summary>自绘原生 checkbox/radio：白底灰框，选中态填主题蓝并画勾/圆点。尺寸取盒大小。</summary>
+    static void PaintNativeControl(SKCanvas canvas, ComputedStyle s, SKRect r)
+    {
+        var accent = new SKColor(0x1a, 0x5c, 0xf0);   // 缺省强调色（未解析 accent-color）
+        float rad = s.InputType == "radio" ? r.Width / 2 : Math.Min(4, r.Width / 4);
+        using var bg = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
+        using var border = new SKPaint { IsAntialias = true, Color = new SKColor(0xc4, 0xc9, 0xd0), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
+        canvas.DrawRoundRect(r, rad, rad, bg);
+        canvas.DrawRoundRect(r, rad, rad, border);
+        if (!s.InputChecked) return;
+        using var fill = new SKPaint { IsAntialias = true, Color = accent, Style = SKPaintStyle.Fill };
+        canvas.DrawRoundRect(r, rad, rad, fill);
+        if (s.InputType == "radio")
+        {
+            var dot = new SKRect(r.MidX - r.Width / 6, r.MidY - r.Height / 6, r.MidX + r.Width / 6, r.MidY + r.Height / 6);
+            using var dotp = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Fill };
+            canvas.DrawOval(dot, dotp);
+        }
+        else
+        {
+            using var check = new SKPaint { IsAntialias = true, Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(1.5f, r.Width / 8), StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
+            var p = new SKPath();
+            p.MoveTo(r.Left + r.Width * 0.26f, r.Top + r.Height * 0.52f);
+            p.LineTo(r.Left + r.Width * 0.44f, r.Top + r.Height * 0.68f);
+            p.LineTo(r.Left + r.Width * 0.74f, r.Top + r.Height * 0.34f);
+            canvas.DrawPath(p, check);
+        }
     }
 
     /// <summary>inline FC 里的原子盒（inline-block/行内 img）已在 PositionInline 里定位到绝对坐标，这里整棵画出。</summary>

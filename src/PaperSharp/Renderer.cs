@@ -113,7 +113,7 @@ public static class Renderer
         var spec = AtPageParser.Parse(css, defW, defH);
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
 
-        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed);
+        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed, width);
         var root = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(root, Math.Max(1, width - mL - mR));
         LayoutBuilder.Position(root, mL, mT);
@@ -131,7 +131,7 @@ public static class Renderer
         // 预览也按 @page 边距留白，视觉更接近成品页（页眉页脚不画，因为长图不分页）
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
 
-        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed);
+        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed, width);
         var root = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(root, Math.Max(1, width - mL - mR));
         LayoutBuilder.Position(root, mL, mT);
@@ -153,7 +153,7 @@ public static class Renderer
 
     static (BlockBox body, Css.DocumentInfo? docInfo) BuildMeasuredBody(string html, string css, float width, double? animationTime = null, bool precomputed = false)
     {
-        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed);
+        var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed, width);
         var body = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(body, width);
         return (body, computed.Document);

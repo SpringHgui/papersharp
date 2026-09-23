@@ -45,14 +45,28 @@ public static class LayoutBuilder
             box.Atoms = InlineLayout.BuildAtoms(style, c => ToBoxTree(c));
             return box;
         }
-        // flex/grid 容器直接放文本（如居中数字）：包一层匿名块盒作为弹性/网格子项，否则文本会被丢弃
-        if ((style.Display == "flex" || style.Display == "grid") && !string.IsNullOrEmpty(style.TextContent))
+        // flex/grid 容器直接放文本：按 DOM 顺序把「文本片段」包成匿名纯文本盒、与元素子盒交错建盒，
+        // 否则文本会被丢弃或错序（.prefix 的 "+86"、.oauth 的「badge→文字」、Pro 行的「icon→文字→限时」）。
+        // 连续文本片段合并成一个匿名项（CSS：一段连续文本 = 一个匿名 flex/grid 子项，中间不插 gap）。
+        if ((ComputedStyle.IsFlexDisplay(style.Display) || ComputedStyle.IsGridDisplay(style.Display)) && !string.IsNullOrEmpty(style.TextContent))
         {
-            var anon = style.CloneShallow();
-            anon.Children = new();
-            anon.InlinePieces = new();
-            anon.Display = "block";
-            box.Children.Add(ToBoxTree(anon));
+            string? run = null;
+            void FlushRun()
+            {
+                if (run != null) { box.Children.Add(ToBoxTree(AnonTextItem(style, run))); run = null; }
+            }
+            foreach (var piece in style.InlinePieces)
+            {
+                if (piece.Child != null)
+                {
+                    FlushRun();
+                    if (piece.Child.Display != "none") box.Children.Add(ToBoxTree(piece.Child));
+                }
+                else if (!string.IsNullOrWhiteSpace(piece.Text))
+                    run = run == null ? piece.Text : run + piece.Text;
+            }
+            FlushRun();
+            return box;
         }
         foreach (var child in style.Children)
         {
@@ -60,6 +74,37 @@ public static class LayoutBuilder
             box.Children.Add(ToBoxTree(child));
         }
         return box;
+    }
+
+    /// <summary>
+    /// flex/grid 容器的匿名文本子项：克隆容器样式承载文字，但清成"纯文本盒"——
+    /// 去掉从容器克隆来的盒模型装饰（否则 .prefix 的 border-right 会在文字旁多画一条线、padding 内缩文字），
+    /// 并把 height:100% 等继承尺寸归 auto，令其收缩到文字高、随 align-items 与兄弟图标同高居中。
+    /// </summary>
+    static ComputedStyle AnonTextItem(ComputedStyle owner, string text)
+    {
+        var anon = owner.CloneShallow();
+        anon.Children = new();
+        anon.InlinePieces = new();
+        anon.Before = anon.After = null;
+        anon.Display = "block";
+        var t = text.Trim();
+        anon.TextContent = owner.TextTransform is "uppercase" or "lowercase" or "capitalize"
+            ? StyleResolver.ApplyTransform(t, owner.TextTransform) : t;
+        anon.Width = anon.Height = anon.MinWidth = anon.MaxWidth = anon.MinHeight = anon.MaxHeight = default;
+        // 清 margin：既清声明尺寸（default 即 auto），也清"作者写了 auto"的标志位，
+        // 否则匿名文本项会继承容器的 auto 边距被主轴居中，整体右移。
+        anon.MarginTopCss = anon.MarginRightCss = anon.MarginBottomCss = anon.MarginLeftCss = CssSize.Abs(0);
+        anon.MarginTopAuto = anon.MarginRightAuto = anon.MarginBottomAuto = anon.MarginLeftAuto = false;
+        anon.PaddingTopCss = anon.PaddingRightCss = anon.PaddingBottomCss = anon.PaddingLeftCss = default;
+        anon.MarginTop = anon.MarginRight = anon.MarginBottom = anon.MarginLeft = 0;
+        anon.PaddingTop = anon.PaddingRight = anon.PaddingBottom = anon.PaddingLeft = 0;
+        anon.BorderWidthTop = anon.BorderWidthRight = anon.BorderWidthBottom = anon.BorderWidthLeft = 0;
+        anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
+        anon.BackgroundColor = SKColor.Empty;
+        anon.Background = null;
+        anon.Shadow = null;
+        return anon;
     }
 
     // ── 测量 ────────────────────────────────────────────────
@@ -88,6 +133,7 @@ public static class LayoutBuilder
     static void MeasureWithContentWidth(BlockBox box, float contentWidth, float containingHeight)
     {
         if (box.IsReplaced) { MeasureImage(box, contentWidth); return; }
+        box.Style.ResolveBoxSizes(contentWidth);   // 走 Measure 主入口才做的声明值→float 折算，这里补上（否则子项 padding/margin 恒 0）
         box.ContentWidth = contentWidth;
         MeasureHeight(box, containingHeight, null, float.NaN);
     }
@@ -124,9 +170,9 @@ public static class LayoutBuilder
             ? s.PaddingTop + s.PaddingBottom + s.BorderWidthTop + s.BorderWidthBottom : 0;
         float hRes = s.Height.Resolve(containingHeight);
         float? myDefH = float.IsNaN(hRes) ? null : Math.Max(0, hRes - bb);
-        float naturalH = s.Display == "flex"
+        float naturalH = ComputedStyle.IsFlexDisplay(s.Display)
             ? MeasureFlex(box, myDefH)
-            : s.Display == "grid"
+            : ComputedStyle.IsGridDisplay(s.Display)
             ? MeasureGrid(box, myDefH)
             : MeasureBlock(box, myDefH ?? float.NaN, fc, contentTopY);
         box.ContentHeight = ClampSize(myDefH ?? naturalH, s.MinHeight, s.MaxHeight, containingHeight, bb);
@@ -628,6 +674,9 @@ public static class LayoutBuilder
                 continue;   // 浮动不推进流 cursor
             }
 
+            if (cs.Width.IsAuto && cs.Display is "inline-flex" or "inline-grid" or "inline-block")
+            { MeasureOutOfFlow(c, box.ContentWidth); h += c.TotalHeight; continue; }   // 行内级盒（inline-block/flex/grid）：收缩适配，不填满列宽
+
             Measure(c, box.ContentWidth, childContainingHeight, fc, contentTopY + h);
             h += c.TotalHeight;
         }
@@ -809,9 +858,9 @@ public static class LayoutBuilder
                 }
             }
 
-            line.MainSize = isRow
-                ? gap * (line.ItemIndices.Count - 1) + lineFinal.Sum()
-                : lineFinal.Sum() + gap * (line.ItemIndices.Count - 1);
+            // 线主轴尺寸 = 分配后的内容尺寸 + 各子项主轴装饰（margin/border/padding），
+            // 否则 column 容器自然高漏掉子项 margin → 内容溢出盒高、网格行重叠。
+            line.MainSize = gap * (line.ItemIndices.Count - 1) + lineFinal.Sum() + lineDeco.Sum();
             line.CrossSize = lineCrossMax;
         }
 
@@ -879,6 +928,19 @@ public static class LayoutBuilder
                 }
             }
             return w;
+        }
+        // flex/grid 容器里直接文本会被包成匿名子项，与元素子项并排占主轴 → 内在宽须"文本 + 各子项"求和；
+        // 普通块则文本与块级子项各占独立行，取二者较大即可（沿用旧的"文本优先短路"）。
+        if (ComputedStyle.IsFlexDisplay(s.Display) || ComputedStyle.IsGridDisplay(s.Display))
+        {
+            float both = 0;
+            if (!string.IsNullOrEmpty(s.TextContent))
+            {
+                using var fnt = new SKFont(c.Typeface, s.FontSize);
+                both += TextMeasurer.NaturalWidth(s.TextContent, fnt, s);
+            }
+            foreach (var g in c.Children) both += IntrinsicContentWidth(g) + MainDeco(g, true);
+            return both;
         }
         if (!string.IsNullOrEmpty(s.TextContent))
         {
@@ -975,7 +1037,9 @@ public static class LayoutBuilder
         {
             var child = box.Children[p.childIdx];
             float cellW = SumSpan(colW, p.col, p.colSpan, colGap);
-            MeasureWithContentWidth(child, cellW, myDefH ?? float.NaN);
+            child.Style.ResolveBoxSizes(cellW);
+            // 轨道宽是子项 margin box 的可用区；折算成内容宽再测（auto=拉伸减去装饰，固定宽用声明值）
+            MeasureWithContentWidth(child, ResolveWidth(child.Style.Width, cellW, child.Style), myDefH ?? float.NaN);
         }
 
         // ── 行定尺 ──
@@ -1263,11 +1327,11 @@ public static class LayoutBuilder
         {
             PositionTable(box, contentX, contentY, childCb);
         }
-        else if (s.Display == "flex")
+        else if (ComputedStyle.IsFlexDisplay(s.Display))
         {
             PositionFlex(box, contentX, contentY, childCb);
         }
-        else if (s.Display == "grid")
+        else if (ComputedStyle.IsGridDisplay(s.Display))
         {
             PositionGrid(box, contentX, contentY, childCb);
         }
@@ -1308,7 +1372,32 @@ public static class LayoutBuilder
                     continue;
                 }
 
-                PositionRec(c, contentX, cy, childCb);
+                // margin 的 auto：定宽盒在父内容宽内水平居中/靠右（如 .wrap 的 margin:0 auto），否则正常靠左。
+                float xoff = 0;
+                if (!cs.Width.IsAuto)
+                {
+                    float free = box.ContentWidth - c.TotalWidth;
+                    if (free > 0)
+                    {
+                        bool la = cs.MarginLeftAuto, ra = cs.MarginRightAuto;
+                        if (la && ra) xoff = free / 2;
+                        else if (la) xoff = free;
+                    }
+                }
+                else if (cs.Display is "inline-block" or "inline-flex" or "inline-grid")
+                {
+                    // 收缩适配的行内级盒：CSS 会把它包进继承 text-align 的匿名块，故按父 text-align 水平对齐
+                    // （如 .hero{text-align:center} 里的 .chip 药丸应居中，而非贴左填满）。
+                    float free = box.ContentWidth - c.TotalWidth;
+                    if (free > 0)
+                        xoff = box.Style.TextAlignment switch
+                        {
+                            CssTextAlign.Center => free / 2,
+                            CssTextAlign.Right => free,
+                            _ => 0,
+                        };
+                }
+                PositionRec(c, contentX + xoff, cy, childCb);
                 cy += c.TotalHeight;
             }
         }
@@ -1457,9 +1546,19 @@ public static class LayoutBuilder
                 };
 
                 if (isRow)
-                    PositionRec(c, contentX + cursor, contentY + crossPos + crossOff, cb);
+                {
+                    float mainPos = cursor;
+                    if (c.Style.MarginLeftAuto && c.Style.MarginRightAuto)
+                        mainPos = Math.Max(0, (mainSize - c.TotalWidth) / 2);   // 主轴 auto 边距吸收自由空间 → 居中，覆盖 justify-content
+                    PositionRec(c, contentX + mainPos, contentY + crossPos + crossOff, cb);
+                }
                 else
-                    PositionRec(c, contentX + crossPos + crossOff, contentY + cursor, cb);
+                {
+                    float mainPos = cursor;
+                    if (c.Style.MarginTopAuto && c.Style.MarginBottomAuto)
+                        mainPos = Math.Max(0, (mainSize - c.TotalHeight) / 2);
+                    PositionRec(c, contentX + crossPos + crossOff, contentY + mainPos, cb);
+                }
 
                 cursor += (isRow ? c.TotalWidth : c.TotalHeight) + between;
             }
