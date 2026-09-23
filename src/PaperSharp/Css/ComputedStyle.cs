@@ -24,6 +24,9 @@ public sealed class ComputedStyle
     /// <summary>该块是否是纯 inline 格式化上下文（非 flex/table 块，含文本或行内元素，且无块级子元素）。</summary>
     public bool IsInlineFC;
 
+    /// <summary>文档级元数据（&lt;title&gt;/&lt;meta&gt;），仅挂在 BuildDocument 返回的根节点上。</summary>
+    public DocumentInfo? Document;
+
     /// <summary>浅拷贝一份样式（供匿名 flex/grid 子项包装用）；调用方自行重置 Children/InlinePieces。</summary>
     public ComputedStyle CloneShallow() => (ComputedStyle)MemberwiseClone();
 
@@ -140,6 +143,7 @@ public sealed class ComputedStyle
     public string TextTransform = "none";    // none | uppercase | lowercase | capitalize
     public string TextOverflow = "clip";     // clip | ellipsis
     public string WordBreak = "normal";      // normal | break-all | keep-all
+    public string Direction = "ltr";         // ltr | rtl（CSS direction：驱动 bidi 重排与默认对齐）
 
     // 分页控制（打印媒体 / @page 上下文）
     public string BreakInside = "auto";      // auto | avoid
@@ -150,6 +154,9 @@ public sealed class ComputedStyle
 }
 
 public enum CssTextAlign { Left, Center, Right }
+
+/// <summary>从 HTML 头部抽出的文档元数据（PDF 元数据用），随根 ComputedStyle 返回，不做全局态。</summary>
+public sealed record DocumentInfo(string? Title, string? Author, string? Description, string? Keywords);
 
 /// <summary>inline 序列里的一段：文本（Owner 的样式）或一个行内子元素（引用其 ComputedStyle）。</summary>
 public sealed class InlinePiece

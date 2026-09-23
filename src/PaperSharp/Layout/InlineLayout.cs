@@ -200,6 +200,34 @@ public static class InlineLayout
             }
             f.AlignDY = dy;
         }
+
+        ReorderForRtl(ln);
+    }
+
+    /// <summary>RTL 基底方向：把行内 frag 按强方向分组并反转为视觉序（规则与 TextShaper.BidiRuns 一致），重排 X。</summary>
+    static void ReorderForRtl(LineBox ln)
+    {
+        if (ln.Frags.Count < 2) return;
+        var firstText = ln.Frags.FirstOrDefault(f => f.Text != null);
+        if (firstText == null || firstText.Style.Direction != "rtl") return;
+
+        var groups = new List<List<InlineFrag>>();
+        var cur = new List<InlineFrag>();
+        int curDir = 0;
+        foreach (var f in ln.Frags)
+        {
+            int dir = f.Text != null ? TextShaper.StrongDir(f.Text) : 0; // 原子盒按中性处理
+            if (curDir == 0) { cur.Add(f); if (dir != 0) curDir = dir; }
+            else if (dir == 0 || dir == curDir) cur.Add(f);
+            else { groups.Add(cur); cur = new List<InlineFrag> { f }; curDir = dir; }
+        }
+        if (cur.Count > 0) groups.Add(cur);
+        if (groups.Count < 2) return;
+
+        groups.Reverse();
+        float x = 0;
+        foreach (var g in groups)
+            foreach (var f in g) { f.X = x; x += f.Width; }
     }
 
     static string LastText(LineBox ln)
@@ -251,27 +279,27 @@ public static class InlineLayout
         var tokens = new List<string>();
         var sb = new System.Text.StringBuilder();
         void Flush() { if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); } }
-        static bool IsWs(char c) => c is ' ' or '\n' or '\t' or '\r' or '\f';
+        static bool IsWs(string g) => g.Length == 1 && g[0] is ' ' or '\n' or '\t' or '\r' or '\f';
 
-        foreach (var c in s)
+        foreach (var g in TextShaper.Graphemes(s)) // 字素簇为单位：surrogate 对（emoji/生僻字）不拆散
         {
             if (preserve)
             {
-                if (c == '\n') { Flush(); tokens.Add("\n"); }
-                else sb.Append(c);
+                if (g == "\n") { Flush(); tokens.Add("\n"); }
+                else sb.Append(g);
                 continue;
             }
-            if (IsWs(c))
+            if (IsWs(g))
             {
                 Flush();
                 if (tokens.Count == 0 || tokens[^1] != " ") tokens.Add(" "); // 折叠连续空白为单个空格
             }
-            else if (wordBreak == "break-all" || (TextMeasurer.IsCjkChar(c) && wordBreak != "keep-all"))
+            else if (wordBreak == "break-all" || (TextMeasurer.IsCjkChar(g[0]) && wordBreak != "keep-all"))
             {
                 Flush();
-                tokens.Add(c.ToString());
+                tokens.Add(g);
             }
-            else sb.Append(c);
+            else sb.Append(g);
         }
         Flush();
         return tokens;

@@ -160,9 +160,9 @@ public static class TextMeasurer
     {
         var tokens = new List<string>();
         var sb = new StringBuilder();
-        foreach (var c in s)
+        foreach (var g in TextShaper.Graphemes(s)) // 字素簇：break-all 也不拆散 surrogate 对
         {
-            if (c == ' ')
+            if (g == " ")
             {
                 if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
                 tokens.Add(" ");
@@ -170,16 +170,16 @@ public static class TextMeasurer
             else if (wordBreak == "break-all")
             {
                 if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-                tokens.Add(c.ToString());
+                tokens.Add(g);
             }
-            else if (IsCjk(c) && wordBreak != "keep-all")
+            else if (IsCjkChar(g[0]) && wordBreak != "keep-all")
             {
                 if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-                tokens.Add(c.ToString());
+                tokens.Add(g);
             }
             else
             {
-                sb.Append(c);
+                sb.Append(g);
             }
         }
         if (sb.Length > 0) tokens.Add(sb.ToString());
@@ -198,16 +198,20 @@ public static class TextMeasurer
         || (c >= 0xAC00 && c <= 0xD7AF) // 韩文
         || (c >= 0xF900 && c <= 0xFAFF); // CJK 兼容表意文字
 
-    /// <summary>整串宽度（含字距）。空串→0。</summary>
+    /// <summary>整串宽度（含字距）。空串→0。复杂文字/缺字形走 TextShaper 通路。</summary>
     public static float LineWidth(string s, SKFont font, float letterSpacing)
     {
         if (string.IsNullOrEmpty(s)) return 0;
+        if (TextShaper.NeedsSpecial(s, font.Typeface))
+            return TextShaper.WidthOf(s, font.Typeface, font.Size, letterSpacing);
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
         return paint.MeasureText(s) + letterSpacing * Math.Max(0, s.Length - 1);
     }
 
     static float TokenWidth(string token, SKFont font, float ls)
     {
+        if (TextShaper.NeedsSpecial(token, font.Typeface))
+            return TextShaper.WidthOf(token, font.Typeface, font.Size, ls);
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
         return paint.MeasureText(token) + ls * Math.Max(0, token.Length - 1);
     }
@@ -220,7 +224,13 @@ public static class TextMeasurer
         float max = 0;
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
         foreach (var line in text.Split('\n'))
-            max = Math.Max(max, paint.MeasureText(line) + s.LetterSpacing * Math.Max(0, line.Length - 1));
+        {
+            if (line.Length == 0) continue;
+            float w = TextShaper.NeedsSpecial(line, font.Typeface!)
+                ? TextShaper.WidthOf(line, font.Typeface!, font.Size, s.LetterSpacing)
+                : paint.MeasureText(line) + s.LetterSpacing * Math.Max(0, line.Length - 1);
+            max = Math.Max(max, w);
+        }
         return max;
     }
 }

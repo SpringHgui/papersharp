@@ -1,27 +1,28 @@
-using System.Text;
+using System.Collections.Concurrent;
 using SkiaSharp;
 
 namespace PaperSharp.Layout;
 
 /// <summary>
 /// 图像加载与解码缓存。支持：
-/// - 相对/绝对文件路径（相对路径基于 <see cref="BaseDir"/>，即 HTML 所在目录）
+/// - 相对/绝对文件路径（相对路径基于当前 <see cref="RenderScope.BaseDir"/>，即 HTML 所在目录）
 /// - data:image/...;base64,... 内联
 /// 网络 URL 默认不抓（保证离线 + 确定性输出）；如需可在此扩展。
-/// 同一 src 只解码一次，PDF/PNG 复用。
+/// 线程安全：缓存 key 编入 BaseDir（不同目录同名 src 不再串图），容器用 ConcurrentDictionary；
+/// 并发下同一 src 最坏重复解码一次，后写者胜出（先解码的实例由 GC 回收原生内存）。
 /// </summary>
 public static class ImageLoader
 {
-    public static string? BaseDir { get; set; }
-
-    static readonly Dictionary<string, SKImage?> Cache = new(StringComparer.Ordinal);
+    static readonly ConcurrentDictionary<(string? BaseDir, string Src), SKImage?> Cache = new();
 
     public static SKImage? Load(string? src)
     {
         if (string.IsNullOrWhiteSpace(src)) return null;
-        if (Cache.TryGetValue(src, out var hit)) return hit;
+        return Cache.GetOrAdd((RenderScope.Current?.BaseDir, src), static k => Decode(k.Src, k.BaseDir));
+    }
 
-        SKImage? img = null;
+    static SKImage? Decode(string src, string? baseDir)
+    {
         try
         {
             if (src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
@@ -31,68 +32,58 @@ public static class ImageLoader
                 {
                     var bytes = Convert.FromBase64String(src[(comma + 1)..]);
                     using var data = SKData.CreateCopy(bytes);
-                    img = SKImage.FromEncodedData(data);
+                    return SKImage.FromEncodedData(data);
                 }
             }
             else if (src.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                   || src.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                img = null; // demo 不联网
+                return null; // 刻意不联网：离线 + 确定性
             }
             else
             {
                 var path = Path.IsPathRooted(src)
                     ? src
-                    : Path.Combine(BaseDir ?? AppContext.BaseDirectory, src);
-                if (File.Exists(path))
+                    : Path.Combine(baseDir ?? AppContext.BaseDirectory, src);
+                if (!File.Exists(path)) return null;
+                if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // <img src="*.svg">：解析为矢量后栅格化，复用图像通路
-                        var pic = LoadSvg(File.ReadAllText(path));
-                        if (pic != null)
-                        {
-                            img = SKImage.FromPicture(pic, new SKSizeI(
-                                Math.Max(1, (int)Math.Round(pic.CullRect.Width)),
-                                Math.Max(1, (int)Math.Round(pic.CullRect.Height))));
-                        }
-                    }
-                    else
-                    {
-                        img = SKImage.FromEncodedData(path);
-                    }
+                    // <img src="*.svg">：解析为矢量后栅格化，复用图像通路
+                    var pic = LoadSvg(File.ReadAllText(path));
+                    if (pic == null) return null;
+                    return SKImage.FromPicture(pic, new SKSizeI(
+                        Math.Max(1, (int)Math.Round(pic.CullRect.Width)),
+                        Math.Max(1, (int)Math.Round(pic.CullRect.Height))));
                 }
+                return SKImage.FromEncodedData(path);
             }
         }
         catch
         {
-            img = null;
+            return null;
         }
-
-        Cache[src] = img;
-        return img;
+        return null; // data: 但非 base64 / 逗号缺失等畸形输入
     }
 
-    static readonly Dictionary<string, SKPicture?> SvgCache = new(StringComparer.Ordinal);
+    static readonly ConcurrentDictionary<string, SKPicture?> SvgCache = new(StringComparer.Ordinal);
 
-    /// <summary>解析内联 &lt;svg&gt; 标记为 SKPicture（PDF 中保持矢量）。按标记缓存。</summary>
+    /// <summary>解析内联 &lt;svg&gt; 标记为 SKPicture（PDF 中保持矢量）。按标记内容缓存，与路径无关。</summary>
     public static SKPicture? LoadSvg(string? markup)
     {
         if (string.IsNullOrWhiteSpace(markup)) return null;
-        if (SvgCache.TryGetValue(markup, out var hit)) return hit;
-        SKPicture? pic = null;
-        try
+        return SvgCache.GetOrAdd(markup, static m =>
         {
-            var svg = new Svg.Skia.SKSvg();
-            // AngleSharp 的 OuterHtml 不带 xmlns，补上命名空间声明再解析
-            var xml = markup;
-            int tagEnd = xml.IndexOf(' ');
-            if (tagEnd > 0 && !xml.Contains("xmlns=", StringComparison.OrdinalIgnoreCase))
-                xml = xml.Insert(tagEnd, " xmlns='http://www.w3.org/2000/svg'");
-            pic = svg.FromSvg(xml) ?? svg.Picture;
-        }
-        catch { pic = null; }
-        SvgCache[markup] = pic;
-        return pic;
+            try
+            {
+                var svg = new Svg.Skia.SKSvg();
+                // AngleSharp 的 OuterHtml 不带 xmlns，补上命名空间声明再解析
+                var xml = m;
+                int tagEnd = xml.IndexOf(' ');
+                if (tagEnd > 0 && !xml.Contains("xmlns=", StringComparison.OrdinalIgnoreCase))
+                    xml = xml.Insert(tagEnd, " xmlns='http://www.w3.org/2000/svg'");
+                return svg.FromSvg(xml) ?? svg.Picture;
+            }
+            catch { return null; }
+        });
     }
 }

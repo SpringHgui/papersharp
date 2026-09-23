@@ -3,9 +3,10 @@ using System.Text.RegularExpressions;
 namespace PaperSharp.Css;
 
 /// <summary>
-/// 解析 CSS 里的 @font-face 块，把 family → 字体文件登记到 FontManager。
+/// 解析 CSS 里的 @font-face 块，把 family → 字体文件登记到当前 <see cref="RenderScope"/>。
 /// src 里的多个 url(...)（如 woff2 → woff → ttf 兜底链）按声明顺序记录，加载时逐个尝试；
-/// data: 与 local() 跳过。相对路径由 FontManager.BaseDir 解析。
+/// data: 与 local() 跳过。相对路径由 RenderScope.BaseDir 解析。
+/// 必须在 <see cref="RenderScope.Begin"/> 内调用才具备跨请求隔离（Renderer 入口已自动开启）。
 /// </summary>
 public static class FontFaceParser
 {

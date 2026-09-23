@@ -30,11 +30,11 @@ public static class GoogleFonts
         try
         {
             var cssUrl = "https://fonts.googleapis.com/css2?family=" + spec.Trim().Replace(' ', '+') + "&display=swap";
-            Http.DefaultRequestHeaders.UserAgent.Clear();
-            // Chrome UA → Google 返回 woff2（而非老的 ttf/eot）
-            Http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+            // Chrome UA → Google 返回 woff2（而非老的 ttf/eot）。逐请求携带，不污染共享 HttpClient 头。
+            using var req = new HttpRequestMessage(HttpMethod.Get, cssUrl);
+            req.Headers.TryAddWithoutValidation("User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
-            css = Http.GetStringAsync(cssUrl).GetAwaiter().GetResult();
+            css = Http.Send(req).Content.ReadAsStringAsync().GetAwaiter().GetResult();
         }
         catch
         {
@@ -79,9 +79,9 @@ public static class GoogleFonts
             {
                 Directory.CreateDirectory(CacheDir);
                 var bytes = Http.GetByteArrayAsync(url).GetAwaiter().GetResult();
-                var tmp = path + ".tmp";
+                var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 File.WriteAllBytes(tmp, bytes);
-                File.Move(tmp, path, overwrite: true);
+                File.Move(tmp, path, overwrite: true);   // 并发同 URL：各写各的 tmp，原子改名，后到覆盖先到
             }
             return path;
         }

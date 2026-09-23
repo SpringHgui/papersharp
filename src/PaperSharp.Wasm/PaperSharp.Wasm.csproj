@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PaperSharp 的 browser-wasm 宿主：把渲染管线编译成 .NET WASM 供 JS（node/bun/浏览器）调用。
+    产物不是 NuGet 库，由 js/papersharp 包发布时拷入其 _framework。
+    固定 net8：net9/10 的 mono 对 SkiaSharp 2.88 有 method-builder-ilgen 断言（见 spike 结论）。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>PaperSharp.Wasm</RootNamespace>
+    <AssemblyName>PaperSharp.Wasm</AssemblyName>
+    <WasmBuildNative Condition="'$(WasmBuildNative)' == ''">true</WasmBuildNative>
+    <!-- browser-wasm 默认关掉 STJ 反射（面向 AOT 裁剪）；本宿主不裁剪，直接开回来 -->
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <!-- 关掉 IL 链接器：AngleSharp/STJ 依赖反射元数据，体积换稳定 -->
+    <WasmLinkerEnabled>false</WasmLinkerEnabled>
+    <!-- 不随 dotnet pack 发布（NuGet 只发 PaperSharp 本体） -->
+    <IsPackable>false</IsPackable>
+    <!-- SkiaSharp/HarfBuzz 的 wasm 原生包只提供 Uno/Blazor 接线，这里手动链 .a（net8 对应 emscripten 3.1.34，单线程） -->
+    <SkiaSharpAaDir>$(NuGetPackageRoot)skiasharp.nativeassets.webassembly\2.88.9\build\netstandard1.0\libSkiaSharp.a</SkiaSharpAaDir>
+    <HarfBuzzAaDir>$(NuGetPackageRoot)harfbuzzsharp.nativeassets.webassembly\7.3.0.2\build\netstandard1.0\libHarfBuzzSharp.a</HarfBuzzAaDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PaperSharp\PaperSharp.csproj" />
+    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="2.88.9" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="7.3.0.2" />
+    <NativeFileReference Include="$(SkiaSharpAaDir)\3.1.34\st\libSkiaSharp.a" />
+    <NativeFileReference Include="$(HarfBuzzAaDir)\3.1.34\st\libHarfBuzzSharp.a" />
+  </ItemGroup>
+
+</Project>

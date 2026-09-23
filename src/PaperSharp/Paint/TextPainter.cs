@@ -99,23 +99,86 @@ public static class TextPainter
             if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
             else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;
 
-            DrawSpaced(canvas, line, x, baseline, paint, ls);
+            DrawVisualLine(canvas, line, x, baseline, paint, ls, s.Direction == "rtl");
             DrawDecoration(canvas, s, x, baseline, textW, color);
             baseline += lineHeight;
+        }
+    }
+
+    /// <summary>画一行文本：按 bidi run 切段（RTL 基底方向反转 run 序），逐段走 shaped / 普通 / 回退通路。</summary>
+    static void DrawVisualLine(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls, bool rtl)
+    {
+        if (line.Length == 0) return;
+        var tf = paint.Typeface ?? SKTypeface.Default;
+        if (!rtl && !TextShaper.NeedsSpecial(line, tf)) { DrawSpaced(canvas, line, x, y, paint, ls); return; }
+        var runs = Layout.TextShaper.BidiRuns(line);
+        if (rtl) runs.Reverse();
+        float cx = x;
+        foreach (var (text, _) in runs)
+        {
+            DrawSpaced(canvas, text, cx, y, paint, ls);
+            cx += TextShaper.WidthOf(text, tf, paint.TextSize, ls);
         }
     }
 
     static void DrawSpaced(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls)
     {
         if (line.Length == 0) return;
-        if (Math.Abs(ls) < 0.01f) { canvas.DrawText(line, x, y, paint); return; }
-        float cx = x;
-        foreach (var ch in line)
+        var tf = paint.Typeface ?? SKTypeface.Default;
+        if (TextShaper.NeedsShaping(line))
         {
-            string g = ch.ToString();
-            canvas.DrawText(g, cx, y, paint);
-            cx += paint.MeasureText(g) + ls;
+            // 按字素切「shaping / 普通」交替段：shaping 段整体走 HarfBuzz（阿拉伯连写保持成组），
+            // 普通段逐字素回退——避免整行锁进单一回退字体让另一脚本出豆腐块。
+            float cx = x;
+            var sb = new System.Text.StringBuilder();
+            bool segShaped = false;
+            void Flush()
+            {
+                if (sb.Length == 0) return;
+                string seg = sb.ToString();
+                if (segShaped && TextShaper.DrawShaped(canvas, seg, cx, y, paint))
+                    cx += TextShaper.WidthOf(seg, tf, paint.TextSize, 0); // shaped 段不加 ls（已知限制）
+                else
+                    cx += DrawPlainRun(canvas, seg, cx, y, paint, ls, tf);
+                sb.Clear();
+            }
+            foreach (var g in TextShaper.Graphemes(line))
+            {
+                bool sh = TextShaper.NeedsShaping(g);
+                if (sb.Length > 0 && sh != segShaped) Flush();
+                if (sb.Length == 0) segShaped = sh;
+                sb.Append(g);
+            }
+            Flush();
+            return;
         }
+        bool special = TextShaper.FirstUncovered(line, tf) != 0;
+        if (!special && Math.Abs(ls) < 0.01f) { canvas.DrawText(line, x, y, paint); return; }
+        // 逐字素排布：缺字形的字素换覆盖字体（一行混多脚本时每字素独立回退），其余情况仅 ls 逐字加距
+        DrawPlainRun(canvas, line, x, y, paint, ls, tf);
+    }
+
+    /// <summary>非 shaping 绘制：逐字素解析覆盖字体并排布，返回占用宽度。</summary>
+    static float DrawPlainRun(SKCanvas canvas, string seg, float x, float y, SKPaint paint, float ls, SKTypeface tf)
+    {
+        float cx = x;
+        SKTypeface? cur = tf;
+        paint.Typeface = cur;
+        try
+        {
+            foreach (var g in TextShaper.Graphemes(seg))
+            {
+                var gt = TextShaper.ResolveTypeface(g, tf);
+                if (!ReferenceEquals(gt, cur)) paint.Typeface = cur = gt;
+                canvas.DrawText(g, cx, y, paint);
+                cx += paint.MeasureText(g) + ls;
+            }
+        }
+        finally
+        {
+            paint.Typeface = tf;
+        }
+        return cx - x - ls; // 末字素后不加间距
     }
 
     static void DrawDecoration(SKCanvas canvas, ComputedStyle s, float x, float baseline, float width, SKColor color)
@@ -134,6 +197,9 @@ public static class TextPainter
     public static float MeasureWidth(string s, SKPaint paint, float letterSpacing)
     {
         if (string.IsNullOrEmpty(s)) return 0;
+        var tf = paint.Typeface ?? SKTypeface.Default;
+        if (TextShaper.NeedsSpecial(s, tf))
+            return TextShaper.WidthOf(s, tf, paint.TextSize, letterSpacing);
         return paint.MeasureText(s) + letterSpacing * Math.Max(0, s.Length - 1);
     }
 

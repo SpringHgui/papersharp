@@ -52,7 +52,7 @@ public static class Benchmark
             for (int i = 0; i < iters; i++)
             {
                 var sw = Stopwatch.StartNew(); double t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0;
-                Prepare(d.css, assets); t0 = sw.Elapsed.TotalMilliseconds;
+                using var scope = Prepare(d.css, assets); t0 = sw.Elapsed.TotalMilliseconds;
                 var spec = AtPageParser.Parse(d.css, 595.28f, 841.89f); t1 = sw.Elapsed.TotalMilliseconds;
                 var computed = StyleResolver.BuildDocument(d.html, d.css); t2 = sw.Elapsed.TotalMilliseconds;
                 var body = LayoutBuilder.ToBoxTree(computed); t3 = sw.Elapsed.TotalMilliseconds;
@@ -125,10 +125,11 @@ public static class Benchmark
         Console.WriteLine($"COLD,{name},{pdf.ToString("0.000", CultureInfo.InvariantCulture)},{png.ToString("0.000", CultureInfo.InvariantCulture)}");
     }
 
-    static void Prepare(string css, string? baseDir)
+    static RenderScope Prepare(string css, string? baseDir)
     {
-        ImageLoader.BaseDir = baseDir; FontManager.BaseDir = baseDir;
+        var scope = RenderScope.Begin(baseDir);
         FontFaceParser.ParseAndRegister(css);
+        return scope;
     }
 
     static byte[] EncodePdf(List<Page> pages, PageSpec spec)
@@ -161,7 +162,7 @@ public static class Benchmark
     /// <summary>只测布局四阶段（不光栅/不编码），取 5 次中位，隔离 CPU 布局复杂度。</summary>
     static void LayoutScale(string kind, string html, string css, string assets, int rows)
     {
-        Prepare(css, assets);
+        using var scope = Prepare(css, assets);
         LayoutBuilder.Measure(LayoutBuilder.ToBoxTree(StyleResolver.BuildDocument(html, css)), PngW); // 预热
         int K = 5;
         var bd = new double[K]; var tb = new double[K]; var me = new double[K]; var po = new double[K]; var tot = new double[K];

@@ -655,7 +655,7 @@ public static class LayoutBuilder
         return h;
     }
 
-    /// <summary>text-overflow:ellipsis —— 单行超宽时截断并加省略号。</summary>
+    /// <summary>text-overflow:ellipsis —— 单行超宽时截断并加省略号（按字素边界切，不拆代理对/组合符）。</summary>
     static string[] TruncateEllipsis(string[] lines, float maxWidth, SKFont font, float ls)
     {
         if (lines.Length == 0 || maxWidth <= 0) return lines;
@@ -663,8 +663,14 @@ public static class LayoutBuilder
         if (TextMeasurer.LineWidth(line, font, ls) <= maxWidth) return lines;
         const string ell = "…";
         float ellW = TextMeasurer.LineWidth(ell, font, ls);
-        int keep = line.Length;
-        while (keep > 0 && TextMeasurer.LineWidth(line[..keep], font, ls) + ellW > maxWidth) keep--;
+        var sb = new System.Text.StringBuilder();
+        int keep = 0;
+        foreach (var g in TextShaper.Graphemes(line))
+        {
+            sb.Append(g);
+            if (TextMeasurer.LineWidth(sb.ToString(), font, ls) + ellW > maxWidth) break;
+            keep = sb.Length;
+        }
         return new[] { line[..keep] + ell };
     }
 

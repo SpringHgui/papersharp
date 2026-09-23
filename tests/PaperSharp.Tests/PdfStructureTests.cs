@@ -9,7 +9,7 @@ public class PdfStructureTests
     public static TheoryData<string, int> ExpectedPages => new()
     {
         { "invoice", 1 }, { "long", 2 }, { "flex", 1 }, { "img", 1 }, { "report", 2 }, { "pct", 2 },
-        { "polish", 2 }, { "inline", 2 }, { "table", 1 }, { "m1", 9 }, { "m2", 5 }, { "m3", 3 },
+        { "polish", 2 }, { "inline", 2 }, { "table", 1 }, { "m1", 11 }, { "m2", 5 }, { "m3", 3 },
         { "m4", 2 }, { "m5", 2 },
     };
 

@@ -87,6 +87,7 @@ var gfontCss = PaperSharp.Css.GoogleFonts.Fetch("Noto Serif SC:wght@400;700");
 Console.WriteLine($"[gfonts] {(gfontCss.Length > 0 ? gfontCss.Count(c => c == '{') + " 条 @font-face（本地缓存）" : "无网络/拉取失败 → 样例回退系统字体")}");
 RenderOne("m4", gfontCss);
 RenderOne("m5");
+RenderOne("m7");
 
 // M4：同一模板一键出 PNG/JPEG/WebP/ICO/SVG
 void RenderFormats(string name)

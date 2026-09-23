@@ -1,0 +1,9 @@
+{
+  "name": "papersharp-example",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "papersharp": "workspace:*",
+    "react": "^19.0.0"
+  }
+}

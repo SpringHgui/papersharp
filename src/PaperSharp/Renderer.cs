@@ -16,20 +16,21 @@ public static class Renderer
 {
     public static byte[] RenderPdf(string html, string css, PageSize pageSize = PageSize.A4, string? baseDir = null)
     {
-        Prepare(css, baseDir);
+        using var scope = RenderScope.Begin(baseDir);
+        Prepare(css);
         var (defW, defH) = GetPageSize(pageSize);
         var spec = AtPageParser.Parse(css, defW, defH);   // 有 @page 则覆盖默认尺寸/边距
-        var body = BuildMeasuredBody(html, css, spec.ContentW);
+        var (body, docInfo) = BuildMeasuredBody(html, css, spec.ContentW);
         var pages = Paginator.Paginate(body, spec);
         var (outlines, links) = Pdf.PdfSemantic.Collect(pages);   // M5：书签 + 链接注释
 
         using var ms = new MemoryStream();
         var meta = new SKDocumentPdfMetadata
         {
-            Title = StyleResolver.LastTitle ?? "PaperSharp",
-            Author = StyleResolver.LastAuthor,
-            Subject = StyleResolver.LastDescription,
-            Keywords = StyleResolver.LastKeywords,
+            Title = docInfo?.Title ?? "PaperSharp",
+            Author = docInfo?.Author,
+            Subject = docInfo?.Description,
+            Keywords = docInfo?.Keywords,
             Creator = "PaperSharp",
             Producer = "PaperSharp · SkiaSharp",
             RasterDpi = 72,
@@ -106,7 +107,8 @@ public static class Renderer
     /// <summary>SVG 输出：把布局树序列化为矢量 SVG（浏览器/编辑器可打开，文字可选中）。</summary>
     public static byte[] RenderSvg(string html, string css, float width, string? baseDir = null)
     {
-        Prepare(css, baseDir);
+        using var scope = RenderScope.Begin(baseDir);
+        Prepare(css);
         var (defW, defH) = GetPageSize(PageSize.A4);
         var spec = AtPageParser.Parse(css, defW, defH);
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
@@ -122,7 +124,8 @@ public static class Renderer
     /// <summary>共享的 PNG 光栅流程：布局 → 定位 → 建 surface 并绘制。返回 surface 与布局高。</summary>
     static (SKSurface, float) RasterLayout(string html, string css, float width, string? baseDir, ref float scale)
     {
-        Prepare(css, baseDir);
+        using var scope = RenderScope.Begin(baseDir);
+        Prepare(css);
         var (defW, defH) = GetPageSize(PageSize.A4);
         var spec = AtPageParser.Parse(css, defW, defH);
         // 预览也按 @page 边距留白，视觉更接近成品页（页眉页脚不画，因为长图不分页）
@@ -145,19 +148,15 @@ public static class Renderer
         return (surface, layoutH);
     }
 
-    static void Prepare(string css, string? baseDir)
-    {
-        ImageLoader.BaseDir = baseDir;
-        FontManager.BaseDir = baseDir;
-        FontFaceParser.ParseAndRegister(css);   // 登记 @font-face 自定义字体
-    }
+    static void Prepare(string css)
+        => FontFaceParser.ParseAndRegister(css);   // 登记 @font-face 自定义字体（落在当前 RenderScope）
 
-    static BlockBox BuildMeasuredBody(string html, string css, float width)
+    static (BlockBox body, Css.DocumentInfo? docInfo) BuildMeasuredBody(string html, string css, float width)
     {
         var computed = StyleResolver.BuildDocument(html, css);
         var body = LayoutBuilder.ToBoxTree(computed);
         LayoutBuilder.Measure(body, width);
-        return body;
+        return (body, computed.Document);
     }
 
     static (float, float) GetPageSize(PageSize size) => size switch
