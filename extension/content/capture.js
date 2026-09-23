@@ -287,8 +287,10 @@
     const out = [];
     const push = async (prop, value) => {
       if (value == null || value === "") return;
+      // 继承去重必须比「缩放前」的原始值，缩放交给这里做最后一次 sv()：
+      // 反过来（调用方先缩放）会让子级值永远不等于父级原值，k≠1 时整页继承属性逐个重发。
       if (parentCS && INHERITED.has(prop) && parentCS.getPropertyValue(prop) === value) return;
-      out.push(`${prop}:${value}`);
+      out.push(`${prop}:${sv(value, ctx)}`);
     };
     const raw = (p) => cs.getPropertyValue(p);
     const numv = (p) => num(raw(p));
@@ -390,7 +392,7 @@
       if (p === "text-align" && (v === "start" || v === "left")) continue;
       if (p === "text-overflow" && v !== "ellipsis") continue;
       if (p === "text-wrap" && v !== "balance") continue;
-      await push(p, sv(normalizeColorsIn(v), ctx));
+      await push(p, normalizeColorsIn(v));
     }
     const deco = raw("text-decoration-line");
     if (deco && deco !== "none") out.push(`text-decoration:${deco} ${normColor(raw("text-decoration-color")) || color || "currentColor"}`);
@@ -559,15 +561,15 @@
       let v = ps.getPropertyValue(p);
       if (!v || v === "none" || v === "auto" || v === "normal" || v === "0px" || v === "rgba(0, 0, 0, 0)") return;
       if (p === "background-color" || p === "color") v = normColor(v);
-      decls.push(`${p}:${v}`);
+      decls.push(`${p}:${sv(v, ctx)}`);   // 伪元素跟正文同一把 k，否则 k≠1 时它会比周围大一档
     };
-    for (const p of ["display", "position", "top", "left", "width", "height", "color", "font-size",
+    for (const p of ["display", "position", "top", "left", "width", "height", "box-sizing", "color", "font-size",
       "background-color", "border-top-width", "border-color", "border-top-left-radius"]) add(p);
     // 伪元素的背景同理：引擎不画 url() 背景（伪元素也没法合成 <img>），只保留渐变层，别白发 data URI
     const pbg = ps.getPropertyValue("background-image");
     if (pbg && pbg !== "none") {
       const gradients = commaSplit(pbg).filter((layer) => !/url\(/i.test(layer));
-      if (gradients.length) decls.push(`background-image:${gradients.join(",")}`);
+      if (gradients.length) decls.push(`background-image:${sv(gradients.join(","), ctx)}`);
     }
     for (const p of ["counter-reset", "counter-increment"]) {
       const v = cs.getPropertyValue(p);
@@ -748,7 +750,7 @@
   function sv(v, ctx) {
     const k = ctx?.k ?? 1;
     if (k === 1 || !v || !String(v).includes("px")) return v;
-    return String(v).replace(/(-?d*.?d+)px/g, (_, d) => `${r2(parseFloat(d) * k)}px`);
+    return String(v).replace(/(-?\d*\.?\d+)px/g, (_, d) => `${r2(parseFloat(d) * k)}px`);
   }
 
   function absolutize(url) { try { return new URL(url, document.baseURI).href; } catch { return url; } }

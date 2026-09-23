@@ -47,12 +47,7 @@
   async function onExport(opts, report) {
     const jobId = `ps-${Date.now().toString(36)}-${seq++}`;
 
-    if (!booted) {
-      report("启动本机渲染引擎（首次约 2–5 秒）…", 4);
-      const res = await chrome.runtime.sendMessage({ k: "ensure-offscreen" });
-      if (!res?.ok) throw new Error(res?.error || "无法启动渲染宿主（offscreen）");
-      booted = true;
-    }
+    await bootHost(report);
 
     report("抓取整页 DOM 与生效样式…", 10);
     const tCap = performance.now();
@@ -97,6 +92,15 @@
     }
   }
 
+  /** 拉起渲染宿主。SW 会等 offscreen 真的回了 ping 才返 ok，所以 booted=true 意味着监听者已就位。 */
+  async function bootHost(report, label = "启动本机渲染引擎（首次约 2–5 秒）…", pct = 4) {
+    if (booted) return;
+    report(label, pct);
+    const res = await chrome.runtime.sendMessage({ k: "ensure-offscreen" });
+    if (!res?.ok) throw new Error(res?.error || "无法启动渲染宿主（offscreen）");
+    booted = true;
+  }
+
   function withTimeout(promise, ms, message) {
     let timer;
     return Promise.race([
@@ -113,17 +117,53 @@
 
   async function pushChunks(payload, id, report) {
     const parts = chunksOf(payload);
-    for (let i = 0; i < parts.length; i++) {
-      const res = await sendToOffscreen({ k: "push", id, seq: i, total: parts.length, data: parts[i] });
-      if (!res?.ok) throw new Error(res?.error || "快照分片传输失败");
-      report(`传输快照 ${i + 1}/${parts.length}（${PSPanel.mb(payload.length)}）…`, 62 + Math.round(18 * ((i + 1) / parts.length)));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        for (let i = 0; i < parts.length; i++) {
+          const res = await sendToOffscreen({ k: "push", id, seq: i, total: parts.length, data: parts[i] });
+          if (!res?.ok) throw new Error(res?.error || "快照分片传输失败");
+          report(`传输快照 ${i + 1}/${parts.length}（${PSPanel.mb(payload.length)}）…`, 62 + Math.round(18 * ((i + 1) / parts.length)));
+        }
+        return;
+      } catch (e) {
+        // 隔太久没导出，SW 的空闲闹钟已经把 offscreen 回收了（MV3 必须留这条路省内存），
+        // 本页的 booted 就成了谎报。分片按 seq 幂等，宿主重启后整批重推一次即可，不必重新展平 DOM。
+        if (attempt > 0 || !e?.hostGone) throw e;
+        booted = false;
+        await bootHost(report, "渲染宿主已休眠，正在重启…", 62);
+      }
     }
   }
 
+  /**
+   * 发给 offscreen 文档。
+   *
+   * ⚠ 宿主不在时这里**不会** reject：SW 一直挂着 onMessage，Chrome 因此认为消息有人收，
+   * 只把 promise 以 undefined 兑现。所以「没有回执」也必须判成宿主失联，否则重试路径永远进不去
+   * （早先按 "Receiving end does not exist." 文案匹配的那版就是这么白写的 —— 那句错误压根不会出现）。
+   */
   function sendToOffscreen(msg) {
-    return chrome.runtime.sendMessage(msg).catch((e) => {
-      throw new Error(String(e?.message || e).includes("receiving end") ? "渲染宿主未就绪，请重试" : String(e?.message || e));
-    });
+    return chrome.runtime.sendMessage(msg).then(
+      (res) => {
+        if (res == null) throw hostLost();
+        return res;
+      },
+      (e) => {
+        const raw = String(e?.message || e);
+        if (hostGoneText(raw)) throw hostLost();
+        throw new Error(raw);
+      }
+    );
+  }
+
+  function hostLost() {
+    const e = new Error("渲染宿主未就绪，请重试");
+    e.hostGone = true;
+    return e;
+  }
+
+  function hostGoneText(message) {
+    return /receiving end|could not establish connection|message port closed/i.test(String(message));
   }
 
   function waitForDownload(id) {

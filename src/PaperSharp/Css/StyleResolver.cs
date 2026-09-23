@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
 using AngleSharp;
 using AngleSharp.Css;
@@ -72,6 +72,9 @@ public static class StyleResolver
         public HashSet<string>? PseudoScope;
         // 输入已是浏览器算好的 used value（展平快照）：跳过 GetDeclarations 这第二轮层叠（实测再省 1.4ms/元素）。
         public bool Precomputed;
+        // 展平快照的类名级联索引（见 FlatCascade）。非 null 时 ReadStyle 完全不碰 AngleSharp——
+        // 实测 GetComputedStyle 在这类输入上每元素 1.82ms，是快照导出的头号开销（904 元素 WASM 侧 27s）。
+        public FlatCascade? Flat;
     }
 
     public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false)
@@ -89,6 +92,8 @@ public static class StyleResolver
         }
         ScanUnsupported(userCss, ctx);
         ScanVars(userCss, ctx);
+        // 展平快照（precomputed）才试建类名索引；CSS 里只要还有 @rule/组合器/特异度竞争就返回 null，整份走老路。
+        if (precomputed) ctx.Flat = FlatCascade.TryBuild(userCss);
         // 伪元素开销较大（每元素多两次 computed 层叠），仅当 CSS 里确有 ::before/::after 规则时才启用
         ctx.HasPseudoRules = Regex.IsMatch(userCss ?? "", @"::?(before|after)\b", RegexOptions.IgnoreCase);
         if (ctx.HasPseudoRules) { ctx.PseudoScope = new(StringComparer.OrdinalIgnoreCase); ScanPseudoDisplay(userCss ?? "", ctx); }
@@ -111,7 +116,6 @@ public static class StyleResolver
             $"</head><body>{htmlBody}</body></html>";
 
         // 注册 render device：AngleSharp.Css 计算 em/rem/% 等相对单位时需要非空渲染尺寸，
-        // 否则 GetComputedStyle 会对这些值抛 ArgumentException。
         var renderDevice = new DefaultRenderDevice { FontSize = 16, ViewPortWidth = 1024, ViewPortHeight = 1024 };
         var config = Configuration.Default.WithCss().WithRenderDevice(renderDevice);
         var context = BrowsingContext.New(config);
@@ -268,9 +272,13 @@ public static class StyleResolver
         return null;
     }
 
-    static ComputedStyle Walk(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx)
+    static ComputedStyle Walk(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx,
+                              FlatCascade.Scope? fparent = null)
     {
-        var cs = ReadStyle(window, element, parent, ctx);
+        var fs = ctx.Flat?.For(element, fparent);
+        // 索引覆盖不了这个元素（如两个类规则同时命中）：整份退回 AngleSharp 继续，不在半路混用两套继承链。
+        if (fs == null && ctx.Flat != null) ctx.Flat = null;
+        var cs = ReadStyle(window, element, parent, ctx, flat: fs);
         cs.Tag = element.TagName.ToLowerInvariant();
 
         // 替换元素：读取 <img> 的 src
@@ -315,7 +323,7 @@ public static class StyleResolver
                     cs.InlinePieces.Add(InlinePiece.Break);
                     continue;
                 }
-                var childStyle = Walk(window, ce, cs, ctx);
+                var childStyle = Walk(window, ce, cs, ctx, fs);
                 cs.Children.Add(childStyle);
                 cs.InlinePieces.Add(InlinePiece.OfChild(childStyle));
             }
@@ -341,18 +349,24 @@ public static class StyleResolver
         // 实际注入与 counter 回填在 BuildDocument 末尾的 PseudoContent.Apply 文档序 pass 里做。
         if (ctx.HasPseudoRules && PseudoMayMatch(element, ctx))
         {
-            cs.Before = BuildPseudoGen(window, element, cs, ctx, "::before");
-            cs.After = BuildPseudoGen(window, element, cs, ctx, "::after");
+            cs.Before = BuildPseudoGen(window, element, cs, ctx, "::before", fs);
+            cs.After = BuildPseudoGen(window, element, cs, ctx, "::after", fs);
         }
 
         return cs;
     }
 
     /// <summary>为一个伪元素建生成盒：读 content（不成盒则返回 null）+ 伪元素自身 computed 样式（display 归一为 inline 缺省）。</summary>
-    static PseudoGen? BuildPseudoGen(IWindow window, IElement element, ComputedStyle owner, DocContext ctx, string pseudo)
+    static PseudoGen? BuildPseudoGen(IWindow window, IElement element, ComputedStyle owner, DocContext ctx,
+                                     string pseudo, FlatCascade.Scope? fscope)
     {
+        var fp = ctx.Flat?.ForPseudo(element, pseudo, fscope);
+        // 索引整体适用而这类没有伪元素规则 = 确定没有，不必再让 AngleSharp 为它跑一整轮层叠。
+        if (fp == null && ctx.Flat != null && fscope != null) return null;
         string Content()
         {
+            // 展平快照：content 就在 .ps-N::before 那条规则里，直接取。
+            if (fp != null) return ExpandVars(fp.Get("content"), element, ctx);
             // 用 AngleSharp computed 判定伪元素是否成盒并取串：它做真正的选择器匹配（避免按 token 兜底把
             // `ul.tags li::after` 泄漏到 `ol.outline li`）。counters(a,',') 会被它重序列化成 counters(a ,)
             // （吞逗号），交由 PseudoContent.Parse 的空格/逗号双兼容解析还原。
@@ -366,7 +380,7 @@ public static class StyleResolver
         var runs = PseudoContent.Parse(Content(), name => element.GetAttribute(name));
         if (runs == null) return null;   // none / normal / 未设 → 不生成盒
 
-        var style = ReadStyle(window, element, owner, ctx, pseudo);
+        var style = ReadStyle(window, element, owner, ctx, pseudo, fp);
         // display：AngleSharp 对伪元素 UA 默认注入 display:block（computed/declared 都是），无法据此判断作者意图；
         // 故以「作者是否在原始 CSS 里显式声明 display」为准——未声明则按 CSS 规范初值 inline。
         var declaredDisp = LookupPseudoMap(ctx.PseudoDisplay, element, pseudo) ?? "";
@@ -461,7 +475,8 @@ public static class StyleResolver
         return sb.ToString();
     }
 
-    static ComputedStyle ReadStyle(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx, string? pseudo = null)
+    static ComputedStyle ReadStyle(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx,
+                                   string? pseudo = null, FlatCascade.Scope? flat = null)
     {
         var s = new ComputedStyle { Parent = parent };
 
@@ -470,16 +485,25 @@ public static class StyleResolver
         // 一旦抛异常该元素整个 computed 都拿不到。这里 try/catch 兜住：拿不到就退回声明值
         // （GetDeclarations，不触发 Compute）+ 父级继承，绝不让渲染崩。
         // pseudo 非空时读伪元素（::before/::after）的 computed，实测 AngleSharp 支持并返回 content。
+        // flat 非空时（展平快照）两个调用都不做：那轮层叠在这类输入上实测 1.82 ms/元素，全是白烧。
         ICssStyleDeclaration? computed = null;
-        try { computed = window.GetComputedStyle(element, pseudo); }
-        catch { /* 该元素 computed 不可用，下面全部走 Spec 兜底 */ }
+        if (flat == null)
+        {
+            try { computed = window.GetComputedStyle(element, pseudo); }
+            catch { /* 该元素 computed 不可用，下面全部走 Spec 兜底 */ }
+        }
         string Get(string prop)
         {
+            if (flat != null)
+            {
+                var v = flat.Get(prop);
+                return v.Length == 0 ? "" : ExpandVars(v, element, ctx);
+            }
             // 单个属性读失败退回空串（下游都有 fallback），不让整个渲染崩
             try
             {
-                var v = computed?.GetPropertyValue(prop);
-                return string.IsNullOrEmpty(v) ? "" : ExpandVars(v, element, ctx);
+                var cv = computed?.GetPropertyValue(prop);
+                return string.IsNullOrEmpty(cv) ? "" : ExpandVars(cv, element, ctx);
             }
             catch
             {
@@ -491,14 +515,16 @@ public static class StyleResolver
         // 视口尺寸（1024）折算成 px，从而丢失百分比信息（如 height:100% → "1024px"）。
         // GetDeclarations 返回的是做完 cascade 排序、但未经设备折算的原始声明值，
         // 其中的百分比被原样保留。需要按包含块解析的盒子尺寸属性用它兜底。
+        // 展平快照里两者本就是一个东西（浏览器已经把 %/calc 折成 px），故 Spec 直接复用 Get。
         ICssStyleDeclaration? decls = null;
-        if (!ctx.Precomputed)
+        if (flat == null && !ctx.Precomputed)
         {
             try { decls = window.GetStyleCollection().GetDeclarations(element, pseudo); }
             catch { /* 拿不到声明值时退回 computed，不让渲染崩 */ }
         }
         string Spec(string prop)
         {
+            if (flat != null) return Get(prop);
             try { return ExpandVars(decls?.GetPropertyValue(prop) ?? "", element, ctx); }
             catch { return ""; }
         }
@@ -517,6 +543,11 @@ public static class StyleResolver
             var g = Get(prop);
             return string.IsNullOrEmpty(g) ? Spec(prop) : g;
         }
+        // margin/padding 的初值是 0 不是 auto：展平快照只在浏览器算出的用值非 0 时才下发（capture.js），
+        // 缺值即 0。走 ParseSize 的空调用会得到 CssSize.Auto，布局按 margin:auto 居中处理 → 整页块级元素错位。
+        // 仅限展平路径：作者 CSS 那边 margin-left 读空正是 `margin: 0 auto` 的到达方式（AngleSharp 表达不出
+        // auto 时返回空串），在这里补 0px 会把水平居中吃掉（实测打掉 m2 基准）。
+        string Size0(string prop) { var v = Val(prop); return v.Length == 0 && flat != null ? "0px" : v; }
 
         s.Display = FirstNonEmpty(Raw("display"), "block"); // display 不继承
         s.BoxSizing = CssValueParser.ParseKeyword(Raw("box-sizing"), "content-box");
@@ -547,14 +578,14 @@ public static class StyleResolver
 
         // margin / padding：按 longhand 读声明值（保留 %），布局期按包含块宽解析。
         // CSS 里 margin/padding 的百分比一律相对包含块的**行内尺寸（宽）**，横竖同基准。
-        s.MarginTopCss = CssValueParser.ParseSize(Val("margin-top"), s.FontSize);
-        s.MarginRightCss = CssValueParser.ParseSize(Val("margin-right"), s.FontSize);
-        s.MarginBottomCss = CssValueParser.ParseSize(Val("margin-bottom"), s.FontSize);
-        s.MarginLeftCss = CssValueParser.ParseSize(Val("margin-left"), s.FontSize);
-        s.PaddingTopCss = CssValueParser.ParseSize(Val("padding-top"), s.FontSize);
-        s.PaddingRightCss = CssValueParser.ParseSize(Val("padding-right"), s.FontSize);
-        s.PaddingBottomCss = CssValueParser.ParseSize(Val("padding-bottom"), s.FontSize);
-        s.PaddingLeftCss = CssValueParser.ParseSize(Val("padding-left"), s.FontSize);
+        s.MarginTopCss = CssValueParser.ParseSize(Size0("margin-top"), s.FontSize);
+        s.MarginRightCss = CssValueParser.ParseSize(Size0("margin-right"), s.FontSize);
+        s.MarginBottomCss = CssValueParser.ParseSize(Size0("margin-bottom"), s.FontSize);
+        s.MarginLeftCss = CssValueParser.ParseSize(Size0("margin-left"), s.FontSize);
+        s.PaddingTopCss = CssValueParser.ParseSize(Size0("padding-top"), s.FontSize);
+        s.PaddingRightCss = CssValueParser.ParseSize(Size0("padding-right"), s.FontSize);
+        s.PaddingBottomCss = CssValueParser.ParseSize(Size0("padding-bottom"), s.FontSize);
+        s.PaddingLeftCss = CssValueParser.ParseSize(Size0("padding-left"), s.FontSize);
 
         // border-width：CSS 规范不接受百分比（AngleSharp 会直接丢弃），走 computed px/em，退回声明值。
         s.BorderWidthTop = Math.Max(0, CssValueParser.ToPixels(Val("border-top-width"), s.FontSize));
@@ -571,8 +602,13 @@ public static class StyleResolver
         // Flexbox
         s.FlexDirection = CssValueParser.ParseKeyword(Raw("flex-direction"), "row");
         s.FlexWrap = CssValueParser.ParseKeyword(Raw("flex-wrap"), "nowrap");
+        // normal 是浏览器对未设 align/justify 的 computed 原话（快照会照抄），按规范折算：
+        // align-items:normal ≡ stretch（布局只认 stretch，LayoutBuilder 的 stretchDefault 否则失效），
+        // justify-content:normal ≡ flex-start。
         s.JustifyContent = CssValueParser.ParseKeyword(Raw("justify-content"), "flex-start");
+        if (s.JustifyContent == "normal") s.JustifyContent = "flex-start";
         s.AlignItems = CssValueParser.ParseKeyword(Raw("align-items"), "stretch");
+        if (s.AlignItems == "normal") s.AlignItems = "stretch";
         s.AlignSelf = CssValueParser.ParseKeyword(Raw("align-self"), "auto");
         s.FlexGrow = CssValueParser.ParseFlexNumber(Raw("flex-grow"), 0f);
         s.FlexShrink = CssValueParser.ParseFlexNumber(Raw("flex-shrink"), 1f);

@@ -4,7 +4,14 @@
 //   node extension/test/e2e-browser.mjs                        # 全 6 个格式
 //   node extension/test/e2e-browser.mjs --formats png,pdf --diag
 //   node extension/test/e2e-browser.mjs --page long-article
+//   node extension/test/e2e-browser.mjs --no-scale             # 跳过末尾的等比缩放回归
+//   node extension/test/e2e-browser.mjs --scalek 0.5           # 缩放回归用的 k（默认 0.6）
+//   node extension/test/e2e-browser.mjs --no-idle              # 跳过末尾的宿主休眠恢复回归
 //   node extension/test/e2e-browser.mjs --browser chrome       # 默认 edge
+//
+// 除了逐个格式导出，结尾还有两项回归（--url 真实站点模式下都跳过）：
+//   缩放回归   —— 同页按 k=1 与 k=--scalek 各导一次，比对快照里 sv() 管的 px 是否真按比例下发
+//   休眠恢复回归 —— 在 SW 里关掉 offscreen（复刻空闲闹钟回收），再导一次看能否自愈
 //
 // ⚠ 品牌版 Chrome 会忽略 --load-extension（实测：只加了内置组件扩展，我们的扩展根本没装载），
 //   所以默认用 Edge（Chromium 内核，同一套 MV3 代码）。要跑 Chrome 需换 Chromium/Canary。
@@ -139,7 +146,19 @@ async function main() {
     writeFileSync(join(outDir, "report.json"), JSON.stringify({ report, downloads: items.slice(0, FORMATS.length), logs }, null, 2));
     console.log(`\n报告：${join(outDir, "report.json")}`);
     const failed = report.filter((r) => !r.ok);
-    if (failed.length) { console.log(`${failed.length} 个格式失败：${failed.map((f) => f.format).join(", ")}`); process.exitCode = 1; }
+    if (failed.length) console.log(`${failed.length} 个格式失败：${failed.map((f) => f.format).join(", ")}`);
+
+    // 收尾两项回归各自还要再导一张图，所以放在 report.json 之后：早跑会把上面的 chrome.downloads 展示冲掉
+    const extras = [
+      flag("no-scale") || TARGET ? null : () => scaleCheck(cdp, page.sessionId),
+      flag("no-idle") || TARGET ? null : () => idleRecoverCheck(cdp, sessions, page.sessionId),
+    ].filter(Boolean);
+    let bad = failed.length;
+    for (const run of extras) {
+      try { await run(); } catch (e) { bad++; console.log(`✘ ${String(e.message || e)}\n`); }
+    }
+    if (!extras.length) console.log(`\n(收尾回归已跳过${TARGET ? "：--url 真实站点模式" : ""})\n`);
+    if (bad) process.exitCode = 1;
   } finally {
     cdp?.close();
     proc.kill("SIGKILL");
@@ -218,16 +237,16 @@ async function uiSmoke(cdp, sessionId) {
   if (!onCard) console.log("   ⚠ 点击后没在面板区域命中，可能几何变了 —— 用 --diag 看扩展侧日志\n");
 }
 
-async function exportVia(cdp, sessionId, format) {
-  // 输出宽度默认取视口宽（= 面板默认值，k=1 不缩放）；--width 900 才测等比缩放路径
-  const width = Number(arg("width", 0)) || "document.documentElement.clientWidth";
+async function exportVia(cdp, sessionId, format, widthOverride = 0, wantDump = flag("dump")) {
+  // 输出宽度默认取视口宽（= 面板默认值，k=1 不缩放）；--width 900 才走等比缩放路径
+  const width = Number(widthOverride) || Number(arg("width", 0)) || "document.documentElement.clientWidth";
   // --scroll 用于验证「滚动后导出」：fixed 元素不该被钉到滚动位置那么远
   const scrollTo = Number(arg("scroll", 0));
   if (scrollTo) await evalIn(cdp, sessionId, `scrollTo(0,${scrollTo});1`);
   const expression = `new Promise((resolve)=>{
     const done=(e)=>{ if(e.data&&e.data.type==='papersharp:export-result'){ removeEventListener('message',done); resolve(e.data);} };
     addEventListener('message',done);
-    postMessage({type:'papersharp:export', wantDump:${flag("dump")}, format:${JSON.stringify(format)}, width:${width}, scale:${format === "pdf" || format === "svg" ? 1 : 2}, quality:88, pageSize:'A4', icoSize:256, animationTime:1.0}, '*');
+    postMessage({type:'papersharp:export', wantDump:${!!wantDump}, format:${JSON.stringify(format)}, width:${width}, scale:${format === "pdf" || format === "svg" ? 1 : 2}, quality:88, pageSize:'A4', icoSize:256, animationTime:1.0}, '*');
     setTimeout(()=>resolve({type:'papersharp:export-result', ok:false, error:'页面侧等待超时'}), ${EXPORT_TIMEOUT});
   })`;
   const res = await withTimeout(
@@ -237,6 +256,74 @@ async function exportVia(cdp, sessionId, format) {
   const value = res.result?.value;
   if (!value) throw new Error("没有拿到导出回执");
   return value;
+}
+
+/**
+ * 等比缩放回归：面板里「输出宽度」≠ 视口宽时走 k≠1 路径，capture.js 要把浏览器算好的
+ * used px 按比例下发（sv() 负责纯声明文本里的那些）。这里同页导两次再比快照文本 ——
+ * sv() 一旦退化成空操作（例如正则里的反斜杠丢了），这两份快照的对应声明会一模一样，
+ * 只测渲染字节数是发现不了的。
+ */
+async function scaleCheck(cdp, sessionId) {
+  // k 必须由「取整后的目标宽」反推：capture.js 用的是 k = 目标宽 / 视口宽，而宽度只能传整数
+  // （实测视口 1341 → 目标 805 → k=0.60030，按名义 0.6 算会差 0.06px 判成失败）
+  const vw = Math.max(280, Math.min(4096, Math.round(Number(await evalIn(cdp, sessionId, "document.documentElement.clientWidth")))));
+  const target = Math.max(280, Math.round(vw * Number(arg("scalek", 0.6))));
+  const k = target / vw;
+  const big = await exportVia(cdp, sessionId, "png", vw, true);
+  const small = await exportVia(cdp, sessionId, "png", target, true);
+  if (!big.ok || !small.ok) throw new Error(`缩放回归跑不起来：${big.error || small.error}`);
+  if (!big.dump?.css || !small.dump?.css) throw new Error("缩放回归拿不到快照 CSS（wantDump 链路断了）");
+
+  let checked = 0;
+  for (const prop of SCALED_PROPS) {
+    // 排序后按多重集合配对：类名聚合与继承去重会让声明的出现次序变化，条数则必须一致
+    const na = propPx(big.dump.css, prop).sort((x, y) => x - y);
+    const nb = propPx(small.dump.css, prop).sort((x, y) => x - y);
+    if (na.length !== nb.length) {
+      throw new Error(`缩放回归：${prop} 的 px 条数随 k 变了（k=1 有 ${na.length} 条，k=${k.toFixed(5)} 有 ${nb.length} 条）` +
+        ` —— 多半是「与父级相同就不发」的去重被缩放破坏（缩放后永远不等于父级原值）`);
+    }
+    for (let i = 0; i < na.length; i++) {
+      const want = round2(na[i] * k);
+      if (Math.abs(nb[i] - want) > 0.011) {
+        throw new Error(`缩放回归：k=${k.toFixed(5)} 时 ${prop} 的 ${na[i]}px 应缩成 ${want}px，实得 ${nb[i]}px（sv() 没生效？）`);
+      }
+      checked++;
+    }
+  }
+  if (checked < 20) throw new Error(`缩放回归：只比对了 ${checked} 个 px 值（<20），用例已退化，换页面或更新 SCALED_PROPS`);
+  console.log(`✔ 缩放回归 k=${k.toFixed(5)}（${vw}→${target}px）：${checked} 个 sv() 管的 px 值全部按比例下发\n`);
+}
+
+// 这些属性在 capture.js 里走 sv()（不是 px()），正是容易静默失效的那一批
+const SCALED_PROPS = ["max-width", "min-width", "gap", "flex-basis", "top", "left", "box-shadow", "filter", "font-size"];
+
+/** 快照 CSS 形如 .c12{max-width:860px;padding:24px} —— 取某属性里出现的所有 px 数值 */
+function propPx(css, prop) {
+  const re = new RegExp(`(?:^|[;{])\\s*${prop}:([^;}]+)`, "g");
+  return [...css.matchAll(re)].flatMap((m) => pxNums(m[1]));
+}
+
+function pxNums(v) {
+  return [...String(v).matchAll(/(-?\d*\.?\d+)px/g)].map((m) => Number(m[1]));
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * 宿主休眠恢复回归：MV3 的空闲闹钟会在 3 分钟后回收 offscreen，而页面侧的 booted 记不住这件事 ——
+ * 这正是「第一次能导、过一会儿就不行、刷新页面又能导」那条现象。真等 3 分钟不现实，
+ * 这里直接在 SW 里关掉文档复刻同一个状态（成因就是文档没了），再导一次看能否自愈。
+ */
+async function idleRecoverCheck(cdp, sessions, pageSession) {
+  const sw = await findServiceWorker(cdp, sessions);
+  if (!sw) throw new Error("休眠恢复回归：找不到扩展的 service worker");
+  const alive = await evalIn(cdp, sw.sessionId, `chrome.offscreen.closeDocument().then(() => chrome.offscreen.hasDocument())`);
+  if (alive !== false) throw new Error(`休眠恢复回归：offscreen 文档没被关掉（hasDocument=${alive}）`);
+  const res = await exportVia(cdp, pageSession, "png");
+  if (!res.ok) throw new Error(`休眠恢复回归：宿主被回收后没能自愈 —— ${res.error}`);
+  console.log(`✔ 休眠恢复回归：offscreen 被回收后自动重启并重推快照，导出仍成功（${res.bytes} B）\n`);
 }
 
 async function evalIn(cdp, sessionId, expression) {

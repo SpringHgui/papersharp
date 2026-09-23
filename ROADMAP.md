@@ -23,20 +23,22 @@
 
 ## 里程碑
 
-### M6 · 自研级联替换 AngleSharp.Css —— ⏳ 待拍板
+### M6 · 自研级联替换 AngleSharp.Css —— 🟡 进行中（快照路径已落地）
 
 **依据（PERF_REPORT §5.1，Release 净跑实锤）**：`buildDoc` 逐元素 `GetComputedStyle` 随元素数 **~O(n^2.5)** 增长——table 2000 行 74.4s、flexlist 2000 条 21.3s（与元素类型无关，是层叠本身）；同规模自研布局仅 76/162ms。**>800 元素的文档即显著受益**；常规小文档不受影响（buildDoc 9–58ms）。
 
 六步计划（每步独立可回退，AngleSharp 核心保留做 DOM+选择器）：
 
-1. CSS tokenizer/parser（我们已有 `CssValueParser`/`AtPageParser` 的解析底子）
-2. 特异度 + key-selector 分桶匹配（沿用 `element.Matches`，把每元素全表扫描变按 key 命中）
-3. 属性元数据表：继承性 / initial / 简写展开
-4. 值解析直接接入现有 `CssValueParser` → `ComputedStyle`
-5. 换掉 `StyleResolver` 里 `Get/Spec/Val/Raw` 的内部实现（对外零改动）
-6. **双跑对账**：14 样例逐元素声明值 + 全量渲染像素一致，绿了才移除 AngleSharp.Css 引用
+1. ⏳ CSS tokenizer/parser（我们已有 `CssValueParser`/`AtPageParser` 的解析底子）
+2. ✅ 特异度 + key-selector 分桶匹配 —— **仅展平快照路径**已交付（`Css/FlatCascade.cs`：类名→声明索引，规则形状不符即整份弃权退回 AngleSharp）
+3. ⏳ 属性元数据表：继承性 / initial / 简写展开
+4. ⏳ 值解析直接接入现有 `CssValueParser` → `ComputedStyle`
+5. ⏳ 换掉 `StyleResolver` 里 `Get/Spec/Val/Raw` 的内部实现（对外零改动）——快照路径已在缝内替换，作者 CSS 路径待 ①③④
+6. ✅ **双跑对账** —— 工具 `tools/SnapshotProfile ... diff`：逐元素逐字段 + 全量像素 + 三条灵敏度对照 + 逐类回填老值重渲染（结果见 PERF_REPORT §5.4）
 
-附带收益：一次性消掉 README「坑位备忘」里 6 类 AngleSharp bug（NRE、% 折算、calc 预解析、简写序列化、UA 表、text-overflow 兜底）。
+**已交付的量化结果（PERF_REPORT §5.4）**：真实站点快照（964 盒）WASM `precomputed` 渲染 **23.3s → 3.0s**，两路 PNG 字节完全相同。**剩余待办**：作者手写 CSS（14 基准样例、`RenderPng` 直接调用）仍走 AngleSharp 全量层叠，需 ①③④⑤ 才能覆盖。
+
+附带收益：一次性消掉 README「坑位备忘」里 6 类 AngleSharp bug（NRE、% 折算、calc 预解析、简写序列化、UA 表、text-overflow 兜底）——快照路径已顺带消掉 UA 表幽灵声明与渐变 NRE 丢样式两类，另带出 `align-items`/`justify-content` 的 `normal` 归一与伪元素 `box-sizing` 两个真实缺陷修复。
 
 ### M5 剩余 · PDF 合规 —— 🟡 需求驱动
 
