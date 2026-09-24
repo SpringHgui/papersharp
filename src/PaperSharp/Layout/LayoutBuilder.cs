@@ -12,11 +12,12 @@ namespace PaperSharp.Layout;
 public static class LayoutBuilder
 {
     /// <summary>建盒子树，跳过 display:none。</summary>
-    public static BlockBox ToBoxTree(ComputedStyle style)
+    public static BlockBox ToBoxTree(ComputedStyle style, BlockBox? parent = null)
     {
         var box = new BlockBox
         {
             Style = style,
+            Parent = parent,
             Typeface = FontManager.Get(style.FontFamily, style.FontWeight),
         };
         if (box.IsReplaced)
@@ -42,7 +43,7 @@ public static class LayoutBuilder
         // 纯 inline 块：把有序片段摊平成原子序列（inline-block/img 各自建盒），不走块级 Children 路径
         if (style.IsInlineFC)
         {
-            box.Atoms = InlineLayout.BuildAtoms(style, c => ToBoxTree(c));
+            box.Atoms = InlineLayout.BuildAtoms(style, c => ToBoxTree(c, box));
             return box;
         }
         // flex/grid 容器直接放文本：按 DOM 顺序把「文本片段」包成匿名纯文本盒、与元素子盒交错建盒，
@@ -53,14 +54,14 @@ public static class LayoutBuilder
             string? run = null;
             void FlushRun()
             {
-                if (run != null) { box.Children.Add(ToBoxTree(AnonTextItem(style, run))); run = null; }
+                if (run != null) { box.Children.Add(ToBoxTree(AnonTextItem(style, run), box)); run = null; }
             }
             foreach (var piece in style.InlinePieces)
             {
                 if (piece.Child != null)
                 {
                     FlushRun();
-                    if (piece.Child.Display != "none") box.Children.Add(ToBoxTree(piece.Child));
+                    if (piece.Child.Display != "none") box.Children.Add(ToBoxTree(piece.Child, box));
                 }
                 else if (!string.IsNullOrWhiteSpace(piece.Text))
                     run = run == null ? piece.Text : run + piece.Text;
@@ -71,7 +72,7 @@ public static class LayoutBuilder
         foreach (var child in style.Children)
         {
             if (child.Display == "none") continue;
-            box.Children.Add(ToBoxTree(child));
+            box.Children.Add(ToBoxTree(child, box));
         }
         return box;
     }
@@ -616,6 +617,37 @@ public static class LayoutBuilder
         s.MarginLeft = s.MarginRight = s.MarginTop = s.MarginBottom = 0;
     }
 
+    // ── 相邻兄弟 margin 坍缩（CSS 2.1 §8.3.1）────────────────────────────
+    //
+    // 此前引擎完全不坍缩：两个相邻 <p>（各 margin 16px）之间留 32px，浏览器只留 16px。
+    // 单看一块不多，一页十几个块就累积成几十 px 的系统性下偏——Playground 的盒级 Δ 表在
+    // invoice/table 样例上量到的逐级漂移主要来自这里。
+    //
+    // 只做「相邻兄弟」这一档。父子坍缩要判父盒有无 border/padding，实测两侧本就不坍缩
+    // （padded body 里 h1 引擎与浏览器同为 y=45），没有证据不动。
+
+    /// <summary>
+    /// 该盒是否参与兄弟间 margin 坍缩。条件按浏览器实测（headless Edge + getBoundingClientRect，
+    /// 逐条钉在 MarginCollapsingTests 里）而非凭记忆：只有「不在同一个流里」才阻断——
+    /// 行内级盒（inline-block/flex/grid）、浮动、脱流定位。曾被误当作阻断条件、实测照样坍的：
+    /// overflow:hidden、display:flow-root、position:relative、带 clear 但没被顶开、中间夹 display:none。
+    /// 若把这些也判成不坍，等于在本来正确的地方重新制造 12~30px 的下偏。
+    /// </summary>
+    internal static bool Collapsible(ComputedStyle s)
+        => !ComputedStyle.IsInlineLevel(s.Display) && s.Float == "none";
+
+    /// <summary>CSS 相邻 margin 坍缩值：同正取大、同负取更负、异号相加。</summary>
+    static float CollapseMargins(float a, float b)
+        => a >= 0 && b >= 0 ? Math.Max(a, b) : a <= 0 && b <= 0 ? Math.Min(a, b) : a + b;
+
+    /// <summary>
+    /// 本盒相对上一个流内兄弟应「吃掉」的像素数（0 = 不坍缩）。
+    /// Measure、Position、分页游标三处必须算同一个值，否则父高、子位、页数会各说各话。
+    /// </summary>
+    internal static float AbsorbMargin(BlockBox? prev, ComputedStyle next)
+        => prev == null || !Collapsible(prev.Style) || !Collapsible(next) ? 0f
+         : prev.Style.MarginBottom + next.MarginTop - CollapseMargins(prev.Style.MarginBottom, next.MarginTop);
+
     static float MeasureBlock(BlockBox box, float childContainingHeight, FloatContext? ambient, float contentTopY)
     {
         var s = box.Style;
@@ -650,18 +682,19 @@ public static class LayoutBuilder
         }
 
         List<(int ChildIndex, float X, float YRel)>? placements = null;
+        BlockBox? flowPrev = null;   // 上一个推进了流 cursor 的流内兄弟（坍缩只看它）
         for (int i = 0; i < box.Children.Count; i++)
         {
             var c = box.Children[i];
             var cs = c.Style;
             if (cs.Position == "absolute") { MeasureChild(c, box.ContentWidth, childContainingHeight); continue; }
 
-            // clear：把流 cursor 推到同侧浮动区之下
+            // clear：把流 cursor 推到同侧浮动区之下。被 clear 顶开之后两侧不再相邻，坍缩链断掉。
             if (cs.Clear != "none" && fc != null)
             {
                 float yAbs = contentTopY + h;
                 float pushed = fc.ClearTo(cs.Clear is "left" or "both", cs.Clear is "right" or "both", yAbs);
-                if (pushed > yAbs) h = pushed - contentTopY;
+                if (pushed > yAbs) { h = pushed - contentTopY; flowPrev = null; }
             }
 
             if (cs.Float != "none" && cs.Position == "static")
@@ -675,10 +708,13 @@ public static class LayoutBuilder
             }
 
             if (cs.Width.IsAuto && cs.Display is "inline-flex" or "inline-grid" or "inline-block")
-            { MeasureOutOfFlow(c, box.ContentWidth); h += c.TotalHeight; continue; }   // 行内级盒（inline-block/flex/grid）：收缩适配，不填满列宽
+            { MeasureOutOfFlow(c, box.ContentWidth); h += c.TotalHeight; flowPrev = null; continue; }   // 行内级盒：收缩适配，且打断两侧块盒的坍缩链
 
-            Measure(c, box.ContentWidth, childContainingHeight, fc, contentTopY + h);
-            h += c.TotalHeight;
+            cs.ResolveBoxSizes(box.ContentWidth);   // 先解析，AbsorbMargin 读到的才是已折算的 margin
+            float absorb = AbsorbMargin(flowPrev, cs);
+            Measure(c, box.ContentWidth, childContainingHeight, fc, contentTopY + h - absorb);
+            h += c.TotalHeight - absorb;
+            flowPrev = c;
         }
 
         if (placements != null)
@@ -698,7 +734,7 @@ public static class LayoutBuilder
             // inline-block / 行内 img：auto 宽按内容收缩（同出流逻辑），显式宽则正常测
             MeasureOutOfFlow(a.Box, box.ContentWidth);
         }
-        box.Lines = InlineLayout.BreakIntoLines(box.Atoms!, box.ContentWidth, fc, contentTopY);
+        box.Lines = InlineLayout.BreakIntoLines(box.Atoms!, box.ContentWidth, fc, contentTopY, box.Style);
         float h = 0;
         foreach (var ln in box.Lines) h += ln.Height;
         return h;
@@ -920,7 +956,9 @@ public static class LayoutBuilder
             foreach (var a in c.Atoms)
             {
                 if (a.IsBreak) continue;
-                if (a.Box != null) w += MainDeco(a.Box, true) + (a.Box.IsReplaced ? a.Box.NaturalW : IntrinsicContentWidth(a.Box));
+                // 原子盒一律递归取内在宽：替换元素在里面先认 CSS 显式宽（width:120px 的图就是 120），
+                // 没有显式宽才回退自然宽。直接读 NaturalW 会把缩放图撑回原尺寸，整条 flex 行跟着错位。
+                if (a.Box != null) w += MainDeco(a.Box, true) + IntrinsicContentWidth(a.Box);
                 else if (!string.IsNullOrEmpty(a.Text))
                 {
                     using var f = new SKFont(FontManager.Get(a.Style.FontFamily, a.Style.FontWeight), a.Style.FontSize);
@@ -933,13 +971,20 @@ public static class LayoutBuilder
         // 普通块则文本与块级子项各占独立行，取二者较大即可（沿用旧的"文本优先短路"）。
         if (ComputedStyle.IsFlexDisplay(s.Display) || ComputedStyle.IsGridDisplay(s.Display))
         {
+            // 只有沿主轴并排的子项才「求和」：row flex / grid 的 max-content 宽 = 各项相加；
+            // column flex 子项纵向堆叠，内在宽仍是各项之最——求和会把每一列都撑成整行之和。
+            bool alongMain = ComputedStyle.IsGridDisplay(s.Display) || s.FlexDirection.StartsWith("row");
             float both = 0;
             if (!string.IsNullOrEmpty(s.TextContent))
             {
                 using var fnt = new SKFont(c.Typeface, s.FontSize);
                 both += TextMeasurer.NaturalWidth(s.TextContent, fnt, s);
             }
-            foreach (var g in c.Children) both += IntrinsicContentWidth(g) + MainDeco(g, true);
+            foreach (var g in c.Children)
+            {
+                float w = IntrinsicContentWidth(g) + MainDeco(g, true);
+                both = alongMain ? both + w : Math.Max(both, w);
+            }
             return both;
         }
         if (!string.IsNullOrEmpty(s.TextContent))
@@ -947,8 +992,10 @@ public static class LayoutBuilder
             using var font = new SKFont(c.Typeface, s.FontSize);
             return TextMeasurer.NaturalWidth(s.TextContent, font, s);
         }
+        // 块级子项各占一行：收缩宽（max-content）= 最宽的那个，不是全部相加。
+        // 相加会让「图 + 说明文字」这类 flex 项凭空宽出一截，后面的兄弟被整条推歪（Playground img 样例 216px）。
         float ww = 0;
-        foreach (var g in c.Children) ww += IntrinsicContentWidth(g) + MainDeco(g, true);
+        foreach (var g in c.Children) ww = Math.Max(ww, IntrinsicContentWidth(g) + MainDeco(g, true));
         return ww;
     }
 
@@ -1342,9 +1389,11 @@ public static class LayoutBuilder
         else
         {
             // 块级子元素布局。浮动位置在测量期已算好（FloatPlacements），此处按记录摆放并复现 clear 推进。
+            // margin 坍缩的 absorb 必须与 MeasureBlock 里算的一模一样，否则父高与子位会互相错开。
             float cy = contentY;
             var placements = box.FloatPlacements;
             var bands = box.FloatBands;
+            BlockBox? flowPrev = null;
 
             for (int i = 0; i < box.Children.Count; i++)
             {
@@ -1354,12 +1403,14 @@ public static class LayoutBuilder
 
                 if (cs.Clear != "none" && bands != null)
                 {
+                    float before = cy;
                     bool wantL = cs.Clear is "left" or "both", wantR = cs.Clear is "right" or "both";
                     float yRel = cy - contentY;
                     foreach (var b in bands)
                         if ((b.IsLeft && wantL || !b.IsLeft && wantR) && b.BottomRel > yRel)
                             yRel = Math.Max(yRel, b.BottomRel);
                     cy = contentY + yRel;
+                    if (cy != before) flowPrev = null;   // 被顶开即不再与上一块相邻
                 }
 
                 if (cs.Float != "none" && cs.Position == "static")
@@ -1397,8 +1448,12 @@ public static class LayoutBuilder
                             _ => 0,
                         };
                 }
-                PositionRec(c, contentX + xoff, cy, childCb);
-                cy += c.TotalHeight;
+                // 收缩适配的行内级盒在 MeasureBlock 里走的是另一条分支（打断坍缩链、不吃 margin），此处必须同样处理。
+                bool shrinkInline = cs.Width.IsAuto && cs.Display is "inline-flex" or "inline-grid" or "inline-block";
+                float absorb = shrinkInline ? 0f : AbsorbMargin(flowPrev, cs);
+                PositionRec(c, contentX + xoff, cy - absorb, childCb);
+                cy += c.TotalHeight - absorb;
+                flowPrev = shrinkInline ? null : c;
             }
         }
     }

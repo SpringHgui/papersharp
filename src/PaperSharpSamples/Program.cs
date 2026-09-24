@@ -89,6 +89,37 @@ if (args.Length > 1 && args[0] == "tree")
     return;
 }
 
+// 盒矩形导出模式：dotnet run -- boxes <name> [width]
+// 与 Playground 同一口径（RenderRasterWithBoxes），落两份产物：
+//   output/boxes-<name>.html    —— 与 PlaygroundService.BuildPreviewDoc 同优先级拼出的浏览器预览文档（UA < 附加 CSS < 文档内 style，藏滚动条，base 指向 assets）
+//   output/boxes-<name>.json    —— 引擎盒矩形（body 边框盒原点，CSS px）
+// 供 tools/boxdiff.mjs 在无头浏览器里量同一份文档并逐元素求差，不靠开网页肉眼对。
+if (args.Length > 1 && args[0] == "boxes")
+{
+    var name = args[1];
+    float boxW = args.Length > 2 && float.TryParse(args[2], out var bw) ? bw : 1284;
+    var html = File.ReadAllText(Path.Combine(assets, name + ".html"));
+    var css = File.Exists(Path.Combine(assets, name + ".css")) ? File.ReadAllText(Path.Combine(assets, name + ".css")) : "";
+
+    var r = Renderer.RenderRasterWithBoxes(html, css, boxW, baseDir: assets);
+    File.WriteAllText(Path.Combine(outDir, $"boxes-{name}.json"),
+        System.Text.Json.JsonSerializer.Serialize(new { width = boxW, bodyX = r.BodyX, bodyY = r.BodyY, boxes = r.Boxes },
+            new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
+
+    var baseHref = "file:///" + assets.Replace('\\', '/').TrimEnd('/') + "/";
+    var head = "<meta charset=\"utf-8\">" +
+               $"<base href=\"{baseHref}\">" +
+               $"<style>{PaperSharp.Css.StyleResolver.UaStylesheet}</style>" +
+               (string.IsNullOrWhiteSpace(css) ? "" : $"<style>{css}</style>") +
+               "<style>::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}" +
+               "html{scrollbar-width:none!important;-ms-overflow-style:none!important}</style>";
+    File.WriteAllText(Path.Combine(outDir, $"boxes-{name}.html"),
+        $"<!doctype html><html><head>{head}</head><body>{html}</body></html>");
+
+    Console.WriteLine($"[boxes:{name}] w={boxW:0} · 引擎 {r.Boxes.Count} 盒 → output/boxes-{name}.json + boxes-{name}.html");
+    return;
+}
+
 RenderOne("invoice");
 RenderOne("long");
 RenderOne("flex");

@@ -62,12 +62,13 @@ public static class InlineLayout
 
     /// <summary>按 maxWidth 把原子序列折成行盒。fontCache 复用 SKFont 度量。</summary>
     public static List<LineBox> BreakIntoLines(List<InlineAtom> atoms, float maxWidth)
-        => BreakIntoLines(atoms, maxWidth, null, 0);
+        => BreakIntoLines(atoms, maxWidth, null, 0, null);
 
-    /// <summary>带浮动环绕的折行：每行起笔时按该行 y 查询左右缩进，可用宽相应收窄（fc=null 时与旧行为一致）。</summary>
-    public static List<LineBox> BreakIntoLines(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY)
+    /// <summary>带浮动环绕的折行：每行起笔时按该行 y 查询左右缩进，可用宽相应收窄（fc=null 时与旧行为一致）。
+    /// strut = 建立该 IFC 的块自身样式（字体/行高决定行盒在基线下方留多高），null 时退回首个片段的样式。</summary>
+    public static List<LineBox> BreakIntoLines(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY, ComputedStyle? strut = null)
     {
-        var lines = BreakRaw(atoms, maxWidth, fc, topY);
+        var lines = BreakRaw(atoms, maxWidth, fc, topY, strut);
         // text-wrap: balance：按“总宽/最少行数”目标宽二次折行，逼近各行等长（有浮动环绕时跳过）
         if (fc == null && atoms.Count > 0 && atoms[0].Style.TextWrap == "balance"
             && maxWidth > 0 && lines.Count >= 2)
@@ -78,16 +79,16 @@ public static class InlineLayout
             for (int iter = 0; iter < 8 && hi - lo > 1f; iter++)
             {
                 float mid = (lo + hi) / 2;
-                if (BreakRaw(atoms, mid, null, topY).Count <= lines.Count) hi = mid;
+                if (BreakRaw(atoms, mid, null, topY, strut).Count <= lines.Count) hi = mid;
                 else lo = mid;
             }
-            var rebal = BreakRaw(atoms, hi, null, topY);
+            var rebal = BreakRaw(atoms, hi, null, topY, strut);
             if (rebal.Count <= lines.Count) lines = rebal;
         }
         return lines;
     }
 
-    static List<LineBox> BreakRaw(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY)
+    static List<LineBox> BreakRaw(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY, ComputedStyle? strut)
     {
         var lines = new List<LineBox>();
         float yCursor = topY;
@@ -110,7 +111,7 @@ public static class InlineLayout
 
         void Roll(ComputedStyle? nextStyle)
         {
-            FinalizeLine(cur); lines.Add(cur); yCursor += cur.Height;
+            FinalizeLine(cur, strut ?? nextStyle ?? (atoms.Count > 0 ? atoms[0].Style : null)); lines.Add(cur); yCursor += cur.Height;
             cur = NewLine(nextStyle); avail = cur.Avail; curW = 0;
         }
 
@@ -126,7 +127,7 @@ public static class InlineLayout
             if (a.IsBreak)
             {
                 if (cur.Frags.Count > 0) Roll(a.Style);
-                else { var e = NewLine(a.Style); FinalizeLine(e); lines.Add(e); yCursor += e.Height; } // <br> 于行首 → 空行
+                else { var e = NewLine(a.Style); FinalizeLine(e, strut ?? a.Style); lines.Add(e); yCursor += e.Height; } // <br> 于行首 → 空行
                 continue;
             }
             if (a.Box != null)
@@ -160,12 +161,26 @@ public static class InlineLayout
                     AddFrag(new InlineFrag { Style = a.Style, Text = tok, Width = tw, FontSize = a.Style.FontSize, Ascent = a.Style.FontSize, Descent = a.Style.FontSize * 0.22f });
             }
         }
-        if (cur.Frags.Count > 0) { TrimTrailingSpace(cur, ref curW); FinalizeLine(cur); lines.Add(cur); }
-        else if (lines.Count == 0) { var e = NewLine(null); FinalizeLine(e); lines.Add(e); }
+        if (cur.Frags.Count > 0) { TrimTrailingSpace(cur, ref curW); FinalizeLine(cur, strut ?? (atoms.Count > 0 ? atoms[0].Style : null)); lines.Add(cur); }
+        else if (lines.Count == 0) { var e = NewLine(null); FinalizeLine(e, strut ?? (atoms.Count > 0 ? atoms[0].Style : null)); lines.Add(e); }
         return lines;
     }
 
-    static void FinalizeLine(LineBox ln)
+    /// <summary>
+    /// 行盒在基线下方留多高：CSS 行盒模型 = 字体 descent + 半 leading（行高富余对半分）。
+    /// 纯文本行里行高本就占主导（结果与旧值一致）；只有「高图独占一行」时这截缝才显形——
+    /// 浏览器里图片下方那道 ~5px 空隙就是它，缺了它图后面的兄弟全部上移。
+    /// descent 用 0.22em，与 BreakRaw 里文本 frag 的口径一致。
+    /// </summary>
+    static float StrutBelow(ComputedStyle? s)
+    {
+        if (s == null) return 3f;   // 无 strut 可依：退回旧的经验值
+        float descent = s.FontSize * 0.22f;
+        float lh = s.FontSize * s.LineHeightFactor;
+        return descent + Math.Max(0, (lh - (s.FontSize + descent)) / 2);
+    }
+
+    static void FinalizeLine(LineBox ln, ComputedStyle? strut)
     {
         float maxBase = 0, maxH = 0, w = 0;
         foreach (var f in ln.Frags)
@@ -176,7 +191,7 @@ public static class InlineLayout
             w += f.Width;
         }
         ln.Baseline = maxBase > 0 ? maxBase : 14;
-        ln.Height = Math.Max(maxH, ln.Baseline + 3);
+        ln.Height = Math.Max(maxH, ln.Baseline + StrutBelow(strut));
         ln.Width = w;
 
         // 文本 run 的 vertical-align（top/bottom 对齐行盒，super/sub 惯例偏移，length/% 相对基线上移）

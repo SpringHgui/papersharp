@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Components.Server;
+using Microsoft.AspNetCore.SignalR;
 using PaperSharpBlazorApp.Components;
 using PaperSharpBlazorApp.Services;
 
@@ -16,6 +18,11 @@ namespace PaperSharpBlazorApp
             // Playground：渲染是纯函数式的进程内调用，缓存按进程共享即可。
             builder.Services.AddSingleton<PlaygroundSamples>();
             builder.Services.AddSingleton<PlaygroundService>();
+
+            // 盒级比对时 JS 要把整棵 DOM 的矩形回传给服务端。m1 实测 501 个矩形 = 54.8 KB，
+            // 超过 SignalR 默认 32 KB 入站上限 —— 超限时不是抛可捕获的异常，而是直接掐断 circuit，
+            // 表现成「页面一长就永远拿不到差异计数」（状态栏只剩出图签名）。放到 8 MB。
+            builder.Services.Configure<HubOptions>(o => o.MaximumReceiveMessageSize = 8 * 1024 * 1024);
 
             var app = builder.Build();
 

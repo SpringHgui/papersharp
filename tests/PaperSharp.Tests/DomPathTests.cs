@@ -127,11 +127,14 @@ public class DomPathTests
         var paths = Renderer.RenderRasterWithBoxes(html, "", width: 600).Boxes;
 
         Assert.DoesNotContain(paths, b => b.Tag is "thead" or "tbody" or "tfoot");
-        var tr = paths.Single(b => b.Tag == "tr");
-        var td = paths.Single(b => b.Tag == "td");
-        Assert.True(tr.W > 0 && tr.H > 0, "tr 该有真实几何");
-        Assert.True(td.W > 0 && td.H > 0, "td 该有真实几何");
-        Assert.Equal(tr.Y, td.Y, 1);
+        // 行组被剔除后，它下面的 tr/td 必须还在，且有真实几何（不能连坐）
+        Assert.Equal(2, paths.Count(b => b.Tag == "tr"));
+        Assert.All(paths.Where(b => b.Tag is "tr" or "th" or "td"),
+            b => Assert.True(b.W > 0 && b.H > 0, $"{b.Tag} 该有真实几何"));
+        var header = paths.Single(b => b.Tag == "th");
+        var cell = paths.Single(b => b.Tag == "td");
+        Assert.True(cell.Y > header.Y, "正文行应排在表头行之下");
+        Assert.Equal(header.X, cell.X, 1);   // 同列左右对齐
     }
 
     /// <summary>

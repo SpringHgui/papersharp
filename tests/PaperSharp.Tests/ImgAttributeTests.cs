@@ -13,7 +13,7 @@ public class ImgAttributeTests
     /// <summary>量出 img 盒的尺寸（走真实渲染入口，顺带覆盖 MeasureImage 那条路）。</summary>
     static (float W, float H) ImgSize(string html, string css = "")
     {
-        var box = Renderer.RenderRasterWithBoxes(html, css, width: 600).Boxes
+        var box = Renderer.RenderRasterWithBoxes(html, css, width: 600, baseDir: Fixture.AssetsDir).Boxes
             .Single(b => b.Tag == "img");
         return (box.W, box.H);
     }

@@ -61,6 +61,7 @@ public static class SvgWriter
         int _id;
         readonly Dictionary<GradientSpec, string> _gradIds = new();
         readonly Dictionary<uint, string> _imgUris = new();
+        readonly Dictionary<(string, string, string, string, string), string> _ovIds = new();
 
         public Writer(StringBuilder defs, StringBuilder body) { _defs = defs; _body = body; }
 
@@ -115,6 +116,16 @@ public static class SvgWriter
             float opacity = Clamp01(s.Opacity <= 0 ? 0 : s.Opacity);
             if (opacity <= 0.001f) return;
 
+            // 祖先 overflow 裁剪：整盒套一层 clipPath（几何与位图路径同源，都走 BlockBox.OverflowClip）
+            bool ovWrapped = false;
+            var ov = box.OverflowClip();
+            if (ov != null)
+            {
+                if (ov.Value.Rect.Width <= 0 || ov.Value.Rect.Height <= 0) return;   // 被祖先完全裁掉
+                _body.Append($"<g clip-path=\"url(#{OverflowClipId(ov.Value.Rect, ov.Value.RadiusOwner)})\">");
+                ovWrapped = true;
+            }
+
             var g = new StringBuilder();
             if (opacity < 0.999f) g.Append($" opacity=\"{F4(opacity)}\"");
             string style = EffectStyle(s);
@@ -165,6 +176,20 @@ public static class SvgWriter
             else if (box.Lines != null) EmitInlineLines(box, contentX, contentY);
 
             if (wrapped) _body.Append("</g>");
+            if (ovWrapped) _body.Append("</g>");
+        }
+
+        /// <summary>overflow 裁剪盒 → &lt;clipPath&gt;。同矩形+同圆角复用一条 def（一整页往往只有几个裁剪祖先）。</summary>
+        string OverflowClipId(SKRect r, ComputedStyle owner)
+        {
+            float rad = UniformRadius(owner);
+            var key = (F(r.Left), F(r.Top), F(r.Width), F(r.Height), F(rad));
+            if (_ovIds.TryGetValue(key, out var hit)) return hit;
+            string id = NextId("ov");
+            _defs.Append($"<clipPath id=\"{id}\"><rect x=\"{F(r.Left)}\" y=\"{F(r.Top)}\" width=\"{F(r.Width)}\" height=\"{F(r.Height)}\"" +
+                (rad > 0.05f ? $" rx=\"{F(rad)}\" ry=\"{F(rad)}\"" : "") + "/></clipPath>");
+            _ovIds[key] = id;
+            return id;
         }
 
         /// <summary>rect 或圆角不统一时的 path 近似（用 rect + 平均 rx 已足够，这里统一 rect）。</summary>

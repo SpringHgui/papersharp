@@ -6,6 +6,8 @@ namespace PaperSharp.Paint;
 /// <summary>
 /// 单盒视觉隔离层：clip-path 裁剪 + mix-blend-mode/filter 经 SaveLayer + mask-image 经 DstIn。
 /// 两个画师（PNG 遍历 / PDF DrawItem）共用；作用域为盒自身的装饰与文本（子树不并入，简化）。
+/// 注意「子树不并入」只针对本隔离层：祖先 <c>overflow</c> 的裁剪走 <see cref="ClipOverflow"/>，
+/// 由绘制侧在每个盒/条目外各包一层，因此同样罩得住子盒。
 /// </summary>
 public static class VisualEffects
 {
@@ -67,6 +69,36 @@ public static class VisualEffects
         }
         if (sc.LayerOpened) sc.Canvas.Restore();
         sc.Canvas.Restore();
+    }
+
+    /// <summary>
+    /// 把画布裁剪到某个 <c>overflow</c> 裁剪祖先的 padding box（由 <c>BlockBox.OverflowClip</c> 沿父链求交得出）。
+    /// 与 <see cref="Begin"/> 的区别：Begin 是「盒自身 clip-path 的作用域」，这里罩的是整盒落笔（含子盒、
+    /// backdrop、替换内容），由调用方在画每个盒/条目时各算一次并包裹，故不需要沿递归下传裁剪栈。
+    /// 祖先开了 border-radius 时按圆角矩形裁（四角半径按比例缩到盒内，同 CSS 规则）；返回 Save 帧号，调用方负责 Restore。
+    /// </summary>
+    public static int ClipOverflow(SKCanvas canvas, SKRect box, ComputedStyle owner)
+    {
+        int save = canvas.Save();
+        float tl = owner.BorderRadiusTopLeft, tr = owner.BorderRadiusTopRight,
+              br = owner.BorderRadiusBottomRight, bl = owner.BorderRadiusBottomLeft;
+        // CSS 规则：相邻两半径之和超过边长时，四角按同一比例缩小到刚好放下
+        float f = 1f;
+        if (tl + tr > 0) f = Math.Min(f, box.Width / (tl + tr));
+        if (bl + br > 0) f = Math.Min(f, box.Width / (bl + br));
+        if (tl + bl > 0) f = Math.Min(f, box.Height / (tl + bl));
+        if (tr + br > 0) f = Math.Min(f, box.Height / (tr + br));
+        if (f < 1f) { tl *= f; tr *= f; br *= f; bl *= f; }
+        if (tl > 0.01f || tr > 0.01f || br > 0.01f || bl > 0.01f)
+        {
+            using var path = new SKPath();
+            var rr = new SKRoundRect();
+            rr.SetRectRadii(box, new[] { new SKPoint(tl, tl), new SKPoint(tr, tr), new SKPoint(br, br), new SKPoint(bl, bl) });
+            path.AddRoundRect(rr);
+            canvas.ClipPath(path);
+        }
+        else canvas.ClipRect(box);
+        return save;
     }
 
     public struct Scope

@@ -12,6 +12,12 @@ public sealed class BlockBox
     public ComputedStyle Style = null!;
     public List<BlockBox> Children = new();
 
+    /// <summary>
+    /// 父盒，由 <see cref="LayoutBuilder.ToBoxTree"/> 建树时写入。行内原子盒（inline-block/行内 img）
+    /// 与匿名盒同样挂真实宿主，所以沿此链可还原元素的祖先关系——溢出裁剪（<see cref="OverflowClip"/>）就靠它。
+    /// </summary>
+    public BlockBox? Parent;
+
     /// <summary>本元素直属文本（如果有），已经通过 TextMeasurer.Wrap 折行。</summary>
     public string[]? WrappedLines;
     public SKTypeface Typeface = null!;
@@ -79,6 +85,41 @@ public sealed class BlockBox
         Style.MarginTop + Style.BorderWidthTop + Style.PaddingTop
         + ContentHeight
         + Style.PaddingBottom + Style.BorderWidthBottom + Style.MarginBottom;
+
+    /// <summary>padding box（= CSS 的溢出裁剪盒）：定位后的 border-box 内缩四边 border-width。未定位时为退化矩形。</summary>
+    public SKRect PaddingBox()
+    {
+        var s = Style;
+        return new SKRect(
+            BorderX + s.BorderWidthLeft,
+            BorderY + s.BorderWidthTop,
+            BorderX + s.BorderWidthLeft + s.PaddingLeft + ContentWidth + s.PaddingRight,
+            BorderY + s.BorderWidthTop + s.PaddingTop + ContentHeight + s.PaddingBottom);
+    }
+
+    /// <summary>
+    /// 本盒的内容该被裁到哪个矩形：沿 <see cref="Parent"/> 链把每个开了
+    /// <c>overflow</c> 裁剪的祖先的 padding box 求交；无裁剪祖先返回 null（不裁）。
+    /// 圆角取**最内层**裁剪祖先（再往外的祖先只按矩形求交，够覆盖常见用法）。
+    /// 坐标系跟随调用方：长图 = 全文坐标，分页 = 该页坐标（Position 每页重跑）。
+    /// 前提：裁剪盒自身不参与跨页碎片化（见 <c>Paginator.Place</c> 的 ClipsOverflow 分支），
+    /// 否则碎片化的外层祖先与后代不会落在同一页坐标系里。
+    /// </summary>
+    public (SKRect Rect, ComputedStyle RadiusOwner)? OverflowClip()
+    {
+        SKRect? acc = null;
+        ComputedStyle? owner = null;
+        for (var a = Parent; a != null; a = a.Parent)
+        {
+            if (!a.Style.ClipsOverflow) continue;
+            var pad = a.PaddingBox();
+            if (acc == null) { acc = pad; owner = a.Style; }
+            else acc = new SKRect(
+                Math.Max(pad.Left, acc.Value.Left), Math.Max(pad.Top, acc.Value.Top),
+                Math.Min(pad.Right, acc.Value.Right), Math.Min(pad.Bottom, acc.Value.Bottom));
+        }
+        return acc == null ? null : (acc.Value, owner!);
+    }
 }
 
 /// <summary>表格网格里一个单元格：盒子 + 起始列/行 + 跨列/行数。</summary>

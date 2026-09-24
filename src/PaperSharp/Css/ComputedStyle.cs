@@ -151,6 +151,15 @@ public sealed class ComputedStyle
     public string Float = "none";        // none | left | right
     public string Clear = "none";        // none | left | right | both
 
+    /// <summary>
+    /// 溢出裁剪开关（由 <c>overflow</c> / <c>overflow-x</c> / <c>overflow-y</c> 折算而来）。
+    /// 静态文档没有滚动条也不画滚动条：hidden | clip | auto | scroll | overlay 一律按「裁剪到自身
+    /// padding box」处理（见 <c>BlockBox.OverflowClip</c>）。规范规定一轴 visible 而另一轴非 visible
+    /// 时，visible 那轴折算成 auto → 两轴同裁，所以这里不保留分轴语义（真要单轴裁剪时再拆）。
+    /// &lt;html&gt; 上的 overflow 到不了这里：按 CSS 它传播给视口，而本引擎的「视口」就是整页/长图本身。
+    /// </summary>
+    public bool ClipsOverflow;
+
     // 文本高级
     public string VerticalAlign = "baseline"; // baseline | top | bottom | middle | length/percentage（原子盒与表格单元生效）
     public string TextWrap = "wrap";         // wrap | balance

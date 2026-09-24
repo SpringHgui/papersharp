@@ -45,7 +45,10 @@ public static class StyleResolver
         """;
 
     // AngleSharp.Css 不实现的属性（computed/declared 都拿不到），从原始 CSS 里按选择器兜底扫出来。
-    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation" };
+    // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
+    // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
+    // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
+    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -162,7 +165,9 @@ public static class StyleResolver
             var body = m.Groups[2].Value;
             foreach (var prop in UnsupportedProps)
             {
-                var mm = Regex.Match(body, prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
+                // 左边界 (?<![\w-])：否则 "overflow" 会命中同一条规则里的 "text-overflow:clip"，
+                // 把文本截断值当成盒级裁剪值——同名前缀的属性全靠这条兜底表，必须按整词匹配。
+                var mm = Regex.Match(body, @"(?<![\w-])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
                 if (!mm.Success) continue;
                 var val = mm.Groups[1].Value.Trim().ToLowerInvariant();
                 var parts = Regex.Split(sel, @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
@@ -191,6 +196,18 @@ public static class StyleResolver
             return current;
         }
         return ExpandVars(current, element, ctx);
+    }
+
+    /// <summary>
+    /// overflow 值串里是否含裁剪关键字。auto/scroll/overlay 一律视同 hidden（定格输出不画滚动条）；
+    /// 简写可能带两值（如 "visible hidden"），任一轴裁剪即整盒裁剪，故逐 token 判。
+    /// </summary>
+    static bool AnyClips(string? v)
+    {
+        if (string.IsNullOrWhiteSpace(v)) return false;
+        foreach (var t in v.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            if (t is "hidden" or "clip" or "auto" or "scroll" or "overlay") return true;
+        return false;
     }
 
     // ── var() / 自定义属性 ─────────────────────────────────────────────
@@ -414,6 +431,13 @@ public static class StyleResolver
         bool blockish = cs.Display == "block" || cs.Display == "table-cell";
         cs.IsInlineFC = blockish && !hasBlockChild && (hasInlineEl || hasBr || (hasImgChild && cs.TextContent != null));
 
+        // 块级子元素与行内替换元素（img/svg）混排：浏览器把行内内容裹进匿名块成 IFC——img 坐在基线上，
+        // 行盒底还留一截 strut descent（经典「图片下方那道缝」）。此前引擎把 img 直接当块级子盒，
+        // 缺这截缝，img 之后的每个兄弟整体往上漂（img 样例里 27 盒有 12 盒因此 +5px）。
+        // 只在块自身没有直接文本时裹：有文本仍走老的 TextContent 路径，不节外生枝。
+        if (blockish && !cs.IsInlineFC && hasBlockChild && hasImgChild && string.IsNullOrEmpty(cs.TextContent))
+            cs.Children = WrapReplacedInlineRuns(cs);
+
         // 伪元素 ::before/::after：仅当 CSS 里确有伪元素规则时才建生成盒（content 片段 + 自身样式），
         // 实际注入与 counter 回填在 BuildDocument 末尾的 PseudoContent.Apply 文档序 pass 里做。
         if (ctx.HasPseudoRules && PseudoMayMatch(element, ctx))
@@ -423,6 +447,61 @@ public static class StyleResolver
         }
 
         return cs;
+    }
+
+    /// <summary>
+    /// 把块级子元素之间连续的 img/svg 裹成匿名 inline-FC 块（CSS 的 anonymous block），其余子元素原位保留。
+    /// 浏览器对「图 + 块」混排正是这么建的：匿名块给图片立一行盒，图片下方那截 strut descent 才留得下来。
+    /// </summary>
+    static List<ComputedStyle> WrapReplacedInlineRuns(ComputedStyle owner)
+    {
+        var outList = new List<ComputedStyle>(owner.Children.Count);
+        List<ComputedStyle>? run = null;
+        void Flush()
+        {
+            if (run == null) return;
+            outList.Add(AnonInlineBlock(owner, run));
+            run = null;
+        }
+        foreach (var c in owner.Children)
+        {
+            if (c.Tag is "img" or "svg" && c.Display != "none") (run ??= new List<ComputedStyle>()).Add(c);
+            else { Flush(); outList.Add(c); }
+        }
+        Flush();
+        return outList;
+    }
+
+    /// <summary>
+    /// 匿名 inline 块：只承载行内片段。匿名盒按规范只继承可继承属性，故盒装饰与尺寸一律清零
+    /// （父级 padding/margin/%宽不得复制进来）；DomPath 由 CloneShallow 归 null，比对时不出盒。
+    /// </summary>
+    static ComputedStyle AnonInlineBlock(ComputedStyle owner, List<ComputedStyle> run)
+    {
+        var anon = owner.CloneShallow();
+        anon.Display = "block";
+        anon.IsInlineFC = true;
+        anon.TextContent = null;
+        anon.Before = anon.After = null;
+        anon.Children = new();
+        anon.InlinePieces = new();
+        foreach (var c in run)
+        {
+            c.Parent = anon;   // 行内片段的祖先链改挂匿名块：内联补盒上溯到此即止，不会越过它去改祖先
+            anon.InlinePieces.Add(InlinePiece.OfChild(c));
+        }
+        anon.Width = anon.Height = anon.MinWidth = anon.MaxWidth = anon.MinHeight = anon.MaxHeight = default;
+        anon.MarginTopCss = anon.MarginRightCss = anon.MarginBottomCss = anon.MarginLeftCss = CssSize.Abs(0);
+        anon.MarginTopAuto = anon.MarginRightAuto = anon.MarginBottomAuto = anon.MarginLeftAuto = false;
+        anon.MarginTop = anon.MarginRight = anon.MarginBottom = anon.MarginLeft = 0;
+        anon.PaddingTopCss = anon.PaddingRightCss = anon.PaddingBottomCss = anon.PaddingLeftCss = default;
+        anon.PaddingTop = anon.PaddingRight = anon.PaddingBottom = anon.PaddingLeft = 0;
+        anon.BorderWidthTop = anon.BorderWidthRight = anon.BorderWidthBottom = anon.BorderWidthLeft = 0;
+        anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
+        anon.BackgroundColor = SKColor.Empty;
+        anon.Background = null;
+        anon.Shadow = null;
+        return anon;
     }
 
     /// <summary>为一个伪元素建生成盒：读 content（不成盒则返回 null）+ 伪元素自身 computed 样式（display 归一为 inline 缺省）。</summary>
@@ -761,6 +840,12 @@ public static class StyleResolver
         // 浮动 + 清除
         s.Float = CssValueParser.ParseKeyword(Raw("float"), "none");
         s.Clear = CssValueParser.ParseKeyword(Raw("clear"), "none");
+
+        // 溢出裁剪：简写与两个长写里任一轴给出裁剪关键字即整盒裁剪（折算规则见 ComputedStyle.ClipsOverflow）。
+        // 走 Lookup 而不是只信 Raw：AngleSharp 若不实现 overflow，computed 为空，需要从原始 CSS 兜底表命中。
+        s.ClipsOverflow = AnyClips(Lookup("overflow", element, Raw("overflow"), ctx))
+                       || AnyClips(Lookup("overflow-x", element, Raw("overflow-x"), ctx))
+                       || AnyClips(Lookup("overflow-y", element, Raw("overflow-y"), ctx));
 
         // 文本高级：vertical-align / text-wrap / text-fit（非标准，走属性兜底 + HTML 属性）
         s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Raw("vertical-align"), ctx), "baseline")!;

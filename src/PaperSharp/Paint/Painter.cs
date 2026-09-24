@@ -60,7 +60,21 @@ public static class Painter
         foreach (var child in box.Children) PaintFull(canvas, surface, child);
     }
 
+    /// <summary>
+    /// 画一个盒：先按祖先的 overflow 裁剪包裹（祖先开了 overflow 且本盒整颗落在裁剪框外则直接不画），
+    /// 再画自身。子盒各自再算一遍自己的祖先裁剪链，所以这里不必把裁剪矩形沿递归传下去。
+    /// </summary>
     static void PaintSelf(SKCanvas canvas, SKSurface? surface, BlockBox box)
+    {
+        var clip = box.OverflowClip();
+        if (clip == null) { PaintBox(canvas, surface, box); return; }
+        if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) return;   // 求交为空 → 完全不可见
+        int save = VisualEffects.ClipOverflow(canvas, clip.Value.Rect, clip.Value.RadiusOwner);
+        PaintBox(canvas, surface, box);
+        canvas.Restore();
+    }
+
+    static void PaintBox(SKCanvas canvas, SKSurface? surface, BlockBox box)
     {
         var s = box.Style;
         float bw = s.BorderWidthLeft + s.PaddingLeft + box.ContentWidth + s.PaddingRight + s.BorderWidthRight;

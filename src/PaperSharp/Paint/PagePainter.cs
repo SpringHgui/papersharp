@@ -20,6 +20,18 @@ public static class PagePainter
 
     static void PaintItem(SKCanvas canvas, DrawItem it)
     {
+        // 祖先 overflow 裁剪：分页路径的条目已是拉平序列，逐条目各算一次裁剪链即可
+        //（坐标天然同页——裁剪盒不参与碎片化，见 Paginator.Place）。
+        var clip = it.Box.OverflowClip();
+        if (clip == null) { PaintItemContent(canvas, it); return; }
+        if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) return;   // 求交为空 → 整条不画
+        int save = VisualEffects.ClipOverflow(canvas, clip.Value.Rect, clip.Value.RadiusOwner);
+        PaintItemContent(canvas, it);
+        canvas.Restore();
+    }
+
+    static void PaintItemContent(SKCanvas canvas, DrawItem it)
+    {
         var s = it.Box.Style;
         // 每盒（每片段）独立隔离层：clip/blend/filter 只作用于本条目自身内容
         var itemRect = new SKRect(it.X, it.Y, it.X + Math.Max(it.W, it.TextWidth), it.Y + Math.Max(it.H, 0));

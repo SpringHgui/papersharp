@@ -74,6 +74,8 @@ public static class Paginator
         public List<Page> Pages = new();
         public Page Cur = null!;
         public float CurY;
+        /// <summary>当前流里上一个落位的流内块盒，用于相邻兄弟 margin 坍缩（见 LayoutBuilder.Collapsible）。</summary>
+        BlockBox? _flowPrev;
 
         public void NewPage()
         {
@@ -83,6 +85,7 @@ public static class Paginator
             };
             Pages.Add(Cur);
             CurY = ContentTop;
+            _flowPrev = null;   // 换页即断开相邻关系：上一页那块的下 margin 不参与本页首块的坍缩
         }
 
         public void Place(BlockBox box, float availW, float x)
@@ -92,6 +95,10 @@ public static class Paginator
             if (s.BreakBefore == "page" && CurY > ContentTop + 0.5f)
                 NewPage();
 
+            // 相邻兄弟的共用 margin 只算一次。游标必须和 MeasureBlock/PositionRec 吃同一个值，
+            // 否则「量出来按坍缩、翻页按不坍缩」会把多段样例凭空挤出一页（long 实测 2 → 3）。
+            CurY -= LayoutBuilder.AbsorbMargin(_flowPrev, s);
+
             float h = box.TotalHeight;
             float remaining = ContentBottom - CurY;
             if (h <= remaining + 0.5f)
@@ -99,7 +106,10 @@ public static class Paginator
                 EmitWhole(box, x, CurY);
                 CurY += h;
             }
-            else if (h <= UsableH + 0.5f)
+            // 当前页放不下、但整页放得下：只有「没有可拆分的内部结构」才整块挪到下一页。
+            // 能拆的（有多个子块或多行文本）就地起、页底断——Chrome printToPDF 打印 long 就是这个结果
+            // （.card 在页中被拆成两段，共 2 页）；一律整块挪会把 2 页变成 3 页，还把上一页留成空页。
+            else if (h <= UsableH + 0.5f && !Splittable(box))
             {
                 NewPage();
                 EmitWhole(box, x, CurY);
@@ -120,6 +130,15 @@ public static class Paginator
                 EmitWhole(box, x, CurY);
                 CurY += Math.Min(h, UsableH);
             }
+            // overflow 裁剪盒：内容超出自身 padding box 即被裁掉，绝不跨页续。
+            // 放在表格分支之前——裁剪盒一旦碎片化，祖先与后代的坐标就不在同一页里，
+            // BlockBox.OverflowClip 沿父链求交的前提就破了（表格若被裁，整表落一页）。
+            else if (s.ClipsOverflow)
+            {
+                NewPage();
+                EmitWhole(box, x, CurY);
+                CurY += Math.Min(h, UsableH);
+            }
             // 表格跨页续表：按行拆分，重复 thead/tfoot
             else if (s.Display == "table")
             {
@@ -130,12 +149,24 @@ public static class Paginator
                 Fragment(box, availW, x);
             }
 
+            // 记下本盒作为下一个兄弟的「流内前驱」；行内级/浮动不参与坍缩，直接把链断掉。
+            _flowPrev = LayoutBuilder.Collapsible(s) ? box : null;
+
             // break-after: page → 元素放完后强制换页
             if (s.BreakAfter == "page")
                 NewPage();
         }
 
-        void EmitWhole(BlockBox box, float x, float y)
+        /// <summary>
+    /// 本盒内部有没有可下刀的接缝：至少一个子块，或至少两行文本。
+    /// 没有接缝（单行文本、单个不可分单元）的盒子拆不动，只能整块挪页；有拆得动的接缝就让它碎，
+    /// 具体断点交给 Fragment/FlowText（后者按 orphans/widows 收口）。
+    /// </summary>
+    static bool Splittable(BlockBox box)
+        => box.Children.Exists(c => c.Style.Position != "absolute")
+        || (box.WrappedLines?.Length ?? box.Lines?.Count ?? 0) >= 2;
+
+    void EmitWhole(BlockBox box, float x, float y)
         {
             // 复用布局引擎定位整棵子树（block 堆叠 + flex 的 justify/align 都在 Position 里），
             // 分页这里只负责把定位好的子树遍历成 DrawItem。

@@ -13,6 +13,13 @@ const NO_BOX = new Set(["STYLE", "SCRIPT", "TEMPLATE", "META", "LINK", "TITLE", 
 /** 替换元素：自己成盒，但内部节点不进盒树。 */
 const NO_DESCEND = new Set(["SVG", "INPUT"]);
 
+/**
+ * 表格行组：引擎里是透传容器（表格算法直接摆 tr/td），行组盒自身没有几何。
+ * 核心库已把它们从盒列表剔除，这里也必须同样跳过——否则它们只出现在浏览器一侧，
+ * 假偏差没消掉，只是从「漂移 1235px」改叫「浏览器独有 6 个」。仍然要下钻，tr/td 是真的。
+ */
+const PASS_THROUGH_DISPLAY = new Set(["table-row-group", "table-header-group", "table-footer-group"]);
+
 function pathOf(parentPath, tag, seq) {
   return `${parentPath}/${tag.toLowerCase()}[${seq}]`;
 }
@@ -39,15 +46,17 @@ function measure(iframe) {
   const visit = (el, path) => {
     const cs = win.getComputedStyle(el);
     if (cs.display === "none") return;            // 引擎也不成盒，两边都不记
-    const r = el.getBoundingClientRect();
-    out.push({
-      domPath: path,
-      tag: el.tagName.toLowerCase(),
-      x: r.left + win.scrollX - bodyRect.left,
-      y: r.top + win.scrollY - bodyRect.top,
-      w: r.width,
-      h: r.height,
-    });
+    if (!PASS_THROUGH_DISPLAY.has(cs.display)) {  // 行组不 emit，但要继续下钻找 tr/td
+      const r = el.getBoundingClientRect();
+      out.push({
+        domPath: path,
+        tag: el.tagName.toLowerCase(),
+        x: r.left + win.scrollX - bodyRect.left,
+        y: r.top + win.scrollY - bodyRect.top,
+        w: r.width,
+        h: r.height,
+      });
+    }
     if (NO_DESCEND.has(el.tagName)) return;
     const seq = childSeqMap();
     for (const kid of el.children) {

@@ -142,6 +142,7 @@ body  { --brand: #1a73e8; --gap: 12px }
 
 - **分页**：块级跨页回流；长表跨页续 + 共享列宽 + 重复 `<thead>`；`break-before/after: page`、`break-inside: avoid`、`orphans/widows`；`@page` size/margin + 页眉页脚边距盒 + `counter(page/pages)`（含中文数字页码）
 - **布局**：flexbox 全家（含 wrap/reverse/gap/嵌套）、Grid 子集、float + 图文环绕、relative/absolute + z-index 盖顶、`%` 单位按包含块布局期解析、`box-sizing`、min/max
+- **溢出裁剪**：`overflow` / `overflow-x` / `overflow-y` 的 `hidden`·`clip`·`auto`·`scroll`·`overlay` 一律裁剪到 padding box（定格输出没有滚动位置，也不画滚动条）；一轴非 `visible` 即两轴同裁（规范折算）；祖先带 `border-radius` 时按圆角矩形裁；脱流（`position:absolute`）子盒同样按树祖先链裁剪，不逃逸
 - **选择器与伪元素**：`:is()`/`:where()`（AngleSharp 原生）、`::before`/`::after` 生成内容（字符串 / `attr()` / `open-quote`·`close-quote` / `url()` 图 / `counter()`·`counters()` 自动编号，含中文数字），块级与行内成盒
 - **文本**：inline 混排真行盒（span/a/br/inline-block/行内 img，基线对齐 + `vertical-align`）、CJK 逐字 / Latin 逐词折行、`white-space`/`word-break`/`text-overflow: ellipsis`/`letter-spacing`/`text-transform`/`text-decoration`、`text-wrap: balance`、`text-fit`
 - **视觉**：圆角（含 squircle）/阴影/linear·radial·conic 渐变/opacity/`mix-blend-mode`/`clip-path`/`mask-image`/`filter: blur|drop-shadow` 链/`background-clip: text`（渐变文字）/`backdrop-filter`（毛玻璃，仅位图路径）/内联 `<svg>`
@@ -149,7 +150,7 @@ body  { --brand: #1a73e8; --gap: 12px }
 - **复杂文字**：HarfBuzz shaping（阿拉伯连写）、`direction: rtl` + 轻量 bidi 混排、扩展字素安全折行（emoji ZWJ/组合符不拆散）、字形级字体回退（emoji/小语种不再出豆腐块）
 - **动画（确定性取帧）**：解析 `@keyframes` + `animation` 全套（timing/iteration/direction/fill），渲染传 `animationTime`（秒）即取该时刻的一帧，对 opacity/颜色/长度/圆角/字号/定位偏移按帧插值；输出仍是静态单帧、逐字节确定。Tailwind `animate-pulse` 已映射（详见边界）
 - **输出**：矢量 PDF（h1–h6 书签 + `<a>` 链接注释 + metadata，经自研 `PdfEnhancer` 增量尾部注入）/ PNG（scale 高清）/ JPEG / WebP / ICO / SVG
-- **边界**：`@media`/`overflow`/`transform`/`fixed`/`sticky`/网络图未做；`transform` 未实现 → 依赖它的动画（`spin`/`ping`/`bounce`）关键帧会被解析但不生效（不做假变换），仅 opacity/颜色/长度类动画可取帧；`backdrop-filter` 只在位图（PNG/JPEG/WebP）路径生效，PDF/SVG 矢量路径跳过；嵌套双向、国旗 emoji、shaped run 的 letter-spacing 是复杂文字的已知简化——全量清单见 [ROADMAP.md](ROADMAP.md)
+- **边界**：`@media`/`transform`/`fixed`/`sticky`/网络图未做；`overflow` 已交付裁剪但**不建立 BFC**（`overflow:hidden` 仍不隔离浮动与父子 margin 坍缩，`display:flow-root` 同）；`transform` 未实现 → 依赖它的动画（`spin`/`ping`/`bounce`）关键帧会被解析但不生效（不做假变换），仅 opacity/颜色/长度类动画可取帧；`backdrop-filter` 只在位图（PNG/JPEG/WebP）路径生效，PDF/SVG 矢量路径跳过；嵌套双向、国旗 emoji、shaped run 的 letter-spacing 是复杂文字的已知简化——全量清单见 [ROADMAP.md](ROADMAP.md)
 
 ## 目录结构
 
@@ -254,6 +255,7 @@ UPDATE_GOLDENS=1 dotnet test tests/PaperSharp.Tests       :: 有意变更后重�
 - **computed 不序列化 `margin`/`padding` 简写**（返回空串）→ 一律逐边读 longhand，否则静默丢 0
 - **`radial-gradient` 让整元素 `GetComputedStyle` 抛 NRE；`repeating-*` 渐变的 `CssText` 必抛** → `Get()` try/catch 兜底；background/background-image 一律不读 computed
 - **`text-overflow` 根本不实现** → `ScanUnsupported` 从原始 CSS 建 class/id/tag 索引，`Lookup()` 兜底；AngleSharp 缺啥往 `UnsupportedProps` 加
+- **`overflow` 只认 `hidden`/`auto`/`scroll`/`visible`**：`clip`、`overlay`、两值简写 `overflow: visible hidden` 在 computed **和** `GetDeclarations()` 里都是空串（解析阶段即判非法丢弃）→ 三种写法靠 `UnsupportedProps` 的原文兜底捞回；兜底正则必须带 `(?<![\w-])` 左边界，否则 `overflow` 会命中同一条规则里的 `text-overflow:clip`，把文本截断值当成盒级裁剪值
 - **em/rem/% 需要非空 render device** → `BuildDocument` 里 `WithRenderDevice(new DefaultRenderDevice{ FontSize=16, ... })`
 - **AngleSharp 不内置 UA display** → `UaStylesheet` 显式补 `span/a/em/…{display:inline}` 与表格家族；`<br>` 只进 inline 片段不进 Children（否则误判成块级）
 - **伪元素 UA 默认注入 `display:block`**（computed 与 declared 都是，作者没写也判块）→ 不能据此定行内/块级；`ScanPseudoDisplay` 从原始 CSS 扫作者显式声明的 display，缺省按 inline

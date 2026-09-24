@@ -10,7 +10,8 @@
 | 领域 | 缺口 | 成本 | 备注 |
 |---|---|---|---|
 | 性能/架构 | **AngleSharp 层叠超线性**：2000 元素文档 buildDoc 21–74s | **高（但已量化收益）** | → **M6，待拍板** |
-| 分页/CSS | `@media`、`overflow: hidden`、`transform` | 低–中 | 伪元素 `::before/::after` + 计数器、`background-clip: text`、`backdrop-filter` 已于 M8 交付；`transform` 仍未做（依赖它的动画停在基线态） |
+| 分页/CSS | `@media`、`transform` | 低–中 | 伪元素 `::before/::after` + 计数器、`background-clip: text`、`backdrop-filter` 已于 M8 交付；`overflow` 裁剪已交付（含 `clip`/`overlay`/两值简写的原文兜底）；`transform` 仍未做（依赖它的动画停在基线态） |
+| 布局/BFC | `overflow` 建立 BFC（float 包含、**父子** margin 坍缩隔离）、`display:flow-root` | 中 | 裁剪已交付、格式化上下文未做：`FloatContext.Insets/ClearTo` 无条件沿 `Parent` 链走到根（没有 BFC 停止边界），`LayoutBuilder` 的父子坍缩判定只看有无 border/padding。**兄弟**间坍缩与 overflow 无关，别照规范直觉改（实测已钉在 `MarginCollapsingTests` 与 `OverflowClipTests`） |
 | 定位 | `fixed`/`sticky` 视口语义 | 中 | 静态文档场景价值有限 |
 | 布局 | flex `align-content`（现简化为 flex-start） | 低 | |
 | 文本 | `text-wrap: pretty`、`lang` 汉字分形（zh/ja/ko） | 低–中 | locale 传 SKFont 即可分形 |
