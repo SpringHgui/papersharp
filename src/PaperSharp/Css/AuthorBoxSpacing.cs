@@ -136,61 +136,109 @@ sealed class AuthorBoxSpacing
         }
     }
 
-    /// <summary>取元素的 margin/padding 声明值（作者源级联）。prop ∈ (margin|padding)-(top|right|bottom|left)。</summary>
-    public bool TryGet(IElement el, float viewportW, string prop, out string value)
+    /// <summary>
+    /// 一次扫描求出该元素八条边（margin t/r/b/l + padding t/r/b/l）的作者声明值；条目为 null 表示
+    /// 作者没声明这一条，调用方退回 AngleSharp 的读取（UA 默认值照旧生效）。
+    ///
+    /// 刻意做成「一次算全八条」而不是「按属性问八次」：每次查询都要重跑一遍规则桶，桶里每条规则
+    /// 都要 <c>el.Matches(selector)</c> 做一次真正的选择器匹配。一个元素 margin+padding 八条边问下来
+    /// 就是 8×规则数 次匹配。现在一条规则每个元素最多匹配一次，八条边在同一趟里各自裁决。
+    /// </summary>
+    public string?[] Resolve(IElement el, float viewportW)
     {
-        int idx = prop switch
-        {
-            "margin-top" => 0, "margin-right" => 1, "margin-bottom" => 2, "margin-left" => 3,
-            "padding-top" => 4, "padding-right" => 5, "padding-bottom" => 6, "padding-left" => 7,
-            _ => -1,
-        };
-        value = "";
-        if (idx < 0) return false;
+        var v8 = new string?[8];
 
-        // 内联 style 最优先
-        string inline = el.GetAttribute("style") ?? "";
-        if (SpacingDecl.IsMatch(inline))
+        // 内联 style 最优先：整条 longhand 压过简写，简写之间后写的覆盖先写的（与逐个查询时的语义一致）
+        string inlineStyle = el.GetAttribute("style") ?? "";
+        bool touchedPadding = false, touchedMargin = false;
+        string?[] exact = new string?[8];
+        string?[] short8 = new string?[8];
+        if (inlineStyle.Length > 0 && SpacingDecl.IsMatch(inlineStyle))
         {
-            string[] v8 = new string[8];
-            bool any = false;
-            foreach (string d in inline.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            foreach (string d in inlineStyle.Split(';', StringSplitOptions.RemoveEmptyEntries))
             {
                 int colon = d.IndexOf(':');
                 if (colon <= 0) continue;
                 string p = d[..colon].Trim().ToLowerInvariant(), val = d[(colon + 1)..].Trim();
                 if (val.Contains("var(")) continue;
-                int baseIdx = p.StartsWith("padding") ? PadBase : 0;
-                if (p == "margin" || p == "padding") { ExpandShorthand(val, v8, baseIdx); any = true; }
-                else if (p == prop) { value = val; return true; }
+                switch (p)
+                {
+                    case "margin": ExpandShorthand(val, short8, 0); touchedMargin = true; break;
+                    case "padding": ExpandShorthand(val, short8, PadBase); touchedPadding = true; break;
+                    case "margin-top": exact[0] ??= val; break;
+                    case "margin-right": exact[1] ??= val; break;
+                    case "margin-bottom": exact[2] ??= val; break;
+                    case "margin-left": exact[3] ??= val; break;
+                    case "padding-top": exact[4] ??= val; break;
+                    case "padding-right": exact[5] ??= val; break;
+                    case "padding-bottom": exact[6] ??= val; break;
+                    case "padding-left": exact[7] ??= val; break;
+                }
             }
-            if (any) { value = v8[idx]; return v8[idx].Length > 0; }
+            for (int i = 0; i < 8; i++)
+            {
+                bool hit = (i < PadBase ? touchedMargin : touchedPadding) || exact[i] != null;
+                if (!hit) continue;                       // 这一条内联没写 → 让规则桶继续裁决
+                v8[i] = exact[i] ?? short8[i];
+            }
         }
 
-        Rule best = null!;
-        int bestSpec = -1, bestOrder = -1;
+        // 未被内联覆盖的条目才进规则桶；八条全被内联裁决完就一次匹配都不做
+        if (Open(v8)) ScanRules(el, viewportW, v8);
+        return v8;
+    }
+
+    static bool Open(string?[] v8)
+    {
+        for (int i = 0; i < 8; i++) if (v8[i] is not { Length: > 0 }) return true;
+        return false;
+    }
+
+    void ScanRules(IElement el, float viewportW, string?[] v8)
+    {
+        var best = new Rule?[8];
+        var bestSpec = new int[8];
+        var bestOrder = new int[8];
+        Array.Fill(bestSpec, -1);
+        // 八条边各自独立裁决：内联已定的不再参与，其余每条边各自挑「特异度最高、源顺序最后」的那条规则。
+        var open = new bool[8];
+        for (int i = 0; i < 8; i++) open[i] = v8[i] is not { Length: > 0 };
+
         void Scan(List<Rule>? list)
         {
             if (list == null) return;
             foreach (var r in list)
             {
-                if (r.Val[idx] == null || r.MaxW < viewportW || r.MinW > viewportW) continue;
-                if (r.Spec < bestSpec || (r.Spec == bestSpec && r.Order < bestOrder)) continue;   // 已被更优者压制
-                bool m;
-                try { m = el.Matches(r.Selector); } catch { continue; }
-                if (!m) continue;
-                best = r; bestSpec = r.Spec; bestOrder = r.Order;
+                if (r.MaxW < viewportW || r.MinW > viewportW) continue;
+                bool any = false;
+                for (int i = 0; i < 8; i++)
+                    if (open[i] && r.Val[i] != null && Better(r, i, best, bestSpec, bestOrder)) { any = true; break; }
+                if (!any) continue;                       // 这条规则管不到任何还没裁决的边，省掉一次匹配
+                if (!Matches(el, r.Selector)) continue;
+                // 逐条边重新判定：本规则可能对某条边是更优者、对另一条边反而不如已胜出者，
+                // 不能因为「有一条边更优」就把八条边一起覆盖了（invoice 实测因此少坍缩 8px）。
+                for (int i = 0; i < 8; i++)
+                    if (open[i] && r.Val[i] != null && Better(r, i, best, bestSpec, bestOrder))
+                    { best[i] = r; bestSpec[i] = r.Spec; bestOrder[i] = r.Order; }
             }
         }
+
         Scan(_any);
         Scan(_byTag.TryGetValue(el.TagName.ToLowerInvariant(), out var t) ? t : null);
-        string? id = el.Id;
-        if (!string.IsNullOrEmpty(id)) Scan(_byId.TryGetValue(id, out var i) ? i : null);
+        if (!string.IsNullOrEmpty(el.Id)) Scan(_byId.TryGetValue(el.Id, out var i) ? i : null);
         foreach (string cls in el.ClassList) Scan(_byClass.TryGetValue(cls, out var c) ? c : null);
 
-        if (best == null!) return false;
-        value = best.Val[idx]!;
-        return true;
+        for (int k = 0; k < 8; k++) if (best[k] is { } r && r.Val[k] is { } val) v8[k] = val;
+    }
+
+    /// <summary>该边尚未裁决，或本规则的特异度/源顺序更高。</summary>
+    static bool Better(Rule r, int i, Rule?[] best, int[] spec, int[] order) =>
+        best[i] == null || r.Spec > spec[i] || (r.Spec == spec[i] && r.Order > order[i]);
+
+    /// <summary>作者写了奇形怪状的选择器时 AngleSharp 会抛；按「不匹配」处理，与逐条查询时一致。</summary>
+    static bool Matches(IElement el, string selector)
+    {
+        try { return el.Matches(selector); } catch { return false; }
     }
 
     static void ExpandShorthand(string val, string?[] into, int at)

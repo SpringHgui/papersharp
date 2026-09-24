@@ -5,6 +5,7 @@ using SkiaSharp;
 using PaperSharp;
 using PaperSharp.Css;
 using PaperSharp.Layout;
+using PaperSharp.Imaging;
 using PaperSharp.Paint;
 
 namespace PaperSharpSamples;
@@ -147,6 +148,150 @@ public static class Benchmark
             doc.Close();
         }
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Playground 路径逐阶段拆解（`RenderRasterWithBoxes`，与页面默认档一致：宽 1284、scale 2、domPath 开）。
+    /// 与 `bench`（PDF 管线）分开：Playground 的瓶颈是长图位图 + 编码 + 盒采集，PDF 那边是字体子集写入，
+    /// 两条路的优化点完全不同，混在一张表里只会指错方向。
+    ///
+    /// 逐阶段取 N 次的**最小值**：这条路径每轮都要新建几十 MB 画布，均值会被随机落点的 GC 污染
+    /// （同一份输入实测 buildDoc 均值能在 86ms 与 161ms 之间飘），最小值才接近「这段代码自己要多少 CPU」。
+    /// e2e 另取中位数（用户实际感到的延迟）与最小值（无 GC 干扰的下限），三个口径一起看才不会被单一数字骗。
+    /// </summary>
+    public static void Playground(string assets, int iters, string[]? only = null)
+    {
+        const float W = 1284f, S = 2f;
+        var names = Directory.EnumerateFiles(assets, "*.html").Select(Path.GetFileNameWithoutExtension)
+            .Where(n => n is { Length: > 0 } && !n!.StartsWith('_') && (only == null || only.Contains(n!)))
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+
+        CultureInfo Ci = CultureInfo.InvariantCulture;
+        Console.WriteLine("PG,sample,px_Mpx,prepare,buildDoc,toBox,measure,position,paint,encode,stage_min_sum,e2e_med,e2e_min,collect,boxes");
+        foreach (var n in names!)
+        {
+            var html = File.ReadAllText(Path.Combine(assets, n + ".html"));
+            var css = File.Exists(Path.Combine(assets, n + ".css")) ? File.ReadAllText(Path.Combine(assets, n + ".css")) : "";
+
+            var first = Renderer.RenderRasterWithBoxes(html, css, W, baseDir: assets, scale: S);   // 预热 + 拿尺寸
+            double mpx = (double)first.PixelWidth * first.PixelHeight / 1_000_000;
+            var best = Enumerable.Repeat(double.MaxValue, 7).ToArray();
+
+            void Stage(int k, ref double since, Stopwatch sw)
+            {
+                double now = sw.Elapsed.TotalMilliseconds;
+                best[k] = Math.Min(best[k], now - since);
+                since = now;
+            }
+
+            for (int i = 0; i < iters; i++)
+            {
+                // 逐阶段复刻 RasterLayout（含 @page 边距口径，编码器与生产同一派发规则）
+                var sw = Stopwatch.StartNew(); double since = 0;
+                using var scope = Prepare(css, assets);
+                var spec = AtPageParser.Parse(css, 595.28f, 841.89f);
+                float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
+                Stage(0, ref since, sw);
+                var computed = StyleResolver.BuildDocument(html, css, null, false, W, domPath: true); Stage(1, ref since, sw);
+                var body = LayoutBuilder.ToBoxTree(computed); Stage(2, ref since, sw);
+                LayoutBuilder.Measure(body, Math.Max(1, W - mL - mR)); Stage(3, ref since, sw);
+                LayoutBuilder.Position(body, mL, mT); Stage(4, ref since, sw);
+                int pw = (int)Math.Round(W * S), ph = Math.Max(100, (int)Math.Ceiling((body.TotalHeight + mT + mB) * S));
+                using var surface = SKSurface.Create(new SKImageInfo(pw, ph));
+                surface.Canvas.Clear(SKColors.White);
+                surface.Canvas.Scale(S);
+                Painter.Paint(surface.Canvas, body, surface); Stage(5, ref since, sw);
+                using var img = surface.Snapshot();
+                EncodeLike(img);       // 与 Renderer.Encode 同一派发：开着快路就走 PngEncoder
+                Stage(6, ref since, sw);
+            }
+            var sp = Time(() => Renderer.RenderRasterWithBoxes(html, css, W, baseDir: assets, scale: S), iters);
+            double pngOnly = Time(() => Renderer.RenderPng(html, css, W, baseDir: assets, scale: S), iters).min;
+            Console.WriteLine("PG," + n + "," + mpx.ToString("0.0", Ci) + "," +
+                string.Join(",", best.Select(v => v.ToString("0.00", Ci))) + "," +
+                best.Sum().ToString("0.00", Ci) + "," + sp.med.ToString("0.0", Ci) + "," + sp.min.ToString("0.0", Ci) + "," +
+                (sp.min - pngOnly).ToString("0.00", Ci) + "," + first.Boxes.Count);
+        }
+    }
+
+    /// <summary>复刻 <c>Renderer</c> 内部的编码派发，让逐阶段拆解量到的是生产真正走的那条路。</summary>
+    static void EncodeLike(SKImage img)
+    {
+        if (Renderer.UseFastPng && PaperSharp.Imaging.PngEncoder.Supports(img))
+        {
+            PaperSharp.Imaging.PngEncoder.Encode(img);
+            return;
+        }
+        using var d = img.Encode(SKEncodedImageFormat.Png, 100);
+        d.ToArray();
+    }
+
+    /// <summary>
+    /// 画布生命周期专项（`dotnet run -c Release -- pgalloc [iters] [样例名…]`）。
+    /// Playground 每次渲染都新建一张 1284×scale 的巨型 SKSurface：分配本身、第一次写入的缺页、
+    /// 以及 Dispose 的开销都记在「编码」段里，看不出是谁在花钱。这里把三者拆开：
+    ///   create   = SKSurface.Create + Dispose（不画任何东西）
+    ///   clear    = 复用同一张画布只做 Clear
+    ///   fresh    = 新建 + Clear（每轮都换新的）
+    ///   reuse    = 复用 + Clear + 画 + 编码，对照 fresh + 同样动作
+    /// 只有 reuse 明显便宜，才值得为画布加缓存池。
+    ///
+    /// 实测结论（本机，2026-09-24）：m1（85MB 画布）create≈0.0ms、fresh-clear 20.9ms == reuse-clear 20.9ms
+    /// ——Clear 就是按内存带宽刷一遍，与画布新旧无关；整条链 reuse 77.4ms vs fresh 106.4ms，
+    /// 省下的 29ms 只占该样例端到端（1.06s）的 2.7%，却要常驻一张 85MB 原生缓冲。
+    /// **据此决定不做画布池**，优化方向回到 buildDoc 与编码本身。
+    /// </summary>
+    public static void CanvasLifecycle(string assets, int iters, string[]? only = null)
+    {
+        const float W = 1284f, S = 2f;
+        CultureInfo Ci = CultureInfo.InvariantCulture;
+        var names = Directory.EnumerateFiles(assets, "*.html").Select(Path.GetFileNameWithoutExtension)
+            .Where(n => n is { Length: > 0 } && !n!.StartsWith('_') && (only == null || only.Contains(n!)))
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        Console.WriteLine("ALC,sample,MB,create,fresh-clear,reuse-clear,reuse-e2e,fresh-e2e");
+        foreach (var n in names!)
+        {
+            var html = File.ReadAllText(Path.Combine(assets, n + ".html"));
+            var css = File.Exists(Path.Combine(assets, n + ".css")) ? File.ReadAllText(Path.Combine(assets, n + ".css")) : "";
+            using var scope = Prepare(css, assets);
+            var spec = AtPageParser.Parse(css, 595.28f, 841.89f);
+            var computed = StyleResolver.BuildDocument(html, css, null, false, W, domPath: true);
+            var body = LayoutBuilder.ToBoxTree(computed);
+            LayoutBuilder.Measure(body, Math.Max(1, W - spec.MarginLeft - spec.MarginRight));
+            LayoutBuilder.Position(body, spec.MarginLeft, spec.MarginTop);
+            int pw = (int)Math.Round(W * S), ph = Math.Max(100, (int)Math.Ceiling((body.TotalHeight + spec.MarginTop + spec.MarginBottom) * S));
+            double mb = (double)pw * ph * 4 / 1e6;
+
+            double create = Time(() => { SKSurface.Create(new SKImageInfo(pw, ph)).Dispose(); }, iters).med;
+            double freshClear = Time(() => { using var s = SKSurface.Create(new SKImageInfo(pw, ph)); s.Canvas.Clear(SKColors.White); }, iters).med;
+            double reuseE2e = 0;
+            {
+                using var keep = SKSurface.Create(new SKImageInfo(pw, ph));
+                keep.Canvas.Clear(SKColors.White);
+                reuseE2e = Time(() =>
+                {
+                    keep.Canvas.Clear(SKColors.White);
+                    keep.Canvas.Save();
+                    keep.Canvas.Scale(S);
+                    Painter.Paint(keep.Canvas, body, keep);
+                    keep.Canvas.Restore();
+                    using var img = keep.Snapshot();
+                    PaperSharp.Imaging.PngEncoder.Encode(img);
+                }, iters).med;
+            }
+            double freshE2e = Time(() =>
+            {
+                using var s = SKSurface.Create(new SKImageInfo(pw, ph));
+                s.Canvas.Clear(SKColors.White);
+                s.Canvas.Scale(S);
+                Painter.Paint(s.Canvas, body, s);
+                using var img = s.Snapshot();
+                PaperSharp.Imaging.PngEncoder.Encode(img);
+            }, iters).med;
+            Console.WriteLine("ALC," + n + "," + mb.ToString("0", Ci) + "," + create.ToString("0.0", Ci) + "," +
+                freshClear.ToString("0.0", Ci) + "," + (freshClear - create).ToString("0.0", Ci) + "," +
+                reuseE2e.ToString("0.0", Ci) + "," + freshE2e.ToString("0.0", Ci));
+        }
     }
 
     static (double min, double med, double mean, double p95, double max) Time(Action a, int iters)

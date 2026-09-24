@@ -2,6 +2,7 @@
 @layout PlaygroundLayout
 @rendermode InteractiveServer
 @implements IAsyncDisposable
+@using System.Diagnostics
 @inject PlaygroundService Svc
 @inject PlaygroundSamples Samples
 @inject IJSRuntime JS
@@ -156,7 +157,7 @@
     @if (_render is { } r)
     {
         <span>@r.PixelWidth × @r.PixelHeight</span>
-        <span>· PNG · @((r.Bytes / 1024.0).ToString("0.#", Inv)) KB · @(r.ElapsedMs.ToString("0", Inv)) ms</span>
+        <span>· PNG · @((r.Bytes / 1024.0).ToString("0.#", Inv)) KB · 引擎 @(r.ElapsedMs.ToString("0", Inv)) ms · 浏览器量测 @(_previewMs.ToString("0", Inv)) ms</span>
         <span>· 排版宽 @(r.ContentWidth.ToString("0", Inv))</span>
     }
     @if (_diff is { } s)
@@ -211,6 +212,13 @@
 
     bool _busy, _dirty;
     int _seq;
+    /// <summary>浏览器那一半（iframe 装载 + settle + 回传矩形）的耗时。跟引擎那一半分开显示，
+    /// 才知道「慢」慢在哪边——两边的优化手段完全不同（一个在层叠/编码，一个在装载与 SignalR）。</summary>
+    double _previewMs;
+    /// <summary>上一次真正渲染过的输入指纹。打字时每个按键都会排一发延迟任务，早先排的那几发
+    /// 会在本轮跑完之后再把同样的内容重渲染一遍；比对指纹就能让空转的触发直接返回。</summary>
+    string _renderedKey = "";
+    string InputKey() => $"{_width}|{_scale}|{_html}|{_css}";
     ViewMode _view = ViewMode.SideBySide;
 
     IJSObjectReference? _module, _scrollLink;
@@ -238,7 +246,9 @@
     async Task OnInputAsync()
     {
         if (!_auto) return;
-        await Task.Delay(450);                    // 打字中途不出图；跑完发现又改了会再补一轮（见 _dirty）
+        await Task.Delay(250);                    // 打字中途不出图；跑完发现又改了会再补一轮（见 _dirty）
+        // 渲染快了以后，「按一个键补一张同样的图」反而更显眼：内容没变就直接回，别白烧一轮。
+        if (InputKey() == _renderedKey) return;
         await RerenderAsync();
     }
 
@@ -282,6 +292,7 @@
     async Task RenderOnceAsync()
     {
         var seq = ++_seq;
+        var key = InputKey();                     // 先固定指纹：渲染期间用户可能又打了字
         _error = "";
         StateHasChanged();
         try
@@ -289,13 +300,16 @@
             var render = await Svc.RenderAsync(_html, _css, _width, _scale, CancellationToken.None);
             if (seq != _seq) return;
             _render = render;
+            _renderedKey = key;
             _diff = null;
             StateHasChanged();                    // 让新的 <img src> 先落到 DOM，浏览器侧再量
 
             if (_module is null) return;
             var srcdoc = PlaygroundService.BuildPreviewDoc(_html, _css,
                 Samples.AssetsDir is { Length: > 0 } ? PlaygroundService.AssetUrlBase : null);
+            var tPrev = Stopwatch.GetTimestamp();
             var got = await _module.InvokeAsync<BrowserMeasurement>("loadPreview", _iframe, srcdoc, render.ContentWidth);
+            _previewMs = Stopwatch.GetElapsedTime(tPrev).TotalMilliseconds;
             if (seq != _seq) return;
             _browserRects = got?.Rects ?? Array.Empty<DomRect>();
             _diff = Svc.Diff(render.Token, _browserRects, _tolerance);

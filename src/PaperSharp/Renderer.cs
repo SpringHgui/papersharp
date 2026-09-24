@@ -66,9 +66,25 @@ public static class Renderer
         using (surface)
         {
             using var image = surface.Snapshot();
-            using var data = image.Encode(format, quality);
-            return data.ToArray();
+            return Encode(image, format, quality);
         }
+    }
+
+    /// <summary>
+    /// PNG 走自研并行编码器（pgenc 实测同尺寸或更小、3–8× 快），其余格式交回 Skia。
+    /// 关掉 <see cref="UseFastPng"/> 即整体退回 <c>SKImage.Encode</c>——两条路解码后像素逐字节相同
+    /// （goldcheck 对 22 个样例逐像素对账过），所以这个开关只影响速度与体积，不影响画面，可随时 A/B。
+    /// 例外：<c>RenderIco</c> 的条目图与 <c>SvgWriter</c> 内嵌的位图仍直接用 Skia——那两处尺寸固定在
+    /// 一两万像素，并行分块收益为零，换实现只会无谓地翻 ICO/SVG 基准。
+    /// </summary>
+    public static bool UseFastPng { get; set; } = true;
+
+    static byte[] Encode(SKImage image, SKEncodedImageFormat format, int quality)
+    {
+        if (UseFastPng && format == SKEncodedImageFormat.Png && Imaging.PngEncoder.Supports(image))
+            return Imaging.PngEncoder.Encode(image);
+        using var data = image.Encode(format, quality);
+        return data.ToArray();
     }
 
     /// <summary>
@@ -90,8 +106,7 @@ public static class Renderer
         {
             using var image = surface.Snapshot();
             (pxW, pxH) = (image.Width, image.Height);
-            using var data = image.Encode(format, quality);
-            bytes = data.ToArray();
+            bytes = Encode(image, format, quality);
         }
         var boxes = new List<BoxRect>();
         CollectBoxes(root, root.BorderX, root.BorderY, boxes);

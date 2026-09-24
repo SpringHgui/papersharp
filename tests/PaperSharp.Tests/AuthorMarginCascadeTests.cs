@@ -30,6 +30,21 @@ public class AuthorMarginCascadeTests
 
     const string Reset = "*{box-sizing:border-box;margin:0;padding:0}";
 
+    /// <summary>
+    /// 八条边一次扫完时，「本规则在某条边上更优」只能让它赢下那一条边，不能把已经由更高特异度
+    /// 规则赢下的边一起覆盖。这个形状是 invoice 实测逼出来的：div[2] 的 margin-top 被低特异度的
+    /// <c>.b</c> 从 10px 顶成 20px，兄弟间坍缩随之少 8px，页面后半整段下移（PDF 栅格 diff 报出）。
+    /// </summary>
+    [Fact]
+    public void EachEdgeIsAdjudicatedSeparately_higherSpecEdgeSurvives()
+    {
+        var (top, bottom, _) = H2Margins(
+            "<h2 class='a b'>x</h2>",
+            $"{Reset} h2.a{{margin-top:10px}} .b{{margin-top:20px;margin-bottom:5px}}");
+        Assert.Equal(10, top);      // h2.a 特异度 (0,1,1) 压过 .b (0,1,0)
+        Assert.Equal(5, bottom);    // margin-bottom 只有 .b 声明，归 .b
+    }
+
     [Fact]
     public void CompoundTagClass_beatsUniversalReset()
     {
@@ -74,5 +89,38 @@ public class AuthorMarginCascadeTests
         // 没写重置时 h2 的内建默认须在；写了 `*{margin:0}` 就必须被压掉（AngleSharp 会反，故有本类）。
         Assert.Equal(20, H2Margins("<h2>x</h2>", "h2{font-size:14px}").Top);
         Assert.Equal(0, H2Margins("<h2>x</h2>", $"{Reset} h2{{font-size:14px}}").Top);
+    }
+
+    /// <summary>量 body 里第一个 ul 的上下 margin（本类只关心 UA 的 <c>ul,ol{margin:1em 0}</c>）。</summary>
+    static (float Top, float Bottom) UlMargins(string html, string css)
+    {
+        var body = LayoutBuilder.ToBoxTree(StyleResolver.BuildDocument(html, css));
+        LayoutBuilder.Measure(body, 600);
+        BlockBox? Find(BlockBox b)
+        {
+            if (b.Style.Tag == "ul") return b;
+            foreach (var k in b.Children)
+                if (Find(k) is BlockBox hit) return hit;
+            return null;
+        }
+        var ul = Find(body) ?? throw new InvalidOperationException("样例里没有 ul");
+        return (ul.Style.MarginTop, ul.Style.MarginBottom);
+    }
+
+    /// <summary>
+    /// margin 的 em 必须按**元素自己的字号**折，不是按渲染设备的 16px：AngleSharp 的 computed
+    /// 拿 <c>margin:1em</c> 折出来的就是设备值（实测 16px），声明值才是原文，所以 ReadStyle 的
+    /// <c>MarginVal</c> 对 margin 一律优先声明值。把这条「简化」成只读 computed 的代价是 m1 实测：
+    /// <c>.note{font-size:10pt}</c> 里那条 ul 少 2.667px，八条列表项累计把整页后半推歪。
+    /// 同理也堵死「按 computed 是否为空来跳过第二轮层叠」——computed 对未声明属性本就返回空串。
+    /// </summary>
+    [Fact]
+    public void UaMarginInEm_usesElementFontSize_notDeviceBase()
+    {
+        var (top, bottom) = UlMargins("<div style='font-size:20px'><ul><li>x</li></ul></div>", "");
+        Assert.Equal(20, top);        // 1em of 20px；按设备基线折会得到 16
+        Assert.Equal(20, bottom);
+        // em 基准跟着继承字号走，不是常量：ul 继承 10px → 1em = 10px
+        Assert.Equal(10, UlMargins("<div style='font-size:20px'><div style='font-size:10px'><ul><li>x</li></ul></div></div>", "").Top);
     }
 }

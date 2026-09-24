@@ -62,4 +62,31 @@ public static class Fixture
         }
         return File.Exists(path) && comparer(actual, File.ReadAllBytes(path));
     }
+
+    /// <summary>
+    /// 把两张 PNG 解码成 RGBA8888（非预乘）后逐字节比对。
+    /// 用于「容器可换、画面不可换」的基准：换 PNG 编码器不该翻基准，改画法才该红。
+    /// 尺寸不同直接判不同。
+    /// </summary>
+    public static bool SamePixels(byte[] actualPng, byte[] goldenPng)
+    {
+        using var a = SkiaSharp.SKImage.FromEncodedData(actualPng);
+        using var g = SkiaSharp.SKImage.FromEncodedData(goldenPng);
+        if (a is null || g is null) return false;
+        if (a.Width != g.Width || a.Height != g.Height) return false;
+        return Rgba(a).AsSpan().SequenceEqual(Rgba(g).AsSpan());
+    }
+
+    static byte[] Rgba(SkiaSharp.SKImage img)
+    {
+        var dst = new byte[img.Width * img.Height * 4];
+        var h = System.Runtime.InteropServices.GCHandle.Alloc(dst, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            var info = new SkiaSharp.SKImageInfo(img.Width, img.Height, SkiaSharp.SKColorType.Rgba8888, SkiaSharp.SKAlphaType.Unpremul);
+            if (!img.ReadPixels(info, h.AddrOfPinnedObject(), img.Width * 4)) throw new InvalidOperationException("解码后取像素失败");
+        }
+        finally { h.Free(); }
+        return dst;
+    }
 }

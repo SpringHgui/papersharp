@@ -777,10 +777,23 @@ public static class StyleResolver
         // 两者都不走继承，声明值即权威：AngleSharp 的 computed/declared 会让内置 UA 的
         // margin-block-start、以及本表给 ul/ol 的 padding-left 穿透作者 `* { margin:0; padding:0 }`
         // 重置（h4 实测返回 1.12em），故先交 AuthorBoxSpacing 按作者源裁决，无声明才退 AngleSharp。
+        // 八条边**一次算完**再按槽位取：AuthorBoxSpacing 每问一条边都要重跑一遍规则桶（桶里每条规则
+        // 做一次 el.Matches 真匹配），逐条问就是把同样的匹配做八遍。pgbuild 实测这是 AngleSharp 层叠
+        // 之外最贵的一项（m1 510 元素 buildDoc 1072ms，其中 computed+declared 两段只占 578ms）。
+        // 伪元素沿用宿主元素的裁决结果——与原先逐条查询时的行为一致，不是新的取舍。
+        string?[]? author8 = flat == null ? ctx.Spacing?.Resolve(element, ctx.ViewportWidth) : null;
+        string? Edge(int i) => author8 is { } a ? a[i] : null;
+        string? AuthorEdge(string prop) => prop switch
+        {
+            "margin-top" => Edge(0), "margin-right" => Edge(1), "margin-bottom" => Edge(2), "margin-left" => Edge(3),
+            "padding-top" => Edge(4), "padding-right" => Edge(5), "padding-bottom" => Edge(6), "padding-left" => Edge(7),
+            _ => null,
+        };
+
         string MarginVal(string prop)
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已算好 used value，缺值即 0，Spec≡Get 无声明可谈
-            if (ctx.Spacing != null && ctx.Spacing.TryGet(element, ctx.ViewportWidth, prop, out var mv)) return mv;
+            if (AuthorEdge(prop) is { Length: > 0 } mv) return mv;
             var sp = Spec(prop);
             return string.IsNullOrWhiteSpace(sp) ? Get(prop) : sp;
         }
@@ -788,7 +801,7 @@ public static class StyleResolver
         string PaddingVal(string prop)
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已折好用值，无声明可谈
-            if (ctx.Spacing != null && ctx.Spacing.TryGet(element, ctx.ViewportWidth, prop, out var pv)) return pv;
+            if (AuthorEdge(prop) is { Length: > 0 } pv) return pv;
             return Size0(prop);
         }
         s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);

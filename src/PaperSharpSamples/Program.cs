@@ -43,9 +43,58 @@ if (args.Length > 1 && args[0] == "html")
     Console.WriteLine($"  → {pdfPath}\n  → {pngPath}");
     return;
 }
+// 换 PNG 编码器前的一次性迁移取证：与已提交基准逐像素对账（跑完即可删除本模式）
+if (args.Length > 0 && args[0] == "goldcheck")
+{
+    // 从 bin 输出向上找到放了 goldens 的测试工程目录（层数随 TFM/配置变化，不写死）
+    var dir = new DirectoryInfo(baseDir);
+    string? goldens = null;
+    while (dir != null)
+    {
+        var cand = Path.Combine(dir.FullName, "tests", "PaperSharp.Tests", "goldens");
+        if (Directory.Exists(cand)) { goldens = cand; break; }
+        dir = dir.Parent;
+    }
+    if (goldens == null) { Console.WriteLine("找不到 tests/PaperSharp.Tests/goldens"); return; }
+    GoldenPixelCheck.Run(assets, goldens);
+    return;
+}
 if (args.Length > 0 && args[0] == "scale")
 {
     Benchmark.ScaleOnly(assets);
+    return;
+}
+// Playground 路径逐阶段拆解：dotnet run -- pgstage [iters] [样例名…]
+// 与页面同口径（宽 1284 / scale 2 / domPath 开）。不给样例名就跑 assets 下全部。
+if (args.Length > 0 && args[0] == "pgstage")
+{
+    int pgIters = args.Length > 1 && int.TryParse(args[1], out var pn) ? pn : 7;
+    string[]? only = args.Length > 2 ? args[2..] : null;
+    Benchmark.Playground(assets, pgIters, only);
+    return;
+}
+// 编码阶段专项对比：dotnet run -- pgenc [iters] [样例名…]
+if (args.Length > 0 && args[0] == "pgenc")
+{
+    int enIters = args.Length > 1 && int.TryParse(args[1], out var en) ? en : 3;
+    string[]? enOnly = args.Length > 2 ? args[2..] : null;
+    EncodeProbe.Run(assets, enIters, enOnly);
+    return;
+}
+// 画布生命周期专项：dotnet run -- pgalloc [iters] [样例名…]
+if (args.Length > 0 && args[0] == "pgalloc")
+{
+    int acIters = args.Length > 1 && int.TryParse(args[1], out var ac) ? ac : 5;
+    string[]? acOnly = args.Length > 2 ? args[2..] : null;
+    Benchmark.CanvasLifecycle(assets, acIters, acOnly);
+    return;
+}
+// buildDoc 内部拆解：dotnet run -- pgbuild [iters] [样例名…]
+if (args.Length > 0 && args[0] == "pgbuild")
+{
+    int blIters = args.Length > 1 && int.TryParse(args[1], out var bl) ? bl : 3;
+    string[]? blOnly = args.Length > 2 ? args[2..] : null;
+    CascadeProbe.Run(assets, blIters, blOnly);
     return;
 }
 // 验证模式：把 SVG 文件栅格化为 PNG（用 Svg.Skia），供肉眼核对 SVG 输出
