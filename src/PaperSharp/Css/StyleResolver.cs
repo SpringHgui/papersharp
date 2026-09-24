@@ -17,7 +17,9 @@ public static class StyleResolver
 {
     // 一份最小 UA 样式表，覆盖 demo 用到的元素默认值。
     // 不加这个的话 <p>、<h1> 全部 margin=0 会糊在一起。
-    const string UaStylesheet = """
+    // 公开：Playground 这类「引擎 vs 浏览器」比对工具要把同一份表注进预览 iframe，
+    // 否则两边 UA 默认值（字体/行高/标题字号）就不是一套，每个文本元素都白报一条高度差。
+    public const string UaStylesheet = """
         html, body { margin: 0; padding: 0; }
         body { font-family: sans-serif; font-size: 16px; color: #000; line-height: 1.4; }
         h1 { font-size: 32px; font-weight: bold; margin: 21px 0; }
@@ -78,14 +80,17 @@ public static class StyleResolver
         public HashSet<string>? PseudoScope;
         // 输入已是浏览器算好的 used value（展平快照）：跳过 GetDeclarations 这第二轮层叠（实测再省 1.4ms/元素）。
         public bool Precomputed;
+        // 是否为每个元素生成 DomPath（见 ComputedStyle.DomPath）。生产渲染恒 false → 零开销；
+        // 只有比对类工具（Playground / 未来的盒级 diff）需要把引擎盒与浏览器矩形对位时才开。
+        public bool DomPath;
         // 展平快照的类名级联索引（见 FlatCascade）。非 null 时 ReadStyle 完全不碰 AngleSharp——
         // 实测 GetComputedStyle 在这类输入上每元素 1.82ms，是快照导出的头号开销（904 元素 WASM 侧 27s）。
         public FlatCascade? Flat;
     }
 
-    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false, float viewportWidth = 1024)
+    public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false, float viewportWidth = 1024, bool domPath = false)
     {
-        var ctx = new DocContext { Precomputed = precomputed };
+        var ctx = new DocContext { Precomputed = precomputed, DomPath = domPath };
         // 支持整份 HTML 内嵌 <style>：内容并入 userCss（参数在前、内嵌在后，符合后定义覆盖的层叠顺序），
         // 标签从原文剥除，避免 CSS 源码被当成可见文本渲染；head 里的也会在此被捞回。
         var embedded = Regex.Matches(htmlBody, @"<style[^>]*>(.*?)</style>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -284,8 +289,23 @@ public static class StyleResolver
         return null;
     }
 
+    /// <summary>
+    /// HTML 表现属性（img 的 width/height）→ 尺寸值。单位是 CSS px（布局单位），
+    /// 允许 <c>50%</c>；非法/缺省一律回退 auto，让上层按固有尺寸走。
+    /// </summary>
+    static CssSize PresentationalSize(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return CssSize.Auto;
+        raw = raw.Trim();
+        if (raw.EndsWith("%", StringComparison.Ordinal)
+            && float.TryParse(raw[..^1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pct))
+            return CssSize.Pct(pct);
+        return float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var px) && px >= 0
+            ? CssSize.Abs(px) : CssSize.Auto;
+    }
+
     static ComputedStyle Walk(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx,
-                              FlatCascade.Scope? fparent = null)
+                              FlatCascade.Scope? fparent = null, int nthOfType = 1)
     {
         var fs = ctx.Flat?.For(element, fparent);
         // 索引覆盖不了这个元素（如两个类规则同时命中）：整份退回 AngleSharp 继续，不在半路混用两套继承链。
@@ -293,9 +313,21 @@ public static class StyleResolver
         var cs = ReadStyle(window, element, parent, ctx, flat: fs);
         cs.Tag = element.TagName.ToLowerInvariant();
 
+        // DOM 身份串（body/div[1]/p[2]）：兄弟序按 CSS nth-of-type 的口径数——连 script/style/br 这些
+        // 不成盒的兄弟也占号，浏览器侧才能用同一条规则数出同一个下标。默认关，见 DocContext.DomPath。
+        if (ctx.DomPath)
+            cs.DomPath = (parent?.DomPath is { Length: > 0 } pp ? pp + "/" + cs.Tag : cs.Tag) + "[" + nthOfType + "]";
+
         // 替换元素：读取 <img> 的 src
         if (cs.Tag == "img")
+        {
             cs.ImageSrc = element.GetAttribute("src");
+            // HTML 的 width/height 属性是 presentational hint：参与布局，但优先级低于任何作者 CSS 声明
+            // （浏览器把它当特异度 0 的作者规则）。故只在 CSS 侧仍是 auto 时兜底填上，
+            // 反过来覆盖就会把 `img { width: 100% }` 这类规则吃掉。
+            if (cs.Width.IsAuto) cs.Width = PresentationalSize(element.GetAttribute("width"));
+            if (cs.Height.IsAuto) cs.Height = PresentationalSize(element.GetAttribute("height"));
+        }
 
         // <a> 的 href：供 PDF 链接注释
         if (cs.Tag == "a")
@@ -335,6 +367,8 @@ public static class StyleResolver
         // 按 DOM 顺序遍历子节点：文本→InlinePiece(文本)；元素→递归 + Children + InlinePiece(子/br)。
         // 同时聚合直接文本到 TextContent（块路径用），并保留有序片段（inline 路径用）。
         string allText = "";
+        // 同标签兄弟计数器（仅开 DomPath 时建）：占号发生在任何 continue 之前，口径才等于 nth-of-type。
+        Dictionary<string, int>? tagSeq = ctx.DomPath ? new(StringComparer.OrdinalIgnoreCase) : null;
         foreach (var node in element.ChildNodes)
         {
             if (node.NodeType == NodeType.Text)
@@ -345,6 +379,12 @@ public static class StyleResolver
             }
             else if (node is IElement ce)
             {
+                int seq = 1;
+                if (tagSeq != null)
+                {
+                    tagSeq.TryGetValue(ce.TagName, out seq);
+                    tagSeq[ce.TagName] = ++seq;
+                }
                 if (NonRenderingTags.Contains(ce.TagName)) continue;
                 if (ce.TagName.Equals("BR", StringComparison.OrdinalIgnoreCase))
                 {
@@ -352,7 +392,7 @@ public static class StyleResolver
                     cs.InlinePieces.Add(InlinePiece.Break);
                     continue;
                 }
-                var childStyle = Walk(window, ce, cs, ctx, fs);
+                var childStyle = Walk(window, ce, cs, ctx, fs, seq);
                 cs.Children.Add(childStyle);
                 cs.InlinePieces.Add(InlinePiece.OfChild(childStyle));
             }

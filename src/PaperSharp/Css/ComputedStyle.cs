@@ -12,6 +12,12 @@ public sealed class ComputedStyle
     public string Tag = "";
     public ComputedStyle? Parent;
     public List<ComputedStyle> Children = new();
+    /// <summary>
+    /// 该样式对应元素的 DOM 身份，形如 <c>body/div[1]/p[2]</c>（tag + 同标签兄弟序，含被跳过的兄弟）。
+    /// 仅供比对类工具把引擎盒与浏览器 <c>getBoundingClientRect()</c> 对上位；
+    /// 默认 null（零开销，见 StyleResolver.BuildDocument 的 domPath 开关），匿名盒恒为 null。
+    /// </summary>
+    public string? DomPath;
     /// <summary>该元素直接文本子节点拼起来（不含后代元素的文本）。</summary>
     public string? TextContent;
     /// <summary>&lt;img&gt; 的 src（文件路径 / data URI / URL）。</summary>
@@ -45,8 +51,17 @@ public sealed class ComputedStyle
     /// <summary>文档级元数据（&lt;title&gt;/&lt;meta&gt;），仅挂在 BuildDocument 返回的根节点上。</summary>
     public DocumentInfo? Document;
 
-    /// <summary>浅拷贝一份样式（供匿名 flex/grid 子项包装用）；调用方自行重置 Children/InlinePieces。</summary>
-    public ComputedStyle CloneShallow() => (ComputedStyle)MemberwiseClone();
+    /// <summary>
+    /// 浅拷贝一份样式（供匿名 flex/grid 子项包装、伪元素生成盒用）；调用方自行重置 Children/InlinePieces。
+    /// DomPath 一并清零：克隆出来的一律是匿名盒，不对应任何真实 DOM 元素，
+    /// 留着会让盒级比对里同一个身份出现两次（后写覆盖，Δ 表就废了）。
+    /// </summary>
+    public ComputedStyle CloneShallow()
+    {
+        var c = (ComputedStyle)MemberwiseClone();
+        c.DomPath = null;
+        return c;
+    }
 
     /// <summary>display 是否行内级（inline / inline-block）。</summary>
     public static bool IsInlineLevel(string display) => display is "inline" or "inline-block" or "inline-flex" or "inline-grid";
