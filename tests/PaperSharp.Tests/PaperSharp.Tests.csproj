@@ -22,6 +22,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PaperSharp\PaperSharp.csproj" />
+    <!-- Playground 的对位口径（PlaygroundDiff / BuildPreviewDoc）住在应用侧，
+         但它决定了 Δ 表把偏差记到谁头上，必须钉住，不能只靠肉眼开浏览器看。 -->
+    <ProjectReference Include="..\..\src\PaperSharpBlazorApp\PaperSharpBlazorApp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

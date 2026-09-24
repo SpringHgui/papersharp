@@ -1,0 +1,359 @@
+@page "/playground"
+@layout PlaygroundLayout
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject PlaygroundService Svc
+@inject PlaygroundSamples Samples
+@inject IJSRuntime JS
+
+@*
+    左输入、右两窗（PaperSharp 出图 / 浏览器 iframe），三种看法：
+      并排     —— 两个窗格同宽、同 scrollTop，肉眼找不同
+      叠加     —— 引擎图按透明度压在 iframe 上，重影即偏差
+      盒级差异 —— 两侧逐元素矩形描边 + Δ 表，直接指出「哪个元素偏了几 px」
+    对位靠 ComputedStyle.DomPath（见核心库）：两侧同一条 nth-of-type 口径数出来的串。
+*@
+
+<div class="bar">
+    <span class="brand">PaperSharp <b>Playground</b></span>
+
+    <select class="ctl" @onchange="OnSampleChangedAsync">
+        <option value="">载入样例…</option>
+        @foreach (var name in Samples.Names)
+        {
+            <option value="@name">@name</option>
+        }
+    </select>
+
+    <label class="ctl">宽
+        <input type="number" min="240" max="4096" step="1" @bind="_width" @bind:after="RerenderAsync" />
+    </label>
+    <label class="ctl">倍率
+        <select class="ctl" @bind="_scale" @bind:after="RerenderAsync">
+            @foreach (var choice in ScaleChoices)
+            {
+                <option value="@(choice.ToString("0.#", Inv))">@(choice.ToString("0.#", Inv))×</option>
+            }
+        </select>
+    </label>
+
+    <div class="seg">
+        <button type="button" class="@Seg(ViewMode.SideBySide)" @onclick="() => _view = ViewMode.SideBySide">并排</button>
+        <button type="button" class="@Seg(ViewMode.Overlay)" @onclick="() => _view = ViewMode.Overlay">叠加</button>
+        <button type="button" class="@Seg(ViewMode.Diff)" @onclick="() => _view = ViewMode.Diff">盒级差异</button>
+    </div>
+
+    @if (_view != ViewMode.SideBySide)
+    {
+        <label class="ctl">引擎不透明度
+            <input type="range" min="0" max="100" step="1" @bind="_opacityPercent" @bind:event="oninput" />
+            <b>@_opacityPercent%</b>
+        </label>
+    }
+    @if (_view == ViewMode.Diff)
+    {
+        <label class="ctl">容差
+            <input type="number" class="narrow" min="0" max="20" step="0.1" @bind="_toleranceText" @bind:event="oninput" @bind:after="ReDiffAsync" /> px
+        </label>
+    }
+
+    <label class="ctl check"><input type="checkbox" @bind="_auto" />自动</label>
+    <button type="button" class="run" @onclick="RerenderAsync" disabled="@_busy">@(_busy ? "渲染中…" : "Run")</button>
+</div>
+
+<div class="split" data-mode="@ModeAttr">
+    <section class="editor">
+        <div class="label">HTML <span class="hint">样式直接写进 &lt;style&gt;，走的是引擎同一份解析</span></div>
+        <textarea class="code grow" spellcheck="false" @bind="_html" @bind:event="oninput" @bind:after="OnInputAsync"></textarea>
+        <details class="extra" open="@(_css.Trim().Length > 0)">
+            <summary>附加 CSS <span class="hint">作为 css 参数传入，优先级低于文档内 &lt;style&gt;</span></summary>
+            <textarea class="code" rows="6" spellcheck="false" @bind="_css" @bind:event="oninput" @bind:after="OnInputAsync"></textarea>
+        </details>
+    </section>
+
+    <section class="stage">
+        @if (_error.Length > 0)
+        {
+            <div class="err"><b>渲染失败</b><span>@_error</span></div>
+        }
+        <div class="compare" data-mode="@ModeAttr">
+            <div class="pane pane-browser" @ref="_browserPane">
+                <div class="pane-tag">BROWSER</div>
+                <iframe @ref="_iframe" title="浏览器渲染"></iframe>
+            </div>
+            <div class="pane pane-engine" @ref="_enginePane">
+                <div class="pane-tag">PAPERSHARP</div>
+                @if (_render is { } shot)
+                {
+                    <img class="shot" src="@($"/api/playground/image/{shot.Token}")" style="@ShotStyle(shot)" alt="PaperSharp 渲染结果" />
+                }
+            </div>
+            @if (_view == ViewMode.Diff && _diff is { } marks)
+            {
+                <div class="diff-boxes">
+                    @foreach (var row in marks.Rows)
+                    {
+                        @if (row.Engine is { } e)
+                        {
+                            <span class="diff-box diff-box-engine" style="@MarkStyle(e)"></span>
+                        }
+                        @if (row.Browser is { } b)
+                        {
+                            <span class="diff-box diff-box-browser" style="@MarkStyle(b)"></span>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
+    @if (_view == ViewMode.Diff)
+    {
+        <aside class="report">
+            <div class="label">差异明细 <span class="hint">红虚线=引擎 · 绿实线=浏览器；只列超容差的，按最坏分量倒序</span></div>
+            <table>
+                <thead>
+                    <tr><th>元素</th><th class="r">Δx</th><th class="r">Δy</th><th class="r">Δw</th><th class="r">Δh</th></tr>
+                </thead>
+                <tbody>
+                    @if (_diff is { } d)
+                    {
+                        @foreach (var row in d.Rows)
+                        {
+                            <tr class="@RowClass(row)">
+                                <td title="@row.DomPath">
+                                    <span class="kind">@KindCode(row)</span>
+                                    <b>@row.Tag</b>
+                                    <span class="path">@Leaf(row.DomPath)</span>
+                                </td>
+                                <td class="r">@Signed(row.Dx)</td>
+                                <td class="r">@Signed(row.Dy)</td>
+                                <td class="r">@Signed(row.Dw)</td>
+                                <td class="r">@Signed(row.Dh)</td>
+                            </tr>
+                        }
+                        @if (d.Rows.Count == 0)
+                        {
+                            @* 零差异也得把面板留着：否则「完全一致」看起来跟「这功能坏了」一模一样 *@
+                            <tr><td class="none" colspan="5">@d.Summary.Total 个盒全部落在 @d.Summary.TolerancePx.ToString("0.##", Inv)px 容差内</td></tr>
+                        }
+                        else if (d.Rows.Count >= PlaygroundDiff.MaxReturnedRows)
+                        {
+                            <tr><td class="none" colspan="5">仅列出最坏 @PlaygroundDiff.MaxReturnedRows 条，底部汇总计数是全量的。</td></tr>
+                        }
+                    }
+                    else
+                    {
+                        <tr><td class="none" colspan="5">@(string.IsNullOrEmpty(_error) ? "等待浏览器侧回传矩形…" : "渲染失败，无矩形可比")</td></tr>
+                    }
+                </tbody>
+            </table>
+        </aside>
+    }
+</div>
+
+<footer class="status">
+    @if (_render is { } r)
+    {
+        <span>@r.PixelWidth × @r.PixelHeight</span>
+        <span>· PNG · @((r.Bytes / 1024.0).ToString("0.#", Inv)) KB · @(r.ElapsedMs.ToString("0", Inv)) ms</span>
+        <span>· 排版宽 @(r.ContentWidth.ToString("0", Inv))</span>
+    }
+    @if (_diff is { } s)
+    {
+        <span class="sep">|</span>
+        <span>盒 @s.Summary.Total</span>
+        <span class="@Badge(s.Summary)">漂移 @s.Summary.Drift</span>
+        <span>引擎独有 @s.Summary.EngineOnly · 浏览器独有 @s.Summary.BrowserOnly</span>
+        <span>最坏 @(s.Summary.WorstDelta.ToString("0.0", Inv))px · 漂移均值 @(s.Summary.MeanDriftPx.ToString("0.0", Inv))px</span>
+    }
+    <span class="grow"></span>
+    <span class="hint">iframe 已注入与引擎同一份 UA 表并藏滚动条，两侧排版宽严格相等</span>
+</footer>
+
+@code {
+    enum ViewMode { SideBySide, Overlay, Diff }
+
+    const string DefaultHtml = """
+        <div class="wrap">
+          <div class="row"><i class="dot a"></i><i class="dot b"></i><i class="dot c"></i></div>
+          <h1>Edit the code.</h1>
+          <h1 class="accent">Press Run.</h1>
+          <p>左边改 HTML，上窗是 PaperSharp 直出的图，下窗是浏览器实际渲染。切到「盒级差异」，看哪个元素偏了几像素。</p>
+        </div>
+        <style>
+          .wrap { padding: 40px; background: #16130f; color: #fdfaf4; font-family: sans-serif }
+          .row  { display: flex; gap: 12px; margin-bottom: 24px }
+          .dot  { width: 40px; height: 14px; border-radius: 999px }
+          .a { background: #ff4d4d } .b { background: #fbbf24 } .c { background: #2ee6a8 }
+          h1  { font-size: 64px; margin: 0; line-height: 1.1; letter-spacing: -2px }
+          .accent { color: #ff4d4d }
+          p   { font-size: 18px; color: #a8a29a; line-height: 1.6; margin-top: 20px }
+        </style>
+        """;
+
+    static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+    static readonly float[] ScaleChoices = [1f, 2f, 3f];
+
+    string _html = DefaultHtml;
+    string _css = "";
+    float _width = 1284;
+    float _scale = 2f;
+    float _tolerance = 0.5f;
+    string _toleranceText = "0.5";
+    int _opacityPercent = 55;
+    bool _auto = true;
+
+    PlaygroundRender? _render;
+    DiffResult? _diff;
+    IReadOnlyList<DomRect> _browserRects = Array.Empty<DomRect>();
+    string _error = "";
+
+    bool _busy, _dirty;
+    int _seq;
+    ViewMode _view = ViewMode.SideBySide;
+
+    IJSObjectReference? _module, _scrollLink;
+    ElementReference _iframe, _enginePane, _browserPane;
+
+    string ModeAttr => _view switch
+    {
+        ViewMode.Overlay => "overlay",
+        ViewMode.Diff => "diff",
+        _ => "side",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./playground.js");
+        // 两个窗格绝对同步滚动：同一个 scrollTop 才叫「同一块内容」；按比例同步会在两边高度不同时
+        // 把不同区域摆到一起，而高度差本身就是这里要看的东西。
+        _scrollLink = await _module.InvokeAsync<IJSObjectReference>("linkScroll", _enginePane, _browserPane);
+        await RerenderAsync();
+    }
+
+    string Seg(ViewMode v) => _view == v ? "on" : "";
+
+    async Task OnInputAsync()
+    {
+        if (!_auto) return;
+        await Task.Delay(450);                    // 打字中途不出图；跑完发现又改了会再补一轮（见 _dirty）
+        await RerenderAsync();
+    }
+
+    async Task OnSampleChangedAsync(ChangeEventArgs e)
+    {
+        if (e.Value?.ToString() is not { Length: > 0 } name) return;
+        if (Samples.Read(name) is not (var html, var css)) return;
+        _html = html;
+        _css = css;
+        await RerenderAsync();
+    }
+
+    /// <summary>容差只改判定、不改布局——拿已缓存的浏览器矩形重算一遍即可，别白渲染一次。</summary>
+    Task ReDiffAsync()
+    {
+        if (float.TryParse(_toleranceText, System.Globalization.NumberStyles.Float, Inv, out var t)) _tolerance = Math.Max(0f, t);
+        if (_render is { } r && _browserRects.Count > 0) _diff = Svc.Diff(r.Token, _browserRects, _tolerance);
+        return Task.CompletedTask;
+    }
+
+    async Task RerenderAsync()
+    {
+        if (_busy) { _dirty = true; return; }     // 渲染是 CPU 密集且不可中途取消，排队跑完再补一轮，别堆线程
+        _busy = true;
+        try
+        {
+            do
+            {
+                _dirty = false;
+                await RenderOnceAsync();
+            }
+            while (_dirty);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task RenderOnceAsync()
+    {
+        var seq = ++_seq;
+        _error = "";
+        StateHasChanged();
+        try
+        {
+            var render = await Svc.RenderAsync(_html, _css, _width, _scale, CancellationToken.None);
+            if (seq != _seq) return;
+            _render = render;
+            _diff = null;
+            StateHasChanged();                    // 让新的 <img src> 先落到 DOM，浏览器侧再量
+
+            if (_module is null) return;
+            var srcdoc = PlaygroundService.BuildPreviewDoc(_html, _css,
+                Samples.AssetsDir is { Length: > 0 } ? PlaygroundService.AssetUrlBase : null);
+            var got = await _module.InvokeAsync<BrowserMeasurement>("loadPreview", _iframe, srcdoc, render.ContentWidth);
+            if (seq != _seq) return;
+            _browserRects = got?.Rects ?? Array.Empty<DomRect>();
+            _diff = Svc.Diff(render.Token, _browserRects, _tolerance);
+        }
+        catch (Exception ex)
+        {
+            if (seq == _seq) _error = ex.Message; // 保留上一张好图，只把错误叠在旁边
+        }
+    }
+
+    string ShotStyle(PlaygroundRender r) =>
+        $"width:{Px(r.CssWidth)};left:{Px(-r.BodyX)};top:{Px(-r.BodyY)};" +
+        (_view == ViewMode.SideBySide ? "" : $"opacity:{(_opacityPercent / 100.0).ToString("0.##", Inv)};");
+
+    static string MarkStyle(DomRect r) => $"left:{Px(r.X)};top:{Px(r.Y)};width:{Px(r.W)};height:{Px(r.H)}";
+
+    static string KindCode(DiffRow r) => r.Kind switch
+    {
+        DiffKind.EngineOnly => "仅引擎",
+        DiffKind.BrowserOnly => "仅浏览器",
+        _ => "Δ",
+    };
+
+    static string RowClass(DiffRow r) => r.Kind switch
+    {
+        DiffKind.EngineOnly or DiffKind.BrowserOnly => "orphan",
+        _ when r.MaxDelta >= 4 => "bad",
+        _ when r.MaxDelta >= 1 => "mid",
+        _ => "mild",
+    };
+
+    static string Signed(float v) => (v >= 0 ? "+" : "") + v.ToString("0.0", Inv);
+
+    /// <summary>body/div[1]/p[2] → div[1]/p[2]：表格里 body 前缀纯属噪音，title 上留全串。</summary>
+    static string Leaf(string domPath)
+    {
+        var i = domPath.IndexOf('/');
+        return i < 0 ? domPath : domPath[(i + 1)..];
+    }
+
+    static string Badge(DiffSummary s) => s.Drift + s.EngineOnly + s.BrowserOnly > 0 ? "warn" : "ok";
+
+    static string Px(float v) => v.ToString("0.##", Inv) + "px";
+
+    /// <summary>JS loadPreview 的返回壳子。</summary>
+    sealed class BrowserMeasurement
+    {
+        public DomRect[] Rects { get; set; } = Array.Empty<DomRect>();
+        public float Height { get; set; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_scrollLink is not null) await _scrollLink.InvokeVoidAsync("dispose");
+        }
+        catch { /* 电路已断，监听随页面一起回收 */ }
+        if (_module is not null) await _module.DisposeAsync();
+    }
+}

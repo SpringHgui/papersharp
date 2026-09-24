@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PaperSharp\PaperSharp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Playground 的样例下拉直接吃 Samples 的验收资产（与单测同一份来源），
+         同时当渲染的 baseDir，样例里 <img src="imgs/logo.png"> 这类相对路径才解析得开。
+         落 bin 不落 wwwroot：那是公开静态目录，样例是开发期资产。 -->
+    <Content Include="..\PaperSharpSamples\assets\**\*" LinkBase="assets" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

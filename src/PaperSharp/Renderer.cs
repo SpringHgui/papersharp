@@ -111,7 +111,12 @@ public static class Renderer
     /// <summary>深度优先收集有 DOM 身份（非匿名）的盒；坐标归一到 body 边框盒原点。</summary>
     static void CollectBoxes(BlockBox box, float originX, float originY, List<BoxRect> into)
     {
-        if (box.Style.DomPath is { Length: > 0 } domPath)
+        // 表格行组（thead/tbody/tfoot）在引擎里是透传容器：表格算法直接摆 tr 与单元格，
+        // 行组盒自己从不被定位，几何恒为 0。把它当真实盒送去比对，就会报出
+        // 「浏览器 1235 宽 vs 引擎 0 宽」这种最吓人的假偏差——比对口径错了，数值再准也没用。
+        // 不 emit 但继续递归：里面的 tr/td 是有真实几何的。
+        bool passThrough = box.Style.Display is "table-row-group" or "table-header-group" or "table-footer-group";
+        if (!passThrough && box.Style.DomPath is { Length: > 0 } domPath)
             into.Add(new BoxRect(domPath, box.Style.Tag,
                 box.BorderX - originX, box.BorderY - originY,
                 box.TotalWidth - box.Style.MarginLeft - box.Style.MarginRight,
