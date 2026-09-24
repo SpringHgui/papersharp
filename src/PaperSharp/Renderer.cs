@@ -71,11 +71,14 @@ public static class Renderer
     }
 
     /// <summary>
-    /// PNG 走自研并行编码器（pgenc 实测同尺寸或更小、3–8× 快），其余格式交回 Skia。
+    /// PNG 走自研并行编码器（pgenc 实测同尺寸或更小；提速随像素量增长，m1 这类 20Mpx 级 20× 上下、
+    /// 22 样例语料合计 19×，见 PERF_REPORT §6.7），其余格式交回 Skia。
     /// 关掉 <see cref="UseFastPng"/> 即整体退回 <c>SKImage.Encode</c>——两条路解码后像素逐字节相同
     /// （goldcheck 对 22 个样例逐像素对账过），所以这个开关只影响速度与体积，不影响画面，可随时 A/B。
     /// 例外：<c>RenderIco</c> 的条目图与 <c>SvgWriter</c> 内嵌的位图仍直接用 Skia——那两处尺寸固定在
     /// 一两万像素，并行分块收益为零，换实现只会无谓地翻 ICO/SVG 基准。
+    /// WASM 宿主（<c>PaperSharp.Wasm.Api</c> 静态构造）会把它设为 false：收益本体是并行，
+    /// 单线程 + Mono 解释器下逐字节托管滤波反而比 Skia 的 native zlib 慢 1.3–1.5×（PERF_REPORT §6.8）。
     /// </summary>
     public static bool UseFastPng { get; set; } = true;
 
@@ -145,8 +148,11 @@ public static class Renderer
 
     /// <summary>
     /// 给「引擎按行内片段排版、因而没有盒」的元素补出矩形。
-    /// 落位完全复用 <see cref="TextPainter.DrawInlineLines"/> 那一套（行盒左端 + 片段 X + 基线 − 字号），
-    /// 也就是引擎自己画 inline 背景用的几何——不是另造一套口径。
+    /// 落位复用 <see cref="TextPainter.DrawInlineLines"/> 那一套（行盒左端 + 片段 X + 基线），
+    /// 但矩形取**片段自己的文字盒**（InlineFrag.Ascent+Descent）而非整行行高盒：CSS 里 line-height
+    /// 只撑行盒、不改行内元素自身的盒，此前按 字号×行高 报会让每个 span/a/code 虚高 4~6px
+    /// （inline / m1 的 code / m5 / m9 / pricing-* 的 dy+dh 系统性偏差都来自这一处）。
+    /// 残差仍在：引擎文字盒取 1em+0.22em，Chrome 取字体表的 1.068em（16px 雅黑 17.09），口径差 ~2.4px。
     /// 一个行内元素跨多行时取所有片段的并集，与浏览器 getBoundingClientRect() 的语义一致；
     /// 嵌套行内（b 包 i）时片段矩形同时并给每一级祖先，因为 CSS 里 b 的盒本就包含 i 的内容。
     /// 已经有盒的身份一律跳过，绝不覆盖盒级结果。
@@ -179,8 +185,16 @@ public static class Renderer
         {
             float lineLeft = contentX + ln.Left, baseline = y + ln.Baseline;
             foreach (var f in ln.Frags)
-                if (f.Text != null)
-                    Add(f.Style, lineLeft + f.X, baseline - f.FontSize, f.Width, f.FontSize * Math.Max(1f, f.Style.LineHeightFactor));
+            {
+                if (f.Text == null) continue;
+                // 行内盒报的是**字体内容区**（基线上方的 ascent + 下方的 descent），不是 字号×行高：
+                // CSS 里 line-height 只撑行盒、不改 <span>/<a>/<code> 自己的盒，Chrome 的
+                // getBoundingClientRect() 量的正是内容区。按行高报会让每个行内盒虚高 ~4px、
+                // 顶边上移 ~3px（inline / m1 的 code / m5 / m9 / pricing-* 同型偏差都来自这一处）。
+                // Ascent/Descent 是 InlineLayout 按**实际字面**取的真实字体度量，与行盒同一口径；
+                // Width 已含该元素自己的横向 padding+border（Chrome 的行内盒矩形含 padding）。
+                Add(f.Style, lineLeft + f.X, baseline - f.Ascent, f.Width, f.Ascent + f.Descent);
+            }
             y += ln.Height;
         }
         foreach (var (path, u) in union)

@@ -43,6 +43,9 @@ public sealed class BlockBox
     public float[]? TColW;
     public float[]? TRowH;
     public float TSpacing;
+    public float TSpacingY;               // separate 时纵向间距：border-spacing 允许「横 纵」两值
+    /// <summary>collapse 表的外圈网格线被单元格边框骑跨：格区相对表格内容框四边各内缩半个最宽共享边框。</summary>
+    public float TInsetL, TInsetR, TInsetT, TInsetB;
     public int TNumCols;
     public BlockBox? TCaption;          // table-caption 子盒（若有）
     public bool TCaptionBottom;         // caption-side: bottom

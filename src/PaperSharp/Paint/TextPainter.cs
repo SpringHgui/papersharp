@@ -66,7 +66,8 @@ public static class TextPainter
             Style = SKPaintStyle.Fill,
         };
         if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
-        DrawSpaced(canvas, f.Text!, x, baseline, paint, s.LetterSpacing);
+        // x/f.Width 已是 padding box；文字要让开元素自己的左 padding（背景与装饰照旧铺满整盒）
+        DrawSpaced(canvas, f.Text!, x + f.PadLeft, baseline, paint, s.LetterSpacing);
         DrawDecoration(canvas, s, x, baseline, f.Width, color);
     }
     /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。lefts 为每行左缩进（环绕浮动），可 null。

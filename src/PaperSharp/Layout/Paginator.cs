@@ -344,7 +344,7 @@ public static class Paginator
             }
 
             var s = table.Style;
-            float spacing = table.TSpacing;
+            float spacing = table.TSpacingY;   // 续表按行切，行缝是纵向间距
             int numRows = table.TRows.Count;
             var headerRows = table.THeaderRows;
             var footerRows = table.TFooterRows;

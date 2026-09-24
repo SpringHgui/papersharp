@@ -59,9 +59,13 @@ if (args.Length > 0 && args[0] == "goldcheck")
     GoldenPixelCheck.Run(assets, goldens);
     return;
 }
+// 布局/层叠规模扫描：dotnet run -- scale [行数…]（默认 100 200 400 800）
+// 给大行数（如 2000）才能看 buildDoc 的复杂度；改前那一档单跑就要十几分钟。
 if (args.Length > 0 && args[0] == "scale")
 {
-    Benchmark.ScaleOnly(assets);
+    int[]? scaleRows = args.Length > 1 && args[1..].All(a => int.TryParse(a, out _))
+        ? args[1..].Select(int.Parse).ToArray() : null;
+    Benchmark.ScaleOnly(assets, scaleRows);
     return;
 }
 // Playground 路径逐阶段拆解：dotnet run -- pgstage [iters] [样例名…]
@@ -95,6 +99,15 @@ if (args.Length > 0 && args[0] == "pgbuild")
     int blIters = args.Length > 1 && int.TryParse(args[1], out var bl) ? bl : 3;
     string[]? blOnly = args.Length > 2 ? args[2..] : null;
     CascadeProbe.Run(assets, blIters, blOnly);
+    return;
+}
+// 层叠超线性来源 + 按元素缓存版的对账门：dotnet run -- pgstyle [N…]
+if (args.Length > 0 && args[0] == "pgstyle")
+{
+    int[] sizes = args.Length > 1
+        ? args[1..].Select(int.Parse).ToArray()
+        : new[] { 250, 500, 1000, 2000 };
+    CascadeProbe.Style(assets, sizes);
     return;
 }
 // 验证模式：把 SVG 文件栅格化为 PNG（用 Svg.Skia），供肉眼核对 SVG 输出
@@ -148,6 +161,10 @@ if (args.Length > 1 && args[0] == "boxes")
 {
     var name = args[1];
     float boxW = args.Length > 2 && float.TryParse(args[2], out var bw) ? bw : 1284;
+    // 与 PlaygroundSamples 同口径：进程级字体目录必须在这条路先注册，否则引擎解析出的字形与浏览器
+    // 渲染的不是同一张 face，量出来的盒差全是字体度量的假差（m9 的 1.4875 行高比就是这么来的）。
+    var fontsDir = Path.Combine(assets, "fonts");
+    if (Directory.Exists(fontsDir)) PaperSharp.Layout.FontManager.RegisterFontDirectory(fontsDir);
     var html = File.ReadAllText(Path.Combine(assets, name + ".html"));
     var css = File.Exists(Path.Combine(assets, name + ".css")) ? File.ReadAllText(Path.Combine(assets, name + ".css")) : "";
 

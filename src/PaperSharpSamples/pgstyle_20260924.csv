@@ -1,0 +1,34 @@
+# 原始输出：dotnet run -c Release -- pgstyle 1000 2000（2026-09-24）
+# 列：STY,kind,n,els,phase,ms,us_per_el；A/B/C/D/F/G 各档含义见 PERF_REPORT §5.5 的探针表。
+STY,kind,n,els,phase,ms,us_per_el
+STY,flexlist,1000,3007,A now-per-element,1485.49,494.01
+STY,flexlist,1000,3007,B hoisted,1325.95,440.95
+STY,flexlist,1000,3007,F eager-collected,150.04,49.90
+STY,flexlist,1000,3007,G eager-cascaded-only,22.40,7.45
+STY,flexlist,1000,3007,C collection-only,0.00,0.00
+STY,flexlist,1000,3007,D rules-inflated,1539.18,511.86
+STY,flexlist,1000,3007,D-ratio-x1.1,// 规则 7→207 条后的耗时比（同元素数）
+STY,flexlist,2000,6007,A now-per-element,5409.10,900.47
+STY,flexlist,2000,6007,B hoisted,5691.53,947.48
+STY,flexlist,2000,6007,F eager-collected,281.96,46.94
+STY,flexlist,2000,6007,G eager-cascaded-only,54.40,9.06
+STY,flexlist,2000,6007,C collection-only,0.00,0.00
+STY,table,1000,5014,A now-per-element,5752.81,1147.35
+STY,table,1000,5014,B hoisted,5917.00,1180.10
+STY,table,1000,5014,F eager-collected,333.42,66.50
+STY,table,1000,5014,G eager-cascaded-only,49.92,9.96
+STY,table,1000,5014,C collection-only,0.00,0.00
+STY,table,1000,5014,D rules-inflated,5394.58,1075.90
+STY,table,1000,5014,D-ratio-x1.1,// 规则 7→207 条后的耗时比（同元素数）
+STY,table,2000,10014,A now-per-element,25912.51,2587.63
+STY,table,2000,10014,B hoisted,25460.31,2542.47
+STY,table,2000,10014,F eager-collected,1035.88,103.44
+STY,table,2000,10014,G eager-cascaded-only,129.11,12.89
+STY,table,2000,10014,C collection-only,0.00,0.00
+STY,check,-,-,E match-check,0,// 57,058 次逐属性比对中不一致的条数（必须为 0）
+# 以下为同日 `pgstyle 250 500 1000` 那一轮的 250 档（大档一次就要 20+ s，故分开跑）
+STY,flexlist,250,757,A now-per-element,137.21,181.26
+STY,flexlist,250,757,B hoisted,116.63,154.07
+STY,flexlist,250,757,F eager-collected,36.49,48.21
+STY,flexlist,250,757,G eager-cascaded-only,6.26,8.26
+STY,flexlist,250,757,C collection-only,0.00,0.00

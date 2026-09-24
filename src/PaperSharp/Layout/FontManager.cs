@@ -159,8 +159,57 @@ public static class FontManager
         return Cache.GetOrAdd((family, weight), k => ResolveFallback(k.Item1, k.Item2));
     }
 
-    static SKTypeface? LoadRegistered((int weight, string[] paths)[] faces, int weight, string? baseDir)
+    // 字面 → 该字体的纵向度量（相对 em）。按 SKTypeface 实例引用键控（Get 的结果本就带缓存），
+    // 不同文档的 @font-face 同名不同面也不会串味；字面被回收时条目跟着走，不泄漏。
+    sealed class VertMetrics(float ascent, float descent, float normalLh, float xHeight)
     {
+        public readonly float Ascent = ascent, Descent = descent, NormalLh = normalLh, XHeight = xHeight;
+    }
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SKTypeface, VertMetrics> MetricsTable = new();
+
+    static VertMetrics Of(SKTypeface t) => MetricsTable.GetValue(t, static t =>
+    {
+        using var f = new SKFont(t, 100f);
+        var m = f.Metrics;
+        float a = -m.Ascent / 100f, d = m.Descent / 100f;   // SKFontMetrics.Ascent 为负
+        if (!(a > 0 && d >= 0) || float.IsNaN(a + d)) return new VertMetrics(0.8f, 0.2f, 1.4f, 0.5f);
+        float lh = a + d + m.Leading / 100f;
+        float xh = m.XHeight / 100f;
+        return new VertMetrics(a, d, lh > 0 && !float.IsNaN(lh) ? lh : 1.4f, xh > 0.05f && xh < a ? xh : 0.5f);
+    });
+
+    /// <summary>该字族+字重的字体 ascent/descent 相对 em 的比值（只要比例，缩放交给 <see cref="TextExtents"/>）。</summary>
+    public static (float Ascent, float Descent) ExtentsPerEm(string family, int weight)
+    {
+        var v = Of(Get(family, weight));
+        return (v.Ascent, v.Descent);
+    }
+
+    /// <summary>
+    /// 某字号下字体的 ascent/descent（px）。浏览器把两者各自<b>取整到整像素</b>（半值向上）后才用：
+    /// 15px 雅黑是 16/4，不是 15.87/3.93。不取整会让每个行内盒恒差 ~0.5–1.2px、基线跟着偏，
+    /// 并按行往下累积（inline/m1 里每个 span 稳定 1.2px 的偏差就是这一处）。
+    /// 取整口径已用 Arial/雅黑/Noto SC/宋体五张 face × 10 个字号的浏览器实测反证吻合。
+    /// </summary>
+    public static (float Asc, float Desc) TextExtents(string family, int weight, float sizePx)
+    {
+        var v = Of(Get(family, weight));
+        return (Px(v.Ascent * sizePx), Px(v.Descent * sizePx));
+    }
+
+    static float Px(float v) => (float)Math.Floor(v + 0.5f);   // = SkScalarRoundToInt：half-up，不是 banker's
+
+    /// <summary>该字族的 x-height 相对 em（vertical-align:middle 用）。</summary>
+    public static float XHeightPerEm(string family, int weight) => Of(Get(family, weight)).XHeight;
+
+    /// <summary>
+    /// 该字族+字重的 <c>line-height: normal</c> 行距比 = 字体 ascent+descent+lineGap 相对 em。
+    /// 浏览器就是这个口径（雅黑 1.318、常见 serif 回退 1.4875），而 CSS 里没有「1.4」这条：
+    /// 写死 1.4 会让每一段未显式设行高的正文各差几个百分点，整页累积下移。
+    /// </summary>
+    public static float NormalLineHeight(string family, int weight) => Of(Get(family, weight)).NormalLh;
+
+    static SKTypeface? LoadRegistered((int weight, string[] paths)[] faces, int weight, string? baseDir)    {
         // 按字重就近取；同字重内按 src 声明顺序逐个尝试文件
         var pick = faces.OrderBy(f => Math.Abs(f.weight - weight)).First();
         foreach (var raw in pick.paths)

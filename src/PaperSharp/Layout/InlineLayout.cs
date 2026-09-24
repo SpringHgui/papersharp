@@ -10,15 +10,23 @@ public sealed class InlineAtom
     public string? Text;
     public BlockBox? Box;                 // 原子盒（inline-block / img）
     public bool IsBreak;
+    public bool HostText;                 // 文字来自建立 IFC 的块自身（其 padding 已在块内容盒里，勿重复计）
+
+    /// <summary>这个原素的横向外扩 = 行内元素自己的 padding+border；块自身的文字不算（已在内容盒原点里）。
+    /// 内在宽与真实折行必须走同一个口子，否则两条路对行宽的判断会分叉。</summary>
+    public (float Left, float Right) HDeco(float cbW) => HostText ? (0f, 0f) : InlineLayout.HDeco(Style, cbW);
 }
 
-/// <summary>折行后落在某行上的一段：文本（带样式）或原子盒。X 是相对行内容起点的偏移。</summary>
+/// <summary>折行后落在某行上的一段：文本（带样式）或原子盒。X 是相对行内容起点的偏移。
+/// 文本片段的 X/Width 含元素自身的横向 padding+border（PadLeft/PadRight 是其左右两半），
+/// 与浏览器行内盒的 padding box 同口径；文字画在 X+PadLeft。</summary>
 public sealed class InlineFrag
 {
     public ComputedStyle Style = null!;
     public string? Text;
     public BlockBox? Box;
     public float X, Width, FontSize, Ascent, Descent;
+    public float PadLeft, PadRight;   // 仅文本片段：盒相对文字的左右外扩（padding+border）
     public float AlignDY;   // vertical-align 生效后的基线下移量（文本 run；原子盒由 PositionInline 处理）
 }
 
@@ -37,17 +45,19 @@ public sealed class LineBox
 /// </summary>
 public static class InlineLayout
 {
-    /// <summary>从某块的 InlinePieces 递归摊平成原子序列。factory 用于给 inline-block/img 建盒。</summary>
-    public static List<InlineAtom> BuildAtoms(ComputedStyle style, Func<ComputedStyle, BlockBox> factory)
+    /// <summary>从某块的 InlinePieces 递归摊平成原子序列。factory 用于给 inline-block/img 建盒。
+    /// <paramref name="hostLevel"/> 只在最外层为真：那层的文字属于建立 IFC 的块**自身**，
+    /// 块自己的 padding 已经算进内容盒原点，绝不能再当行内元素的横向外扩加第二遍。</summary>
+    public static List<InlineAtom> BuildAtoms(ComputedStyle style, Func<ComputedStyle, BlockBox> factory, bool hostLevel = true)
     {
         var list = new List<InlineAtom>();
         foreach (var piece in style.InlinePieces)
         {
-            if (piece.IsBreak) { list.Add(new InlineAtom { Style = style, IsBreak = true }); continue; }
+            if (piece.IsBreak) { list.Add(new InlineAtom { Style = style, IsBreak = true, HostText = hostLevel }); continue; }
             if (piece.Text != null)
             {
                 string t = ApplyTransform(piece.Text, style.TextTransform);
-                if (!string.IsNullOrEmpty(t)) list.Add(new InlineAtom { Style = style, Text = t });
+                if (!string.IsNullOrEmpty(t)) list.Add(new InlineAtom { Style = style, Text = t, HostText = hostLevel });
                 continue;
             }
             var c = piece.Child;
@@ -55,7 +65,7 @@ public static class InlineLayout
             if (c.Display is "inline-block" or "inline-flex" or "inline-grid" || c.Tag is "img" or "svg")
                 list.Add(new InlineAtom { Style = c, Box = factory(c) });
             else
-                list.AddRange(BuildAtoms(c, factory));   // 普通 inline：递归摊平
+                list.AddRange(BuildAtoms(c, factory, false));   // 普通 inline：递归摊平
         }
         return list;
     }
@@ -155,7 +165,8 @@ public static class InlineLayout
             {
                 float bw = a.Box.TotalWidth;
                 if (curW + bw > avail && cur.Frags.Count > 0) Roll(a.Style);
-                AddFrag(new InlineFrag { Style = a.Style, Box = a.Box, Width = bw, FontSize = a.Style.FontSize, Ascent = a.Box.TotalHeight, Descent = 0 });
+                var (aAsc, aDesc) = AtomicExtents(a.Box);
+                AddFrag(new InlineFrag { Style = a.Style, Box = a.Box, Width = bw, FontSize = a.Style.FontSize, Ascent = aAsc, Descent = aDesc });
                 continue;
             }
             // 文本：按 token 折行
@@ -168,18 +179,32 @@ public static class InlineLayout
                 if (tok == " " && cur.Frags.Count == 0) continue; // 行首空格吞掉
                 float tw = TextWidth(tok, a.Style);
                 bool isSpace = tok == " ";
-                if (curW + tw > avail && cur.Frags.Count > 0 && !(isSpace && string.IsNullOrWhiteSpace(LastText(cur))))
+                var (pl0, pr0) = a.HDeco(maxWidth);
+                bool sameRun = IsRunTail(cur, a.Style);
+                float pl = sameRun ? 0 : pl0;
+                if (curW + pl + tw + pr0 > avail && cur.Frags.Count > 0 && !(isSpace && string.IsNullOrWhiteSpace(LastText(cur))))
                 {
                     TrimTrailingSpace(cur, ref curW);
                     Roll(a.Style);
                     if (isSpace) continue; // 行首空格吞掉
+                    sameRun = false; pl = pl0;
                 }
-                // 合并到同一样式的尾 frag
+                // 合并到同一样式的尾 frag：同一元素在同一行上是一个片段，padding 只在两端各算一次
                 var last = cur.Frags.Count > 0 ? cur.Frags[^1] : null;
-                if (last != null && last.Text != null && ReferenceEquals(last.Style, a.Style))
-                { last.Text += tok; last.Width += tw; curW += tw; }
+                if (sameRun && last != null)
+                {
+                    float grow = tw + pr0 - last.PadRight;
+                    last.Text += tok; last.Width += grow; curW += grow; last.PadRight = pr0;
+                }
                 else
-                    AddFrag(new InlineFrag { Style = a.Style, Text = tok, Width = tw, FontSize = a.Style.FontSize, Ascent = a.Style.FontSize, Descent = a.Style.FontSize * 0.22f });
+                {
+                    var (asc, desc) = FontManager.TextExtents(a.Style.FontFamily, a.Style.FontWeight, a.Style.FontSize);
+                    AddFrag(new InlineFrag
+                    {
+                        Style = a.Style, Text = tok, Width = pl + tw + pr0, PadLeft = pl, PadRight = pr0,
+                        FontSize = a.Style.FontSize, Ascent = asc, Descent = desc,
+                    });
+                }
             }
         }
         if (cur.Frags.Count > 0) { TrimTrailingSpace(cur, ref curW); FinalizeLine(cur, strut ?? (atoms.Count > 0 ? atoms[0].Style : null)); lines.Add(cur); }
@@ -188,38 +213,100 @@ public static class InlineLayout
     }
 
     /// <summary>
-    /// 行盒在基线下方留多高：CSS 行盒模型 = 字体 descent + 半 leading（行高富余对半分）。
-    /// 纯文本行里行高本就占主导（结果与旧值一致）；只有「高图独占一行」时这截缝才显形——
-    /// 浏览器里图片下方那道 ~5px 空隙就是它，缺了它图后面的兄弟全部上移。
-    /// descent 用 0.22em，与 BreakRaw 里文本 frag 的口径一致。
+    /// 原子盒（inline-block / 行内 img）对行盒的上下伸出量（= 基线把它切成的两段）。
+    /// CSS 10.8.1：inline-block 的基线落在它**最后一个行盒**的基线上；没有行盒（替换元素、
+    /// 空盒、纯块内容）才退到下外边距边。旧代码一律按「底边压基线」处理，于是每个 inline-block
+    /// 都把它自己本该在基线下方的那截 descent 顶到了基线上方：行盒凭空增高、后面整篇下移
+    /// （inline 样例实测每行 +3.2px）。
     /// </summary>
-    static float StrutBelow(ComputedStyle? s)
+    static (float Asc, float Desc) AtomicExtents(BlockBox b)
     {
-        if (s == null) return 3f;   // 无 strut 可依：退回旧的经验值
-        float descent = s.FontSize * 0.22f;
-        float lh = s.FontSize * s.LineHeightFactor;
-        return descent + Math.Max(0, (lh - (s.FontSize + descent)) / 2);
+        float h = b.TotalHeight;   // 含 border+padding；行内块的纵向 margin 不参与行盒
+        float below = Math.Clamp(BaselineToBottom(b) ?? 0f, 0, h);
+        return (h - below, below);
+    }
+
+    /// <summary>
+    /// 基线到盒「下边框外缘」的距离；null = 盒里既没有行盒也没有子盒（替换元素、空盒——调用方按
+    /// 「基线落在下外边距边」处理，即距离 0）。行盒可能在三个地方：自己的 <see cref="BlockBox.Lines"/>
+    /// （有行内片段）、<see cref="BlockBox.WrappedLines"/>（整盒只有一段文字、按块折的行），
+    /// 或藏在<b>最后一个常规流子盒</b>里（子盒自己也没有行时，它的下外边距边就当基线——与浏览器一致）。
+    /// </summary>
+    static float? BaselineToBottom(BlockBox b)
+    {
+        var s = b.Style;
+        float deco = s.PaddingBottom + s.BorderWidthBottom;
+        if (b.Lines is { Count: > 0 } ls)
+        {
+            float ifc = 0;
+            foreach (var l in ls) ifc += l.Height;
+            return (ls[^1].Height - ls[^1].Baseline) + Math.Max(0, b.ContentHeight - ifc) + deco;
+        }
+        if (b.WrappedLines is { Length: > 0 } ws)
+        {
+            float lh = s.FontSize * s.LineHeightFactor;    // 与 MeasureBlock 那条折行同一口径
+            var (asc, _) = BoxOf(s);
+            return (lh - asc) + Math.Max(0, b.ContentHeight - ws.Length * lh) + deco;
+        }
+        var kids = InFlowChildren(b);
+        if (kids.Count == 0) return null;
+        var last = kids[^1];
+        return (BaselineToBottom(last) ?? 0f) + last.Style.MarginBottom + deco;
+    }
+
+    /// <summary>常规流子盒（浮动与绝对定位不参与「最后一个行盒」的认定）。</summary>
+    static List<BlockBox> InFlowChildren(BlockBox b)
+    {
+        if (b.Children == null || b.Children.Count == 0) return new List<BlockBox>();
+        var list = new List<BlockBox>(b.Children.Count);
+        foreach (var c in b.Children)
+            if (c.Style.Position == "static" && c.Style.Float == "none") list.Add(c);
+        return list;
+    }
+
+    /// <summary>
+    /// 一个片段对行盒上/下各伸出多高（CSS 行盒模型）：内容区（字体 ascent+descent，<b>各自已取整到整像素</b>）
+    /// 压在基线上，行高的富余 leading 上下各半 → asc = A + ⌊leading/2⌋、desc = D + ⌈leading/2⌉。
+    /// <b>奇数富余归下方</b>是浏览器口径（探针实测 15px/行高 24 的基线在 18 而非 18.5，负 leading 同理：
+    /// 20px/行高 24 → ⌊−2.5⌋=−3）。单字体行里行盒恒等于 L；<b>混排</b>字体时各项的 (A−D) 不同，
+    /// 行盒 = max(asc) + max(desc) 会比任何单项都高——浏览器里「一个 <code> 让整行高出 1~2px」正是它。
+    /// 原子盒（inline-block / 行内 img）的上下两段由 <see cref="AtomicExtents"/> 给，不再套 leading。
+    /// </summary>
+    static (float Asc, float Desc) BoxOf(InlineFrag f)
+        => f.Box != null ? (f.Ascent, f.Descent) : BoxOf(f.Ascent, f.Descent, f.FontSize * f.Style.LineHeightFactor);
+
+    static (float Asc, float Desc) BoxOf(ComputedStyle s)
+    {
+        var (a, d) = FontManager.TextExtents(s.FontFamily, s.FontWeight, s.FontSize);
+        return BoxOf(a, d, s.FontSize * s.LineHeightFactor);
+    }
+
+    static (float Asc, float Desc) BoxOf(float asc, float desc, float lineHeight)
+    {
+        float lead = lineHeight - (asc + desc);
+        float top = (float)Math.Floor(lead / 2);
+        return (asc + top, desc + lead - top);
     }
 
     static void FinalizeLine(LineBox ln, ComputedStyle? strut)
     {
-        float maxBase = 0, maxH = 0, w = 0;
-        bool baseByReplaced = false;
+        float maxAsc = 0, maxDesc = 0, w = 0;
         foreach (var f in ln.Frags)
         {
-            if (f.Ascent > maxBase) { maxBase = f.Ascent; baseByReplaced = f.Box is { IsReplaced: true }; }
-            maxH = Math.Max(maxH, f.Ascent + f.Descent);
-            maxH = Math.Max(maxH, f.FontSize * f.Style.LineHeightFactor);
+            var (a, d) = BoxOf(f);
+            if (a > maxAsc) maxAsc = a;
+            maxDesc = Math.Max(maxDesc, d);
             w += f.Width;
         }
         // strut（块自身的字体与行高）恒在每一行里：小图独占一行时行高也得不低于它
-        if (strut != null) maxH = Math.Max(maxH, strut.FontSize * strut.LineHeightFactor);
-        ln.Baseline = maxBase > 0 ? maxBase : strut?.FontSize ?? 14;
-        // 基线下方留多高，分两种：
-        // · 替换元素（img/svg）的底边就压在基线上 → 行盒还得再加一截 strut descent，
-        //   这就是浏览器里「图片下方那道缝」（探针实测 15px/1.6 → 6.2px）。
-        // · inline-block 的基线落在其内部文字上，盒底本就在基线上方，沿用旧经验值 3。
-        ln.Height = Math.Max(maxH, ln.Baseline + (baseByReplaced ? StrutBelow(strut) : 3f));
+        if (strut != null)
+        {
+            var (a, d) = BoxOf(strut);
+            maxAsc = Math.Max(maxAsc, a);
+            maxDesc = Math.Max(maxDesc, d);
+        }
+        ln.Baseline = maxAsc > 0 ? maxAsc : strut?.FontSize ?? 14;
+        ln.Height = maxAsc + maxDesc;
         ln.Width = w;
 
         // 文本 run 的 vertical-align（top/bottom 对齐行盒，super/sub 惯例偏移，length/% 相对基线上移）
@@ -227,11 +314,13 @@ public static class InlineLayout
         {
             if (f.Text == null) continue;
             var va = f.Style.VerticalAlign;
+            var (fAsc, fDesc) = BoxOf(f);
             float dy;
             switch (va)
             {
-                case "top": dy = f.Ascent - ln.Baseline; break;
-                case "bottom": dy = ln.Height - ln.Baseline; break;
+                // top/bottom：把该片段自己的行高盒上/下边贴到行盒对应边上（相对基线换算成下移量）
+                case "top": dy = fAsc - ln.Baseline; break;
+                case "bottom": dy = (ln.Height - ln.Baseline) - fDesc; break;
                 case "super": dy = -0.35f * f.FontSize; break;
                 case "sub": dy = 0.25f * f.FontSize; break;
                 default:
@@ -280,6 +369,19 @@ public static class InlineLayout
         return "";
     }
 
+    /// <summary>
+    /// 行内元素的横向外扩（padding + border）。竖直 padding 对非替换行内不生效，故只取横向。
+    /// inline 元素没有盒，从没走过 Measure 里的 ResolveBoxSizes，所以 padding 要拿**声明值**
+    /// 按包含块宽（= 本 IFC 的 maxWidth）就地折算，否则 padding:0 4px 的 <code> 会量成 0。
+    /// </summary>
+    internal static (float Left, float Right) HDeco(ComputedStyle s, float cbW)
+        => (s.BorderWidthLeft + s.PaddingLeftCss.ResolveEdge(cbW),
+            s.BorderWidthRight + s.PaddingRightCss.ResolveEdge(cbW));
+
+    /// <summary>本行末尾是否还是同一个 inline 元素的文字延续（决定还要不要再加一次 padding-left）。</summary>
+    static bool IsRunTail(LineBox ln, ComputedStyle st)
+        => ln.Frags.Count > 0 && ln.Frags[^1] is { Text: not null } f && ReferenceEquals(f.Style, st);
+
     static void TrimTrailingSpace(LineBox ln, ref float curW)
     {
         if (ln.Frags.Count == 0) return;
@@ -289,7 +391,7 @@ public static class InlineLayout
         if (t.Length != last.Text.Length)
         {
             float removed = TextWidth(last.Text[^1..], last.Style);
-            last.Text = t; last.Width = TextWidth(t, last.Style);
+            last.Text = t; last.Width = last.PadLeft + TextWidth(t, last.Style) + last.PadRight;
             curW -= removed;
         }
     }

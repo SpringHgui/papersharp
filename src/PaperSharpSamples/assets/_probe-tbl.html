@@ -1,0 +1,18 @@
+<style>
+  body { margin: 0; font: 10px/1 monospace; }
+  .box { width: 1200px; }
+  table { border-collapse: collapse; table-layout: auto; }
+  th, td { padding: 0; border: 0; font: 10px/1 monospace; text-align: left; vertical-align: top; }
+  .w100 { width: 100%; }
+</style>
+<div class="box">
+<!-- 剩余空间：max-content 不等，看富余怎么分 -->
+<table id="e1" class="w100"><tr><td data-mc="50"></td><td data-mc="30"></td><td data-mc="15"></td><td data-mc="5"></td></tr></table>
+<table id="e2" class="w100"><tr><td data-mc="90"></td><td data-mc="10"></td></tr></table>
+<table id="e3" class="w100"><tr><td data-mc="10"></td><td data-mc="10"></td><td data-mc="90"></td></tr></table>
+<!-- 剩余空间 + 一列声明宽度 -->
+<table id="e4" class="w100"><tr><td style="width:100px" data-mc="50"></td><td data-mc="30"></td><td data-mc="15"></td></tr></table>
+<table id="e5" class="w100"><tr><td data-mc="50"></td><td data-mc="30"></td><td data-mc="15"></td></tr><tr><td data-mc="20"></td><td data-mc="90"></td><td data-mc="5"></td></tr></table>
+<!-- 收缩：某列 min-content 明显高于其它列 -->
+<table id="s1" class="w100"><tr><td data-mc="200" data-word="150"></td><td data-mc="120"></td><td data-mc="60"></td></tr></table>
+</div>

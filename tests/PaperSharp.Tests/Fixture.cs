@@ -1,4 +1,6 @@
+using System.Text.Json;
 using PaperSharp;
+using PaperSharpBlazorApp.Services;
 
 namespace PaperSharp.Tests;
 
@@ -10,6 +12,9 @@ public static class Fixture
     // 与 PaperSharpSamples/Program.cs 一致的渲染参数
     public const float PngWidth = 794f;
     public const float PngScale = 2f;
+
+    /// <summary>Playground 的排版宽（画布宽）。盒级基准按这个宽度量，与页面 / boxdiff.mjs 同源。</summary>
+    public const float BoxWidth = 1284f;
 
     public static readonly string[] Samples =
         { "invoice", "long", "flex", "img", "report", "pct", "polish", "inline", "table", "m1", "m2", "m3", "m4", "m5", "m7", "m8", "m9" };
@@ -44,6 +49,47 @@ public static class Fixture
     {
         var (html, css) = ReadSample(name);
         return Renderer.RenderPng(html, css, PngWidth, AssetsDir, PngScale);
+    }
+
+    /// <summary>
+    /// Playground 下拉里的全部示例名 = assets 下非下划线开头的 html。
+    /// 与 <c>PlaygroundSamples.Names</c> 同一口径；比 <see cref="Samples"/> 多，别拿那份代替。
+    /// </summary>
+    public static IReadOnlyList<string> PlaygroundSampleNames()
+        => Directory.EnumerateFiles(AssetsDir, "*.html")
+            .Select(Path.GetFileNameWithoutExtension)
+            .Where(n => n is { Length: > 0 } && !n.StartsWith('_'))
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList()!;
+
+    /// <summary>
+    /// 出引擎盒矩形（Playground 口径的 RenderRasterWithBoxes）。样式内嵌于 &lt;style&gt; 的样例没有同名 .css，
+    /// 故 css 缺失时传空串——与 PlaygroundSamples.Read 同处理。盒是 CSS px、与 scale 无关，故 scale:1 省一趟编码。
+    /// </summary>
+    public static IReadOnlyList<BoxRect> RenderBoxes(string name)
+    {
+        var html = File.ReadAllText(Path.Combine(AssetsDir, name + ".html"));
+        var cssPath = Path.Combine(AssetsDir, name + ".css");
+        var css = File.Exists(cssPath) ? File.ReadAllText(cssPath) : "";
+        return Renderer.RenderRasterWithBoxes(html, css, BoxWidth, baseDir: AssetsDir, scale: 1f).Boxes;
+    }
+
+    static readonly JsonSerializerOptions BoxJson = new(JsonSerializerDefaults.Web);
+
+    /// <summary>落一份盒基准到 goldens/boxes/&lt;name&gt;.json（存的是归一到 body 原点的 border-box）。</summary>
+    public static void SaveBoxGolden(string name, IReadOnlyList<BoxRect> boxes)
+    {
+        var path = Path.Combine(GoldensDir, "boxes", name + ".json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var rects = boxes.Select(b => new DomRect { DomPath = b.DomPath, Tag = b.Tag, X = b.X, Y = b.Y, W = b.W, H = b.H });
+        File.WriteAllText(path, JsonSerializer.Serialize(rects, BoxJson));
+    }
+
+    /// <summary>读盒基准；缺失返回 null（由调用方判失败，别在这里静默）。</summary>
+    public static List<DomRect>? LoadBoxGolden(string name)
+    {
+        var path = Path.Combine(GoldensDir, "boxes", name + ".json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<List<DomRect>>(File.ReadAllText(path), BoxJson) : null;
     }
 
     /// <summary>

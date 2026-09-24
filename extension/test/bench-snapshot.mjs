@@ -1,6 +1,9 @@
 // 离线基准：把 e2e --dump 落盘的真实快照拿来分段计时，定位「引擎慢」到底慢在哪一类内容。
-//   node extension/test/bench-snapshot.mjs [out/snapshot.html]
+//   node extension/test/bench-snapshot.mjs [out/snapshot.html] [--author-css]
 // 变体：整页 / 去掉内联 svg / 去掉文本 / 只留前 40 个元素 / scale 1 vs 2。
+// 默认按扩展真实参数跑（precomputed 展平快照，见 extension/offscreen.js）；
+//   --author-css 关掉它，量的是作者手写 CSS 那条 AngleSharp 全量层叠路（O(n^2.5)，慢一个量级）。
+// 首行含 mono 冷启动，热态要看后面几行。
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -10,7 +13,8 @@ import { renderRaw, installSubsetFont } from "../papersharp/runtime.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "out");
 mkdirSync(out, { recursive: true });
-const htmlPath = process.argv[2] ? join(here, process.argv[2]) : join(out, "snapshot.html");
+const precomputed = !process.argv.includes("--author-css");
+const htmlPath = process.argv[2]?.startsWith("--") ? join(out, "snapshot.html") : (process.argv[2] ? join(here, process.argv[2]) : join(out, "snapshot.html"));
 const html = readFileSync(htmlPath, "utf8");
 const css = readFileSync(join(dirname(htmlPath), "snapshot.css"), "utf8");
 
@@ -39,14 +43,14 @@ const t0all = Date.now();
 const rows = [];
 for (const [name, h] of cases) {
   const t0 = Date.now();
-  const bytes = await renderRaw({ html: h, css, format: "png", width: 1406, scale: 1 });
+  const bytes = await renderRaw({ html: h, css, format: "png", width: 1406, scale: 1, precomputed });
   rows.push([name, Date.now() - t0, `${(bytes.length / 1024) | 0} KB`, count(h, /<svg/g), count(h, /<[a-z]/gi)]);
 }
 const tScale = Date.now();
-await renderRaw({ html, css, format: "png", width: 1406, scale: 2 });
+await renderRaw({ html, css, format: "png", width: 1406, scale: 2, precomputed });
 rows.push(["整页 scale=2", Date.now() - tScale, "", count(html, /<svg/g), count(html, /<[a-z]/gi)]);
 const tPdf = Date.now();
-await renderRaw({ html, css, format: "pdf", width: 1406, pageSize: "A4" });
+await renderRaw({ html, css, format: "pdf", width: 1406, pageSize: "A4", precomputed });
 rows.push(["整页 PDF", Date.now() - tPdf, "", "", ""]);
 
 console.log("变体".padEnd(18), "耗时".padStart(7), "  输出".padEnd(9), "svg", "  标签数");

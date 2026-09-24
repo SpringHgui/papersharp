@@ -390,7 +390,7 @@ public static class SvgWriter
         {
             var s = f.Style;
             EmitDecor(f.Text!, x, y, s, f.FontSize, f.Width);
-            _body.Append(TextEl(f.Text!, x, y, s, f.FontSize));
+            _body.Append(TextEl(f.Text!, x + f.PadLeft, y, s, f.FontSize));   // x 是 padding box 左端
         }
 
         string TextEl(string text, float x, float y, ComputedStyle s, float fontSize)

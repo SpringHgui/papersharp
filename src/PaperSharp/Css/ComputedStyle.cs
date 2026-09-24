@@ -84,7 +84,8 @@ public sealed class ComputedStyle
 
     // 表格（Display 为 table 家族时生效）
     public string BorderCollapse = "separate"; // separate | collapse
-    public float BorderSpacing;                // separate 时单元格间距（横纵同值，px）
+    public float BorderSpacing;                // separate 时单元格横向间距（px）
+    public float BorderSpacingV;               // separate 时单元格纵向间距；border-spacing 只写一个值时同 BorderSpacing
     public int Colspan = 1;                    // <td>/<th> 的 colspan
     public int Rowspan = 1;                    // <td>/<th> 的 rowspan
     public string CaptionSide = "top";         // top | bottom

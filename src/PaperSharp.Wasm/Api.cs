@@ -15,6 +15,13 @@ public static partial class Api
 {
     static readonly string FontDir = Path.Combine(AppContext.BaseDirectory, "wasm-fonts");
 
+    static Api()
+    {
+        // 自研 PNG 编码器在 native 宿主靠分块并行拿到 19×，WASM 是单线程 + Mono 解释器，
+        // 每字节托管循环反而比 Skia 原生编码慢：实测 23.7Mpx 快照 2533→3383ms（scale=2 5959→8830ms）。
+        Renderer.UseFastPng = false;
+    }
+
     [JSExport]
     public static string Render(string requestJson)
     {

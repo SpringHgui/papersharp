@@ -236,7 +236,8 @@ public static class LayoutBuilder
     {
         var s = box.Style;
         bool collapse = s.BorderCollapse == "collapse";
-        float spacing = collapse ? 0 : s.BorderSpacing;
+        float spacingX = collapse ? 0 : s.BorderSpacing;
+        float spacingY = collapse ? 0 : s.BorderSpacingV;
 
         // 识别 table-caption 子盒（<caption>），从表格子元素中分离出来单独测量
         BlockBox? caption = null;
@@ -297,12 +298,31 @@ public static class LayoutBuilder
         // collapse：内部只保留 top+left 边框，右/底仅末列/末行保留，避免共享边双线
         if (collapse) ApplyCollapseBorders(grid, numCols);
 
-        // 计算目标网格宽（用于解析百分比列宽）
+        // 外层网格线被单元格边框「骑跨」：Chrome 实测 collapse 表的格区相对表格框四边各内缩该线宽的一半
+        // （1px 边框 → 行盒 (24,137) 1236 变 (24.5,137.5) 1235）。列宽分配先扣掉这一圈。
+        float insetL = 0, insetR = 0, insetT = 0, insetB = 0;
+        if (collapse)
+            for (int r = 0; r < grid.Count; r++)
+                foreach (var info in grid[r])
+                {
+                    var b = info.Cell.Style;
+                    if (info.Col == 0) insetL = Math.Max(insetL, b.BorderWidthLeft / 2);
+                    if (info.Col + info.Span >= numCols) insetR = Math.Max(insetR, b.BorderWidthRight / 2);
+                    if (r == 0) insetT = Math.Max(insetT, b.BorderWidthTop / 2);
+                    if (r + info.RowSpan >= grid.Count) insetB = Math.Max(insetB, b.BorderWidthBottom / 2);
+                }
+
+        // 横向装饰：separate 是「左右各一个 outer spacing + 列间 n−1 个」，collapse 只吃半框
+        float decoX = collapse ? insetL + insetR : spacingX * (numCols + 1);
+        float decoY = collapse ? 0 : spacingY;   // 纵向：separate 首尾各加一个 spacing，collapse 靠末行裁剪
+
+        // 计算目标网格宽（用于解析百分比列宽）：基准沿用「表格内容框扣掉列缝」，不扣首尾外圈缝
         float padBorder = s.PaddingLeft + s.PaddingRight + s.BorderWidthLeft + s.BorderWidthRight;
         float wResTbl = s.Width.Resolve(availWidth);
+        float pctDecoX = collapse ? insetL + insetR : spacingX * (numCols - 1);
         float targetGridForPct = !float.IsNaN(wResTbl)
-            ? Math.Max(0, wResTbl - padBorder - spacing * (numCols - 1))
-            : Math.Max(0, availWidth - s.MarginLeft - s.MarginRight - padBorder - spacing * (numCols - 1));
+            ? Math.Max(0, wResTbl - padBorder - pctDecoX)
+            : Math.Max(0, availWidth - s.MarginLeft - s.MarginRight - padBorder - pctDecoX);
 
         // 列宽（单元格 outer 盒宽）；+1px 余量避免「内容宽恰好等于内在宽」触发亚像素折行。
         // 写了 width（px/%/calc）的列是 CSS 2.1 §17.5.2.2 的 special column：就用声明值，
@@ -336,7 +356,7 @@ public static class LayoutBuilder
             foreach (var info in infos)
                 if (info.Span > 1)
                 {
-                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell) + spacing * (info.Span - 1) + 1;
+                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell) + spacingX * (info.Span - 1) + 1;
                     float pctW = SpecifiedCellWidth(info.Cell, targetGridForPct);
                     float need = Math.Max(intrinsic, pctW);
                     float have = 0; for (int j = info.Col; j < info.Col + info.Span; j++) have += colW[j];
@@ -348,7 +368,7 @@ public static class LayoutBuilder
                         foreach (int j in free) colW[j] += add;
                     }
                     // 下限同样要抬：合并格里的长词也是硬底，否则收缩阶段会把所跨各列压到比它还能折。
-                    float needMin = Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell) + spacing * (info.Span - 1));
+                    float needMin = Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell) + spacingX * (info.Span - 1));
                     float haveMin = 0; for (int j = info.Col; j < info.Col + info.Span; j++) haveMin += colMin[j];
                     if (needMin - haveMin > 0)
                     {
@@ -361,8 +381,9 @@ public static class LayoutBuilder
         // 目标总宽：显式 width 优先；否则自然宽夹到可用宽
         for (int j = 0; j < numCols; j++) colMin[j] = Math.Min(colMin[j], colW[j]);   // 下限永不高于上限（多跨摊分可能先抬 w 再抬 min）
         float gridW = 0; for (int j = 0; j < numCols; j++) gridW += colW[j];
-        float gapW = spacing * (numCols - 1);
-        float targetTotal = !float.IsNaN(wResTbl) ? wResTbl + padBorder + gapW
+        float gapW = decoX;   // 列缝：separate 的 spacing（含首尾外圈）/ collapse 的骑跨半框
+        // 声明 width 是表格**内容框**宽（列缝算在内），所以可用列宽 = width − 缝；auto 时自然宽夹到可用宽。
+        float targetTotal = !float.IsNaN(wResTbl) ? wResTbl + padBorder
             : Math.Min(gridW + gapW + padBorder, Math.Max(0, availWidth - s.MarginLeft - s.MarginRight));
         float targetGrid = Math.Max(0, targetTotal - padBorder - gapW);
         if (gridW > 0.5f && Math.Abs(targetGrid - gridW) > 0.5f)
@@ -424,7 +445,7 @@ public static class LayoutBuilder
                 var cell = info.Cell;
                 ZeroCellMargins(cell);
                 cell.Style.Width = CssSize.Auto;   // 单元格 width 只是列宽线索，测量期以列宽为准
-                float cellOuterW = spacing * (info.Span - 1);
+                float cellOuterW = spacingX * (info.Span - 1);
                 for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += colW[j];
                 Measure(cell, cellOuterW);
                 rh = Math.Max(rh, cell.ContentHeight + CellVDeco(cell));
@@ -440,7 +461,7 @@ public static class LayoutBuilder
                     float need = info.Cell.ContentHeight + CellVDeco(info.Cell);
                     float have = 0;
                     for (int dr = 0; dr < info.RowSpan && r + dr < grid.Count; dr++) have += rowH[r + dr];
-                    have += spacing * (Math.Min(info.RowSpan, grid.Count - r) - 1);
+                    have += spacingY * (Math.Min(info.RowSpan, grid.Count - r) - 1);
                     float deficit = need - have;
                     if (deficit > 0)
                     {
@@ -451,6 +472,7 @@ public static class LayoutBuilder
         totalH = 0;
         for (int r = 0; r < grid.Count; r++) totalH += rowH[r];
         // 回填：格撑满行高（背景/边框铺满整行），并按 vertical-align 记内容偏移
+        float clipLastRow = collapse ? insetT + insetB : 0f;   // 末行外框线被骑跨掉的净高（Chrome 实测 dh −1.0）
         for (int r = 0; r < grid.Count; r++)
             foreach (var info in grid[r])
             {
@@ -459,10 +481,11 @@ public static class LayoutBuilder
                     full = rowH[r];
                 else
                 {
-                    full = spacing * (Math.Min(info.RowSpan, grid.Count - r) - 1);
+                    full = spacingY * (Math.Min(info.RowSpan, grid.Count - r) - 1);
                     for (int dr = 0; dr < info.RowSpan && r + dr < grid.Count; dr++) full += rowH[r + dr];
                 }
                 full = Math.Max(0, full - CellVDeco(info.Cell));
+                if (r + info.RowSpan >= grid.Count) full = Math.Max(0, full - clipLastRow);
                 float free = Math.Max(0, full - info.Cell.ContentHeight);
                 info.Cell.ContentHeight = full;
                 info.Cell.ValignDY = info.Cell.Style.VerticalAlign switch
@@ -472,7 +495,7 @@ public static class LayoutBuilder
                     _ => 0,   // top / baseline / length 近似按顶部
                 };
             }
-        totalH += spacing * (grid.Count - 1);
+        totalH += spacingY * (grid.Count - 1) + 2 * decoY;
         // caption 高度加到表格总高
         if (caption != null)
             totalH += caption.TotalHeight;
@@ -485,19 +508,21 @@ public static class LayoutBuilder
             if (rowGroupTypes[r] == "table-header-group")
             {
                 box.THeaderRows.Add(r);
-                headerH += rowH[r] + (r < grid.Count - 1 ? spacing : 0);
+                headerH += rowH[r] + (r < grid.Count - 1 ? spacingY : 0);
             }
             else if (rowGroupTypes[r] == "table-footer-group")
             {
                 box.TFooterRows.Add(r);
-                footerH += rowH[r] + (r < grid.Count - 1 ? spacing : 0);
+                footerH += rowH[r] + (r < grid.Count - 1 ? spacingY : 0);
             }
         }
         box.THeaderHeight = headerH;
         box.TFooterHeight = footerH;
 
         // 存回供定位
-        box.TRows = grid; box.TColW = colW; box.TRowH = rowH; box.TSpacing = spacing; box.TNumCols = numCols;
+        box.TRows = grid; box.TColW = colW; box.TRowH = rowH; box.TSpacing = spacingX; box.TSpacingY = spacingY;
+        box.TNumCols = numCols;
+        box.TInsetL = insetL; box.TInsetR = insetR; box.TInsetT = insetT; box.TInsetB = insetB;
         box.TRowBoxes = rowBoxList;
     }
 
@@ -505,18 +530,21 @@ public static class LayoutBuilder
     static void PositionTable(BlockBox box, float contentX, float contentY, CB cb)
     {
         if (box.TRows == null || box.TColW == null || box.TRowH == null) return;
-        float spacing = box.TSpacing;
+        float spacingX = box.TSpacing, spacingY = box.TSpacingY;
         float gridW = box.ContentWidth;
         int numRows = box.TRows.Count;
+        // collapse：格区相对表格内容框被外圈网格线骑跨，铺在 [insetL, gridW−insetR] × [insetT, 底−insetB]
+        float originX = contentX + box.TInsetL + spacingX;
+        float clipLast = box.TInsetT + box.TInsetB;   // 末行矩形比行高矮这么多（顶/底各被半框吃掉一处）
 
         // caption 定位：top 在网格上方，bottom 在网格下方
-        float gridStartY = contentY;
+        float gridStartY = contentY + box.TInsetT + spacingY;
         if (box.TCaption != null)
         {
             if (!box.TCaptionBottom)
             {
                 PositionRec(box.TCaption, contentX, contentY, cb);
-                gridStartY = contentY + box.TCaption.TotalHeight;
+                gridStartY = contentY + box.TCaption.TotalHeight + box.TInsetT + spacingY;
             }
         }
 
@@ -526,7 +554,7 @@ public static class LayoutBuilder
         for (int r = 0; r < numRows; r++)
         {
             rowY[r] = y;
-            y += box.TRowH[r] + spacing;
+            y += box.TRowH[r] + spacingY;
         }
 
         // 行盒几何：横跨整表宽、纵占行高
@@ -535,8 +563,9 @@ public static class LayoutBuilder
             var rowBox = box.TRowBoxes != null && r < box.TRowBoxes.Count ? box.TRowBoxes[r] : null;
             if (rowBox != null)
             {
-                rowBox.BorderX = contentX; rowBox.BorderY = rowY[r];
-                rowBox.ContentWidth = gridW; rowBox.ContentHeight = box.TRowH[r];
+                rowBox.BorderX = originX; rowBox.BorderY = rowY[r];
+                rowBox.ContentWidth = gridW - box.TInsetL - box.TInsetR - 2 * spacingX;
+                rowBox.ContentHeight = Math.Max(0, box.TRowH[r] - (r == numRows - 1 ? clipLast : 0));
             }
         }
 
@@ -554,7 +583,7 @@ public static class LayoutBuilder
             foreach (var k in expired) rowspanOccupied.Remove(k);
 
             // 按列顺序定位本行单元格，跳过被 rowspan 占据的列
-            float x = contentX;
+            float x = originX;
             int colCursor = 0;
             foreach (var info in box.TRows[r])
             {
@@ -562,17 +591,17 @@ public static class LayoutBuilder
                 while (colCursor < info.Col)
                 {
                     x += box.TColW[colCursor];
-                    if (colCursor < info.Col) x += spacing;
+                    if (colCursor < info.Col) x += spacingX;
                     colCursor++;
                 }
-                float cellOuterW = spacing * (info.Span - 1);
+                float cellOuterW = spacingX * (info.Span - 1);
                 for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += box.TColW[j];
                 PositionRec(info.Cell, x, rowY[r], cb);
                 // 标记 rowspan 占用
                 if (info.RowSpan > 1)
                     for (int dc = 0; dc < info.Span; dc++)
                         rowspanOccupied[info.Col + dc] = info.RowSpan;
-                x += cellOuterW + spacing;
+                x += cellOuterW + spacingX;
                 colCursor = info.Col + info.Span;
             }
         }
@@ -580,7 +609,7 @@ public static class LayoutBuilder
         if (box.TCaption != null && box.TCaptionBottom)
         {
             float captionY = gridStartY;
-            for (int r = 0; r < numRows; r++) captionY += box.TRowH[r] + spacing;
+            for (int r = 0; r < numRows; r++) captionY += box.TRowH[r] + spacingY;
             PositionRec(box.TCaption, contentX, captionY, cb);
         }
     }
@@ -589,9 +618,10 @@ public static class LayoutBuilder
     public static float PositionTableRows(BlockBox box, float contentX, float startY, List<int> rowIndices)
     {
         if (box.TRows == null || box.TColW == null || box.TRowH == null || rowIndices.Count == 0) return 0;
-        float spacing = box.TSpacing;
-        float gridW = box.ContentWidth;
-        float y = startY;
+        float spacingX = box.TSpacing, spacingY = box.TSpacingY;
+        float originX = contentX + box.TInsetL + spacingX;
+        float rowRectW = box.ContentWidth - box.TInsetL - box.TInsetR - 2 * spacingX;
+        float y = startY + box.TInsetT + spacingY;
 
         foreach (var r in rowIndices)
         {
@@ -600,28 +630,28 @@ public static class LayoutBuilder
             var rowBox = box.TRowBoxes != null && r < box.TRowBoxes.Count ? box.TRowBoxes[r] : null;
             if (rowBox != null)
             {
-                rowBox.BorderX = contentX; rowBox.BorderY = y;
-                rowBox.ContentWidth = gridW; rowBox.ContentHeight = box.TRowH[r];
+                rowBox.BorderX = originX; rowBox.BorderY = y;
+                rowBox.ContentWidth = rowRectW; rowBox.ContentHeight = box.TRowH[r];
             }
             // 逐格定位
-            float x = contentX;
+            float x = originX;
             int colCursor = 0;
             foreach (var info in box.TRows[r])
             {
                 while (colCursor < info.Col)
                 {
-                    x += box.TColW[colCursor] + spacing;
+                    x += box.TColW[colCursor] + spacingX;
                     colCursor++;
                 }
-                float cellOuterW = spacing * (info.Span - 1);
+                float cellOuterW = spacingX * (info.Span - 1);
                 for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += box.TColW[j];
                 PositionRec(info.Cell, x, y, null);
-                x += cellOuterW + spacing;
+                x += cellOuterW + spacingX;
                 colCursor = info.Col + info.Span;
-            }
-            y += box.TRowH[r] + spacing;
+            } 
+            y += box.TRowH[r] + spacingY;
         }
-        return y - startY - spacing; // 减去末尾多余的 spacing
+        return y - startY - spacingY; // 减去末尾多余的 spacing
     }
 
     static void CollectRows(BlockBox table, List<List<BlockBox>> rows, List<string> groupTypes)
@@ -1069,6 +1099,22 @@ public static class LayoutBuilder
                 }
             }
 
+            // align-items:stretch 且行容器交叉轴为 auto 高（crossAvail=NaN）：上面 :1052 那条只在
+            // 容器有确定高度时才拉伸，漏掉了更常见的「auto 高行容器」。此处补第二趟——把未显式定高的
+            // stretch 子项纵向撑到该行最高子项（lineCrossMax），margin-box 齐平。flex 的 .n-left、
+            // pct 的 .col-b 都是这样被浏览器拉到同行最高，而引擎此前停在内容高（差 43/19.5px）。
+            // 只增不减（stretch 绝不把比线高的子项压短），故 lineCrossMax 本身不受影响。
+            if (isRow && float.IsNaN(crossAvail))
+                for (int i = 0; i < line.ItemIndices.Count; i++)
+                {
+                    var c = kids[line.ItemIndices[i]];
+                    bool stretch = c.Style.AlignSelf == "stretch" || (c.Style.AlignSelf == "auto" && stretchDefault);
+                    if (!stretch || !c.Style.Height.IsAuto) continue;
+                    float deco = MainDeco(c, false);
+                    float target = ClampSize(lineCrossMax - deco, c.Style.MinHeight, c.Style.MaxHeight, float.NaN, deco);
+                    if (target > c.ContentHeight) c.ContentHeight = target;
+                }
+
             // 线主轴尺寸 = 分配后的内容尺寸 + 各子项主轴装饰（margin/border/padding），
             // 否则 column 容器自然高漏掉子项 margin → 内容溢出盒高、网格行重叠。
             line.MainSize = gap * (line.ItemIndices.Count - 1) + lineFinal.Sum() + lineDeco.Sum();
@@ -1147,23 +1193,32 @@ public static class LayoutBuilder
         if (c.Atoms != null)
         {
             if (kind == Intrinsic.Min) return InlineLayout.MinContentWidth(c.Atoms);
-            float w = 0;
+            // max-content 只对「软换行机会」不折行求和；`<br>` 是硬换行，须在那里断段、段间取 max
+            // （沿用「换行只由软断点决定」把 IsBreak 直接 continue 掉，会把 <br> 两侧行宽相加：
+            //  pricing-foot 的 .copy 实测 299.4 + 194.0 = 493.4 撑爆整列）。
+            float w = 0, seg = 0;
             foreach (var a in c.Atoms)
             {
-                if (a.IsBreak) continue;
+                if (a.IsBreak) { w = Math.Max(w, seg); seg = 0; continue; }
                 // 原子盒一律递归取内在宽：替换元素在里面先认 CSS 显式宽（width:120px 的图就是 120），
                 // 没有显式宽才回退自然宽。直接读 NaturalW 会把缩放图撑回原尺寸，整条 flex 行跟着错位。
-                if (a.Box != null) w += MainDeco(a.Box, true) + IntrinsicWidth(a.Box, kind);
+                if (a.Box != null) seg += MainDeco(a.Box, true) + IntrinsicWidth(a.Box, kind);
                 else if (!string.IsNullOrEmpty(a.Text))
                 {
                     using var f = new SKFont(FontManager.Get(a.Style.FontFamily, a.Style.FontWeight), a.Style.FontSize);
-                    w += TextMeasurer.NaturalWidth(a.Text!, f, a.Style);
+                    // 行内元素自己的横向 padding/border 是它的盒的一部分，折行（BreakRaw）已按此推进，
+                    // 内在宽漏掉就会与真实折行分叉。cbW 传 0：此处是 max-content 通道，无包含块宽可依，
+                    // 而 inline padding 的百分比本就相对包含块，留给 BreakRaw 那条路折算。
+                    var (ipl, ipr) = a.HDeco(0);
+                    seg += TextMeasurer.NaturalWidth(a.Text!, f, a.Style) + ipl + ipr;
                 }
             }
-            return w;
+            return Math.Max(w, seg);
         }
         // flex/grid 容器里直接文本会被包成匿名子项，与元素子项并排占主轴 → 内在宽须"文本 + 各子项"求和；
         // 普通块则文本与块级子项各占独立行，取二者较大即可（沿用旧的"文本优先短路"）。
+        // （试过删掉这里的 TextOf 项、以为与匿名子项重复：pricing-top 均值 20.6→42.8，.menu 的链接
+        //  直接塌成 19.1 宽并折行——文字其实只从这里进，匿名子项那条路另算，勿再"去重"。）
         if (ComputedStyle.IsFlexDisplay(s.Display) || ComputedStyle.IsGridDisplay(s.Display))
         {
             // 只有沿主轴并排的子项才「求和」：row flex / grid 的 max-content 宽 = 各项相加；
@@ -1737,23 +1792,27 @@ public static class LayoutBuilder
         }
     }
 
-    /// <summary>原子盒（inline-block/img）按 vertical-align 求行内顶边 y。</summary>
+    /// <summary>原子盒（inline-block/img）按 vertical-align 求行内顶边 y。
+    /// 基线类对齐（baseline/middle/super/sub/长度）都从「盒基线压行盒基线」推起：盒基线以下的部分
+    /// 由 <c>f.Descent</c> 给出（inline-block 是末行基线以下那截，替换元素是 0），所以顶边 =
+    /// 行盒基线 − 盒高 + 盒基线以下。</summary>
     static float AtomicTop(InlineFrag f, float lineY, LineBox ln)
     {
         float boxH = f.Box!.TotalHeight;
+        float baseTop = lineY + ln.Baseline - boxH + f.Descent;   // vertical-align: baseline
         var va = f.Style.VerticalAlign;
         switch (va)
         {
             case "top": return lineY;
             case "bottom": return lineY + ln.Height - boxH;
-            case "middle": return lineY + ln.Baseline + 0.25f * f.FontSize - boxH / 2;
-            case "super": return lineY + ln.Baseline - boxH - 0.35f * f.FontSize;
-            case "sub": return lineY + ln.Baseline - boxH + 0.25f * f.FontSize;
+            case "middle": return lineY + ln.Baseline - f.FontSize * FontManager.XHeightPerEm(f.Style.FontFamily, f.Style.FontWeight) / 2 - boxH / 2;
+            case "super": return baseTop - 0.35f * f.FontSize;
+            case "sub": return baseTop + 0.25f * f.FontSize;
             default:
                 float len = va.EndsWith('%')
                     ? ln.Height * CssValueParser.ParseFloat(va[..^1]) / 100f
                     : CssValueParser.ToPixels(va, f.FontSize);
-                return lineY + ln.Baseline - boxH - (float.IsNaN(len) ? 0 : len);
+                return baseTop - (float.IsNaN(len) ? 0 : len);
         }
     }
 

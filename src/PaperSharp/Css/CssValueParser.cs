@@ -226,19 +226,20 @@ public static class CssValueParser
         _ => null,
     };
 
+    /// <summary>行高倍数。<c>normal</c>/未声明 → NaN（调用方按字体度量取 normal 行距，勿在此凑一个经验值）。</summary>
     public static float ParseLineHeight(string value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value == "normal") return 1.4f;
+        if (string.IsNullOrWhiteSpace(value) || value == "normal") return float.NaN;
         value = value.Trim();
         if (value.EndsWith("%"))
         {
             var p = ParseFloat(value[..^1]);
-            return p > 0 ? p / 100f : 1.4f;
+            return p > 0 ? p / 100f : float.NaN;
         }
         if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
-            return factor > 0 ? factor : 1.4f;
-        // 带单位（px/em）的行高这里按 1.4 兜底（demo 不做绝对行高单位换算）
-        return 1.4f;
+            return factor > 0 ? factor : float.NaN;
+        // 带单位（px/em）的行高这里按 normal 兜底（demo 不做绝对行高单位换算）
+        return float.NaN;
     }
 
     public static CssTextAlign ParseTextAlign(string value) => value?.Trim().ToLowerInvariant() switch

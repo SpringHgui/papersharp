@@ -9,7 +9,7 @@
 
 | 领域 | 缺口 | 成本 | 备注 |
 |---|---|---|---|
-| 性能/架构 | **AngleSharp 层叠超线性**：2000 元素文档 buildDoc 21–74s | **高（但已量化收益）** | → **M6，待拍板** |
+| 性能/架构 | ~~AngleSharp 层叠超线性：2000 元素文档 buildDoc 21–74s~~ **已消掉（09-24）**：物化样式表集合 → table 2000 行 74.4s→5.29s；同日第二刀（按元素缓存 + 双轮并一轮）再拿 Playground buildDoc **1.76×** | ~~高~~ **已交付** | 层叠性能理由用尽；M6 只剩依赖收敛，见 M6 与 PERF_REPORT §5.5/§5.6 |
 | 分页/CSS | `@media`、`transform` | 低–中 | 伪元素 `::before/::after` + 计数器、`background-clip: text`、`backdrop-filter` 已于 M8 交付；`overflow` 裁剪已交付（含 `clip`/`overlay`/两值简写的原文兜底）；`transform` 仍未做（依赖它的动画停在基线态） |
 | 布局/BFC | `overflow` 建立 BFC（float 包含、**父子** margin 坍缩隔离）、`display:flow-root` | 中 | 裁剪已交付、格式化上下文未做：`FloatContext.Insets/ClearTo` 无条件沿 `Parent` 链走到根（没有 BFC 停止边界），`LayoutBuilder` 的父子坍缩判定只看有无 border/padding。**兄弟**间坍缩与 overflow 无关，别照规范直觉改（实测已钉在 `MarginCollapsingTests` 与 `OverflowClipTests`） |
 | 定位 | `fixed`/`sticky` 视口语义 | 中 | 静态文档场景价值有限 |
@@ -24,20 +24,36 @@
 
 ## 里程碑
 
-### M6 · 自研级联替换 AngleSharp.Css —— 🟡 进行中（快照路径已落地）
+### M6 · 层叠性能：超线性已消，自研替换降级为可选 —— 🟡 进行中
 
-**依据（PERF_REPORT §5.1，Release 净跑实锤）**：`buildDoc` 逐元素 `GetComputedStyle` 随元素数 **~O(n^2.5)** 增长——table 2000 行 74.4s、flexlist 2000 条 21.3s（与元素类型无关，是层叠本身）；同规模自研布局仅 76/162ms。**>800 元素的文档即显著受益**；常规小文档不受影响（buildDoc 9–58ms）。
+**2026-09-24 状态变更（先读这条，本节下面的六步计划按此重排）**：作者 CSS 路径的 O(n^2.5) **已定位并消掉，且没有自研级联**。根因是 AngleSharp 的样式表集合是**未物化的 LINQ**，而它层叠一个元素时会对该元素的**每个祖先各枚举一次集合** → 每元素 O(深度 × 文档大小)。改动 ~40 行（`Css/EagerStyleCollection.cs`：整篇文档枚举一次、`DocContext.Styles` 复用），特异度排序 / UA·作者·内联顺序 / `!important` / 继承 / `var()` **一行语义都没替换**，仍由 AngleSharp 判定。
 
-六步计划（每步独立可回退，AngleSharp 核心保留做 DOM+选择器）：
+| | 改前 | 改后 |
+|---|---:|---:|
+| 引擎真实入口 table 2000 行 buildDoc | 74.4s | **5.29s** |
+| 净层叠同进程对拍（table / flexlist 2000） | 25.9s / 5.41s | 1.04s / 0.28s（**25.0× / 19.2×**） |
+| Playground 22 样例端到端 | 2,471ms | **2,091ms（−15%）** |
+| （同日第二刀，§5.6 按元素缓存 + 双轮并一轮，接上行） | 2,893ms | **2,001ms（累计口径见 PERF_REPORT §5.6：buildDoc 1.76×）** |
 
-1. ⏳ CSS tokenizer/parser（我们已有 `CssValueParser`/`AtPageParser` 的解析底子）
+**门槛因此回到「元素数轴」**：≤501 盒的真实页面只有一两成收益，上千元素的长表格/长页面才是主战场（PERF_REPORT §5.5 有机制反编译、探针 A/B/C/D/F/G 全表、四道正确性门）。
+
+**~~剩余的两刀~~ ✅ 两刀都已落地（09-24 同日第二刀，PERF_REPORT §5.6）**：
+
+- **(a) ✅ 按元素缓存 `ComputeCascadedStyle`**：递推式 `R(e)=ComputeCascadedStyle(e, parent: R(最近祖先))`（折叠可结合，等价于 AngleSharp 的逐祖先 Update），每元素/每伪元素一份缓存。探针新增 H 行：比 F 行低 **7.6–13.5×**，table 档已到 G 行下界附近。
+- **(b) ✅ 让每个元素只做一轮层叠**：raw 声明串直接吃 computed 轮缓存的**折算前**条目，双轮并一轮。⚠️ 与**已否决**的「无缓存时按元素启发式跳过第二轮」不是一回事（那条失败在 computed 对未声明属性返回空串、兜底必问一次；这条是问过的必然命中），见 PERF_REPORT §6.4 的更正。
+- 合起来引擎真实入口 `pgstage 9`：buildDoc **1,701 → 964ms（1.76×）**、e2e **2,893 → 2,001ms（1.45×）**。门：22 真实样例 × {宿主,::before,::after} × {computed,raw} × 94 属性 = **1,274,452 次比对 0 不一致**。
+- **(c) ✅ 第 3 刀：每元素属性记忆化视图 `PropCache`**（09-24 夜，PERF_REPORT §5.8）：`ReadStyle` 的 `Get`/`Spec` 各包一个惰性 Dictionary（引擎每元素 ~130 次属性读里重复的那部分变命中）。**同树 worktree A/B** 实测 buildDoc **−8~−11%**、e2e **−11%**（m1/pricing 系 −17~−19%）；门：两臂 22 样例 `boxes` JSON 22/22 字节全等。层叠侧性能杠杆到此连续兑现三刀，剩余候选转向自研值解析 span 化与预处理/DomPath 门控（§5.7 的自研 47%）。
+
+**六步计划（原方案，现仅为「彻底移除 AngleSharp.Css 依赖」服务；除②⑥已交付外不再阻塞性能）**：
+
+1. ⏸ **已降级** CSS tokenizer/parser —— 不再有性能理由
 2. ✅ 特异度 + key-selector 分桶匹配 —— **仅展平快照路径**已交付（`Css/FlatCascade.cs`：类名→声明索引，规则形状不符即整份弃权退回 AngleSharp）
-3. ⏳ 属性元数据表：继承性 / initial / 简写展开
-4. ⏳ 值解析直接接入现有 `CssValueParser` → `ComputedStyle`
-5. ⏳ 换掉 `StyleResolver` 里 `Get/Spec/Val/Raw` 的内部实现（对外零改动）——快照路径已在缝内替换，作者 CSS 路径待 ①③④
+3. ⏸ **已降级** 属性元数据表：继承性 / initial / 简写展开
+4. ⏸ **已降级** 值解析直接接入现有 `CssValueParser` → `ComputedStyle`
+5. ⏳ 换掉 `StyleResolver` 里 `Get/Spec/Val/Raw` 的内部实现（对外零改动）——快照路径已在缝内替换；作者 CSS 路径经 §5.5 已拿到 19–25×，剩余动机只有依赖收敛
 6. ✅ **双跑对账** —— 工具 `tools/SnapshotProfile ... diff`：逐元素逐字段 + 全量像素 + 三条灵敏度对照 + 逐类回填老值重渲染（结果见 PERF_REPORT §5.4）
 
-**已交付的量化结果（PERF_REPORT §5.4）**：真实站点快照（964 盒）WASM `precomputed` 渲染 **23.3s → 3.0s**，两路 PNG 字节完全相同。**剩余待办**：作者手写 CSS（14 基准样例、`RenderPng` 直接调用）仍走 AngleSharp 全量层叠，需 ①③④⑤ 才能覆盖。
+**已交付的量化结果**：① 真实站点快照（964 盒）WASM `precomputed` 渲染 **23.3s → 3.0s**，两路 PNG 字节完全相同（PERF_REPORT §5.4）；② 作者 CSS 路径超线性消掉，table 2000 行 74.4s → 5.29s（**§5.5**，本轮）；③ 同路按元素缓存 + 双轮并一轮，Playground 全语料 buildDoc **1.76×**、e2e **1.45×**（2,893 → 2,001ms，**§5.6**，同日）。
 
 附带收益：一次性消掉 README「坑位备忘」里 6 类 AngleSharp bug（NRE、% 折算、calc 预解析、简写序列化、UA 表、text-overflow 兜底）——快照路径已顺带消掉 UA 表幽灵声明与渐变 NRE 丢样式两类，另带出 `align-items`/`justify-content` 的 `normal` 归一与伪元素 `box-sizing` 两个真实缺陷修复。
 
@@ -85,7 +101,7 @@ HarfBuzz shaping（阿拉伯连写）+ 轻量 bidi（grapheme 级强方向 run�
 | M3 | vertical-align/balance/text-fit/conic/blend/mask/squircle/svg | ✅ | 否 |
 | M4 | JPEG/WebP/ICO/SVG、Google Fonts、var/calc | ✅ | 否 |
 | M5 | 书签/链接/metadata ✅ · Tagged/PDF-A/附件 ❌ | 🟡 | 否（增量尾部已解） |
-| **M6** | **自研级联替换 AngleSharp.Css** | **⏳ 待拍板** | **是（移除一个依赖）** |
+| **M6** | **层叠性能：超线性已消（物化样式表集合）· 自研替换降级为可选** | **🟡 进行中** | **暂否**（依赖收敛才触发） |
 | M7 | Arabic/bidi/emoji（HarfBuzz shaping + 字素 + 字形回退） | ✅ | 是（引 SkiaSharp.HarfBuzz） |
 | M8 | 伪元素 `::before/::after` + 计数器 / `background-clip: text` / `backdrop-filter` | ✅ | 否 |
 | M9 | `@keyframes`/`animation` 确定性取帧（非 transform 属性） | ✅ | 否 |

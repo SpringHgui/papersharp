@@ -244,15 +244,19 @@ UPDATE_GOLDENS=1 dotnet test tests/PaperSharp.Tests       :: 有意变更后重�
 
 ## 性能
 
-详见 [PERF_REPORT.md](PERF_REPORT.md)（Release `bench 50` 净跑，数据在 `src/PaperSharpSamples/bench_20260922.txt`）。要点：
+详见 [PERF_REPORT.md](PERF_REPORT.md)（§3–§5.4、§7 为 Release `bench 50` 净跑，数据在 `src/PaperSharpSamples/bench_20260922.txt`；§5.5 与 §6 为 2026-09-24 的作者 CSS 层叠定性与 Playground 语料对拍）。要点：
 
-- 单页 PDF 中位 184–280ms，其中 paintEncode（字体子集写入）占 **85–95%**；布局（measure+paginate）<2%。PNG 中位 27–107ms；吞吐 invoice **4.9 页/秒**（单线程）。
-- **`buildDoc`（AngleSharp 逐元素层叠）随元素数超线性 ~O(n^2.5)**：table 2000 行 74.4s / flexlist 2000 条 21.3s，而同规模自研布局仅 76/162ms。上千元素文档的唯一瓶颈是 CSS 层叠——ROADMAP M6（自研级联）的量化依据。
+- 单页 PDF 中位 184–280ms，其中 paintEncode（**字体子集写入 + PDF backend**，与 PNG 编码器无关）占 **85–95%**；布局（measure+paginate）<2%。PNG 中位 27–107ms、吞吐 invoice **4.9 页/秒**（单线程）——※ 这两个 PNG/吞吐数是换 PNG 编码器**之前**的 `bench 50` 数据，未重跑；新编码器的效果见 §6。
+- **`buildDoc`（AngleSharp 逐元素层叠）曾随元素数超线性 ~O(n^2.5)**：table 2000 行 74.4s / flexlist 2000 条 21.3s，而同规模自研布局仅 76/162ms。**2026-09-24 已定位并消掉**：根因不是层叠算法贵，是 AngleSharp 每层叠一个元素、且对其**每个祖先**，都把整份样式表集合（未物化的 LINQ）重新枚举一遍 → 每元素 O(深度 × 文档大小)。改成「整篇枚举一次、之后吃这份列表」（`Css/EagerStyleCollection.cs`，~40 行，特异度/继承/`!important`/`var()` 仍全部由 AngleSharp 判定）后 table 2000 行 **74.4s → 5.29s**、净层叠同进程对拍 **19–25×**，规模档回到近线性；逐属性 57,058 次比对 0 差异（PERF_REPORT §5.5）。ROADMAP M6 的「自研级联」因此降级为可选的依赖收敛项。
+- **「谁是第一瓶颈」有两个区间**：产物像素数主导时是**编码**，元素数上千时是**层叠**。2026-09-24 用自研并行 PNG 编码器把编码段压掉 **14×**（22 个真实页面样例合计 4752 → 339ms，端到端 **2.74×**、逐像素不变）之后，数百元素的常见页面（m1 501 盒：层叠 306ms vs 编码 46ms）也已转为层叠第一；随后上面的层叠改动把该语料端到端再压到 **2,091ms**（−15%，语料最大 501 盒，所以只有一两成）；同日第二刀（层叠结果**按元素缓存** + `ReadStyle` 双轮并一轮，语义仍零替换）在此之上把 22 样例 buildDoc 再压 **1.76×**、端到端 **2,893 → 2,001ms（1.45×）**，门是 1,274,452 次逐属性比对 0 不一致（PERF_REPORT §5.6）。层叠这条路的性能理由至此用尽。
 
 ## AngleSharp 坑位备忘（均已绕过，改这块代码前必读）
 
 - **computed 把 `%` 按 1024 视口折算成 px**（`height:100%`→`1024px`），`calc()` 同理被预解析 → 需要原始值的属性走 `GetDeclarations()` 取**声明值**（`Val()/Spec()`），% 与模板串交给 `CssSize` 布局期解析
 - **computed 不序列化 `margin`/`padding` 简写**（返回空串）→ 一律逐边读 longhand，否则静默丢 0
+- **`GetComputedStyle` 每次调用都重走全文档收集样式表，而且对元素的每个祖先各走一次**（`GetStyleCollection()` 内部是未物化的 `Concat` LINQ）→ **绝对不要在层叠循环里现取集合**：整篇文档要 `new EagerStyleCollection(window.GetStyleCollection())` 物化一次、`DocContext.Styles` 复用，否则每元素 O(深度 × 文档大小)、整篇 O(n²)（实测 2000 行表格 25.9s vs 物化后 1.04s，PERF_REPORT §5.5）。顺带：把 `GetStyleCollection()` 提到循环外**并不治**（探针 B 行 ≈ A 行），必须物化。且物化只消掉重枚举——AngleSharp 仍为每个祖先各跑一次全表匹配、结果反复重算，要用 `EagerStyleCollection` 自带的按元素缓存（递推 `R(e)=ComputeCascadedStyle(e, parent:R(最近祖先))`）才吃得到那 5–8×（§5.6）。
+- **computed 对「未声明的属性」直接返回空串，不补初始值** → 别指望「先看 computed、空则跳过」能省掉第二轮 `GetDeclarations()`：`Raw()/Spec()` 的兜底必然再问一次，实测闸门只放行 3/505 元素时 `GetDeclarations` 仍被调 505 次、耗时不变（PERF_REPORT §6.4）
+- **computed 折 `em` 用的是渲染设备基线 16px，不是元素自己的 `font-size`** → `margin`/`padding` 的 `em` **不能读 computed**：UA 的 `ul,ol{margin:1em 0}` 作用在 `.note{font-size:10pt}` 上会被折成 16px 而非 13.333px，每条列表项凭空下坠 2.667px。钉在单测 `AuthorMarginCascadeTests.UaMarginInEm_usesElementFontSize_notDeviceBase`，别把 `ReadStyle.MarginVal`「简化」成只读 computed
 - **`radial-gradient` 让整元素 `GetComputedStyle` 抛 NRE；`repeating-*` 渐变的 `CssText` 必抛** → `Get()` try/catch 兜底；background/background-image 一律不读 computed
 - **`text-overflow` 根本不实现** → `ScanUnsupported` 从原始 CSS 建 class/id/tag 索引，`Lookup()` 兜底；AngleSharp 缺啥往 `UnsupportedProps` 加
 - **`overflow` 只认 `hidden`/`auto`/`scroll`/`visible`**：`clip`、`overlay`、两值简写 `overflow: visible hidden` 在 computed **和** `GetDeclarations()` 里都是空串（解析阶段即判非法丢弃）→ 三种写法靠 `UnsupportedProps` 的原文兜底捞回；兜底正则必须带 `(?<![\w-])` 左边界，否则 `overflow` 会命中同一条规则里的 `text-overflow:clip`，把文本截断值当成盒级裁剪值

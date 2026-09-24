@@ -10,14 +10,16 @@ public enum PngFilter { None = 0, Up = 2 }
 /// <summary>
 /// 自研 PNG 编码器（8bit RGBA、非隔行、逐行滤波 + 按行分块并行 deflate）。
 ///
-/// 为什么要自己写：Skia 的 PNG 编码是 Playground 与一切长图导出的头号开销——pgstage 实测占端到端
-/// 60–90%（m1 21.2 Mpx 单是 <c>SKImage.Encode(Png,100)</c> 就 2224ms），而且它的 quality 参数
-/// 对 PNG 完全无效（q=10…100 都是 78–89ms / 105KB，一字不差），没有可调空间。Skia 慢在两处：
+/// 为什么要自己写：Skia 的 PNG 编码是 Playground 与一切长图导出的头号开销——改之前 pgstage 实测它占
+/// 端到端 60–90%（m1 21.2 Mpx 单是 <c>SKImage.Encode(Png,100)</c> 就 732ms 中位 / 628ms 分段最小，
+/// 22 样例合计 5.07s；见 PERF_REPORT §6.7），而且它的 quality 参数对 PNG 完全无效
+/// （q=100/50/10 三档产物字节一字不差：m1 均 1280KB，全语料均 6643KB），没有可调空间。Skia 慢在两处：
 /// 逐行在 5 种滤波里挑最优（PNG_ALL_FILTERS），再跑最高级 zlib，且全程单线程。
 ///
 /// 这里改成「固定滤波 + 按行分块并行 deflate」：各块以 Z_SYNC_FLUSH 收尾，拼成同一条 zlib 流，
 /// adler32 用 zlib 的合并公式（adler32_combine）跨块累加。分块损失一点压缩率（块间不能互引），
-/// 但省掉了 5 滤波搜索并把 deflate 摊到多核上。逐样例对账见 PngEncoderTests：同尺寸或更小，3–8× 快。
+/// 但省掉了 5 滤波搜索并把 deflate 摊到多核上。逐样例对账见 PngEncoderTests：同尺寸或更小；
+/// 提速随像素量增长（小样例数倍，m1 这类 20Mpx 级 20× 上下，22 样例语料合计 19×，见 PERF_REPORT §6.7）。
 ///
 /// 无损性是硬要求：本编码器的输出解码后必须与 Skia 的输出逐字节相同，这条钉在单元测试里。
 /// </summary>
@@ -38,8 +40,9 @@ public static class PngEncoder
     /// <summary>
     /// 分块数上限。**刻意写死而不跟 <c>Environment.ProcessorCount</c> 走**：块数决定 deflate 的
     /// 历史窗口在哪断开，因而决定输出字节；跟着核数走会让同一份文档在不同机器上编出不同的 PNG，
-    /// 而 PngGoldenTests 是逐字节比对的。8 块实测已吃到并行收益的绝大部分（m1 单线程 642ms → 8 块 601ms
-    /// 的差别主要在滤波与 IO，不在核数）。
+    /// 而 PngGoldenTests 是逐字节比对的。并行本身就是这条杠杆的来源（pgenc 22 样例合计：
+    /// 同滤波同档位 单线程 1563ms → 16 块 263ms），8 块已吃到绝大部分收益；调这个数会改动全部
+    /// golden 字节，别顺手改。
     /// </summary>
     const int MaxChunks = 8;
 

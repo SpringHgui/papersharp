@@ -106,10 +106,10 @@ public static class Benchmark
     }
 
     /// <summary>只跑布局复杂度扫描（纯 CPU，秒级完成，抗光栅/GC 噪声），用于展示 table 的定位复杂度增长。</summary>
-    public static void ScaleOnly(string assets)
+    public static void ScaleOnly(string assets, int[]? rows = null)
     {
         Console.WriteLine("SCALE,kind,n_rows,buildDoc_ms,toBox_ms,measure_ms,position_ms,layout_total_ms,us_per_row");
-        foreach (int n in new[] { 100, 200, 400, 800 })
+        foreach (int n in rows ?? new[] { 100, 200, 400, 800 })
         {
             var (th, tc) = SynthTable(n); LayoutScale("table", th, tc, assets, n);
             var (fh, fc) = SynthFlex(n); LayoutScale("flexlist", fh, fc, assets, n);
@@ -325,7 +325,7 @@ public static class Benchmark
         Console.WriteLine($"SCALE,{kind},{rows},{b:0.000},{t:0.000},{m:0.000},{p:0.000},{total:0.000},{total * 1000.0 / rows:0.0}");
     }
 
-    static (string html, string css) SynthTable(int rows)
+    internal static (string html, string css) SynthTable(int rows)
     {
         var sb = new StringBuilder("<table><thead><tr><th>项目</th><th>数量</th><th>单价</th><th>金额</th></tr></thead><tbody>");
         for (int i = 0; i < rows; i++)
@@ -334,7 +334,7 @@ public static class Benchmark
         return (sb.ToString(), "table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 8px}body{font-family:sans-serif;font-size:13px}");
     }
 
-    static (string html, string css) SynthFlex(int items)
+    internal static (string html, string css) SynthFlex(int items)
     {
         var sb = new StringBuilder("<div class='list'>");
         for (int i = 0; i < items; i++)

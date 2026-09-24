@@ -109,6 +109,9 @@ public static class StyleResolver
         // 展平快照的类名级联索引（见 FlatCascade）。非 null 时 ReadStyle 完全不碰 AngleSharp——
         // 实测 GetComputedStyle 在这类输入上每元素 1.82ms，是快照导出的头号开销（904 元素 WASM 侧 27s）。
         public FlatCascade? Flat;
+        // 作者 CSS 那条路的层叠入口（见 EagerStyleCollection）：整篇文档枚举一次样式表 + 每元素层叠结果终身缓存。
+        // 用具体类型 = 以本类的同名方法遮蔽 AngleSharp 的扩展方法，ReadStyle 的双轮层叠并成一条缓存路径。
+        public EagerStyleCollection Styles = null!;
     }
 
     public static ComputedStyle BuildDocument(string htmlBody, string userCss, double? animationTime = null, bool precomputed = false, float viewportWidth = 1024, bool domPath = false)
@@ -124,6 +127,7 @@ public static class StyleResolver
             userCss = sb.ToString();
             htmlBody = Regex.Replace(htmlBody, @"<style[^>]*>.*?</style>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         }
+        userCss = InlineUniqueVars(userCss);   // 必须先于下面所有索引与 AngleSharp：见方法注释
         ScanUnsupported(userCss, ctx);
         ScanVars(userCss, ctx);
         // margin 作者源微级联（见 AuthorBoxSpacing）：AngleSharp 的 UA 源比较按特异度而非源，
@@ -162,8 +166,10 @@ public static class StyleResolver
         using var doc = context.OpenAsync(req => req.Content(fullHtml)).GetAwaiter().GetResult();
         var body = doc.Body ?? throw new InvalidOperationException("no <body>");
         var window = doc.DefaultView ?? throw new InvalidOperationException("no window (Did WithCss() get applied?)");
+        // 层叠用的样式表在此物化一次（此后文档与样式表都只读）
+        ctx.Styles = new EagerStyleCollection(window.GetStyleCollection());
 
-        var root = Walk(window, body, null, ctx);
+        var root = Walk(body, null, ctx);
         if (ctx.HasPseudoRules) PseudoContent.Apply(root);   // 文档序求值 counter + 注入伪元素匿名盒
         if (animationTime.HasValue && ctx.Keyframes.Count > 0)
             Animation.Apply(root, ctx.Keyframes, animationTime.Value);   // 确定性取帧：按时刻插值覆盖样式
@@ -268,6 +274,142 @@ public static class StyleResolver
         return last.Length > 0 ? last.ToLowerInvariant() : null;
     }
 
+    /// <summary>
+    /// 把「全局唯一定值」的自定义属性直接写回 CSS 源码（`padding: var(--pad)` → `padding: 14px`）。
+    ///
+    /// 为什么必须在解析前：AngleSharp 认不出值里带 var() 的**简写**，整条声明直接丢弃——实测
+    /// `padding: var(--pad)`、`border: 1px solid var(--brand)`、`margin: var(--pad)` 的盒几何全为 0
+    /// （m4 因此均值 172px），而长写 `padding-bottom: var(--pad)` 能作为原始串读到、由 ExpandVars 救回。
+    /// 只有同名变量在多个作用域取到**不同值**（m4 的 --accent：:root/.scoped/.accent2 各一份）时才有
+    /// 元素级作用域可谈，那种保持原样交给 ExpandVars 逐元素裁决；唯一定值的变量在任何元素上都等于
+    /// 那个串，文本内联与逐元素展开结果一致，且顺带把 calc()/简写里的引用一并喂给了 AngleSharp。
+    /// 只改引用处、不动 `--x: …` 声明本身，故 VarMap 仍完整（内联 style 属性里的 var 照旧走逐元素路）。
+    /// </summary>
+    static string InlineUniqueVars(string css)
+    {
+        if (string.IsNullOrWhiteSpace(css) || !css.Contains("var(")) return css;
+
+        // 定值表：名字 → 值；同名取到不同值即歧义（作用域相关），整条退出内联
+        var defs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match block in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
+            foreach (Match d in Regex.Matches(block.Groups[2].Value, @"(--[A-Za-z][\w-]*)\s*:\s*([^;}]+)"))
+            {
+                var name = d.Groups[1].Value;
+                var val = d.Groups[2].Value.Trim();
+                if (ambiguous.Contains(name)) continue;
+                if (defs.TryGetValue(name, out var prev))
+                {
+                    if (prev != val) { ambiguous.Add(name); defs.Remove(name); }
+                    continue;
+                }
+                defs[name] = val;
+            }
+        if (defs.Count == 0) return css;
+
+        // 值本身可能再引用别的变量（变量链）：先把可内联的名字解析到底，成环的退出
+        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in defs.Keys.ToList())
+            if (ResolveVarText(name, defs, resolved, new HashSet<string>(StringComparer.OrdinalIgnoreCase)) is { } rv)
+                resolved[name] = rv;
+        if (resolved.Count == 0) return css;
+
+        var sb = new StringBuilder(css.Length);
+        for (int i = 0; i < css.Length;)
+        {
+            char c = css[i];
+            if (c == '"' || c == '\'')  // 字符串字面量（content: "var(--x)"）原样抄，内联会把它当值替换掉
+            {
+                int q = i + 1;
+                while (q < css.Length && css[q] != c) q += css[q] == '\\' ? 2 : 1;
+                q = Math.Min(q + 1, css.Length);
+                sb.Append(css, i, q - i);
+                i = q;
+                continue;
+            }
+            if ((c == 'v' || c == 'V') && i + 4 <= css.Length && css.AsSpan(i, 4).Equals("var(", StringComparison.OrdinalIgnoreCase))
+            {
+                int close = MatchParen(css, i + 3);
+                if (close > 0 && TryParseVar(css[(i + 4)..close], out var vname, out var vfallback)
+                    && resolved.TryGetValue(vname, out var vval))
+                {
+                    sb.Append(vval);
+                    i = close + 1;
+                    continue;
+                }
+            }
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
+
+        // 引用链解析：命中歧义名 / 环 / 括号不闭合都返回 null，该名字保持 var() 原样。
+        string? ResolveVarText(string name, Dictionary<string, string> defs, Dictionary<string, string> done, HashSet<string> path)
+        {
+            if (done.TryGetValue(name, out var cached)) return cached;
+            if (!path.Add(name)) return null;
+            var text = Subst(defs[name]);
+            path.Remove(name);
+            if (text != null) done[name] = text;
+            return text;
+
+            string? Subst(string value)
+            {
+                var b = new StringBuilder(value.Length);
+                for (int k = 0; k < value.Length;)
+                {
+                    if ((value[k] == 'v' || value[k] == 'V') && k + 4 <= value.Length
+                        && value.AsSpan(k, 4).Equals("var(", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int close = MatchParen(value, k + 3);
+                        if (close > 0 && TryParseVar(value[(k + 4)..close], out var n2, out var fb))
+                        {
+                            string? v2 = defs.TryGetValue(n2, out var dv) ? ResolveVarText(n2, defs, done, path) : null;
+                            if (v2 == null && fb == null) return null;      // 歧义/成环且无兜底 → 整条不内联
+                            b.Append(v2 ?? (fb ?? "").Trim());
+                            k = close + 1;
+                            continue;
+                        }
+                        return null;
+                    }
+                    b.Append(value[k]);
+                    k++;
+                }
+                return b.ToString();
+            }
+        }
+    }
+
+    /// <summary>自 open（'(' 的下标）起找配对 ')'，返回其下标；不闭合返回 -1。</summary>
+    static int MatchParen(string s, int open)
+    {
+        for (int j = open + 1, depth = 1; j < s.Length; j++)
+        {
+            if (s[j] == '(') depth++;
+            else if (s[j] == ')' && --depth == 0) return j;
+        }
+        return -1;
+    }
+
+    /// <summary>拆 var() 的圆括号内文本：变量名 + 顶层逗号后的兜底值。名字非法（嵌套函数等）返回 false。</summary>
+    static bool TryParseVar(string inner, out string name, out string? fallback)
+    {
+        name = "";
+        fallback = null;
+        int comma = -1;
+        for (int d = 0, k = 0; k < inner.Length; k++)
+        {
+            if (inner[k] == '(') d++;
+            else if (inner[k] == ')') d--;
+            else if (inner[k] == ',' && d == 0) { comma = k; break; }
+        }
+        var n = (comma < 0 ? inner : inner[..comma]).Trim();
+        if (n.Length < 3 || n[0] != '-' || n[1] != '-' || !char.IsLetter(n[2])) return false;
+        name = n;
+        if (comma >= 0) fallback = inner[(comma + 1)..];
+        return true;
+    }
+
     /// <summary>把值里的 var(--x[, 兜底]) 按元素作用域展开；支持嵌套与变量链，环/超深在 16 轮后放弃。</summary>
     static string ExpandVars(string value, IElement element, DocContext ctx)
     {
@@ -341,13 +483,13 @@ public static class StyleResolver
             ? CssSize.Abs(px) : CssSize.Auto;
     }
 
-    static ComputedStyle Walk(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx,
+    static ComputedStyle Walk(IElement element, ComputedStyle? parent, DocContext ctx,
                               FlatCascade.Scope? fparent = null, int nthOfType = 1)
     {
         var fs = ctx.Flat?.For(element, fparent);
         // 索引覆盖不了这个元素（如两个类规则同时命中）：整份退回 AngleSharp 继续，不在半路混用两套继承链。
         if (fs == null && ctx.Flat != null) ctx.Flat = null;
-        var cs = ReadStyle(window, element, parent, ctx, flat: fs);
+        var cs = ReadStyle(element, parent, ctx, flat: fs);
         cs.Tag = element.TagName.ToLowerInvariant();
 
         // DOM 身份串（body/div[1]/p[2]）：兄弟序按 CSS nth-of-type 的口径数——连 script/style/br 这些
@@ -429,7 +571,7 @@ public static class StyleResolver
                     cs.InlinePieces.Add(InlinePiece.Break);
                     continue;
                 }
-                var childStyle = Walk(window, ce, cs, ctx, fs, seq);
+                var childStyle = Walk(ce, cs, ctx, fs, seq);
                 cs.Children.Add(childStyle);
                 cs.InlinePieces.Add(InlinePiece.OfChild(childStyle));
             }
@@ -463,8 +605,8 @@ public static class StyleResolver
         // 实际注入与 counter 回填在 BuildDocument 末尾的 PseudoContent.Apply 文档序 pass 里做。
         if (ctx.HasPseudoRules && PseudoMayMatch(element, ctx))
         {
-            cs.Before = BuildPseudoGen(window, element, cs, ctx, "::before", fs);
-            cs.After = BuildPseudoGen(window, element, cs, ctx, "::after", fs);
+            cs.Before = BuildPseudoGen(element, cs, ctx, "::before", fs);
+            cs.After = BuildPseudoGen(element, cs, ctx, "::after", fs);
         }
 
         return cs;
@@ -535,7 +677,7 @@ public static class StyleResolver
     }
 
     /// <summary>为一个伪元素建生成盒：读 content（不成盒则返回 null）+ 伪元素自身 computed 样式（display 归一为 inline 缺省）。</summary>
-    static PseudoGen? BuildPseudoGen(IWindow window, IElement element, ComputedStyle owner, DocContext ctx,
+    static PseudoGen? BuildPseudoGen(IElement element, ComputedStyle owner, DocContext ctx,
                                      string pseudo, FlatCascade.Scope? fscope)
     {
         var fp = ctx.Flat?.ForPseudo(element, pseudo, fscope);
@@ -550,7 +692,7 @@ public static class StyleResolver
             // （吞逗号），交由 PseudoContent.Parse 的空格/逗号双兼容解析还原。
             try
             {
-                var c = window.GetComputedStyle(element, pseudo).GetPropertyValue("content");
+                var c = ctx.Styles.ComputeDeclarations(element, pseudo).GetPropertyValue("content");
                 return ExpandVars(c ?? "", element, ctx);
             }
             catch { return ""; }
@@ -558,7 +700,7 @@ public static class StyleResolver
         var runs = PseudoContent.Parse(Content(), name => element.GetAttribute(name));
         if (runs == null) return null;   // none / normal / 未设 → 不生成盒
 
-        var style = ReadStyle(window, element, owner, ctx, pseudo, fp);
+        var style = ReadStyle(element, owner, ctx, pseudo, fp);
         // display：AngleSharp 对伪元素 UA 默认注入 display:block（computed/declared 都是），无法据此判断作者意图；
         // 故以「作者是否在原始 CSS 里显式声明 display」为准——未声明则按 CSS 规范初值 inline。
         var declaredDisp = LookupPseudoMap(ctx.PseudoDisplay, element, pseudo) ?? "";
@@ -653,22 +795,25 @@ public static class StyleResolver
         return sb.ToString();
     }
 
-    static ComputedStyle ReadStyle(IWindow window, IElement element, ComputedStyle? parent, DocContext ctx,
+    static ComputedStyle ReadStyle(IElement element, ComputedStyle? parent, DocContext ctx,
                                    string? pseudo = null, FlatCascade.Scope? flat = null)
     {
         var s = new ComputedStyle { Parent = parent };
 
-        // AngleSharp.Css 的 GetComputedStyle 是 IWindow 上的扩展方法，会做完 cascade + 继承。
+        // AngleSharp.Css 的层叠入口：GetComputedStyle(window, el, pseudo) 展开就是
+        // window.GetStyleCollection().ComputeDeclarations(el, pseudo)，这里吃物化过的集合（见 EagerStyleCollection）。
         // 但它对某些值（如 radial-gradient）在 Compute() 里会抛 NullReferenceException——
         // 一旦抛异常该元素整个 computed 都拿不到。这里 try/catch 兜住：拿不到就退回声明值
         // （GetDeclarations，不触发 Compute）+ 父级继承，绝不让渲染崩。
         // pseudo 非空时读伪元素（::before/::after）的 computed，实测 AngleSharp 支持并返回 content。
         // flat 非空时（展平快照）两个调用都不做：那轮层叠在这类输入上实测 1.82 ms/元素，全是白烧。
         ICssStyleDeclaration? computed = null;
+        PropCache? computedView = null, rawView = null;
         if (flat == null)
         {
-            try { computed = window.GetComputedStyle(element, pseudo); }
+            try { computed = ctx.Styles.ComputeDeclarations(element, pseudo); }
             catch { /* 该元素 computed 不可用，下面全部走 Spec 兜底 */ }
+            computedView = new PropCache(computed, element, ctx);
         }
         string Get(string prop)
         {
@@ -677,16 +822,7 @@ public static class StyleResolver
                 var v = flat.Get(prop);
                 return v.Length == 0 ? "" : ExpandVars(v, element, ctx);
             }
-            // 单个属性读失败退回空串（下游都有 fallback），不让整个渲染崩
-            try
-            {
-                var cv = computed?.GetPropertyValue(prop);
-                return string.IsNullOrEmpty(cv) ? "" : ExpandVars(cv, element, ctx);
-            }
-            catch
-            {
-                return "";
-            }
+            return computedView!.Read(prop);
         }
 
         // 声明值（specified）：AngleSharp 的 GetComputedStyle 会把 % 一律按渲染设备的
@@ -697,15 +833,11 @@ public static class StyleResolver
         ICssStyleDeclaration? decls = null;
         if (flat == null && !ctx.Precomputed)
         {
-            try { decls = window.GetStyleCollection().GetDeclarations(element, pseudo); }
+            try { decls = ctx.Styles.GetDeclarations(element, pseudo); }
             catch { /* 拿不到声明值时退回 computed，不让渲染崩 */ }
         }
-        string Spec(string prop)
-        {
-            if (flat != null) return Get(prop);
-            try { return ExpandVars(decls?.GetPropertyValue(prop) ?? "", element, ctx); }
-            catch { return ""; }
-        }
+        if (flat == null) rawView = new PropCache(decls, element, ctx);
+        string Spec(string prop) => flat != null ? Get(prop) : rawView!.Read(prop);
         // 尺寸类：声明值是百分比或 calc() → 用声明值（保留 % 与线性式，交布局层解析）；否则优先 computed
         // （已解析 px/em/rem 且含继承），computed 不可用时退回声明值。
         string Val(string prop)
@@ -742,7 +874,10 @@ public static class StyleResolver
             };
         s.BoxSizing = CssValueParser.ParseKeyword(Raw("box-sizing"), "content-box");
         s.BorderCollapse = CssValueParser.ParseKeyword(Raw("border-collapse"), "separate");
-        s.BorderSpacing = Math.Max(0, CssValueParser.ToPixels(FirstToken(Raw("border-spacing")), s.FontSize));
+        // border-spacing 是两值属性："6px 4px" = 横向 6 纵向 4；只写一个值时纵同横。
+        var bs = (Raw("border-spacing") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        s.BorderSpacing = PixelSpacing(bs, 0, s.FontSize);
+        s.BorderSpacingV = PixelSpacing(bs, bs.Length > 1 ? 1 : 0, s.FontSize);
 
         // 字号：支持 %（相对父字号）、em/rem（父字号基准）、px/pt
         s.FontSize = ParseFontSize(Val("font-size"), parent?.FontSize ?? 16f);
@@ -757,7 +892,13 @@ public static class StyleResolver
         if (bgc == null || bgc.Value.Alpha == 0)
             bgc = ExtractBackgroundColor(Spec("background")) ?? bgc;
         s.BackgroundColor = bgc ?? SKColor.Empty;
-        s.LineHeightFactor = CssValueParser.ParseLineHeight(Val("line-height"));
+        // line-height:normal（含从未声明）不是固定倍数，而是**该字体自己的**正常行距：
+        // 浏览器量的就是 ascent+descent+lineGap（雅黑 1.318em、serif 回退 1.4875em），
+        // 统一按 1.4 兜底会让每一段正文各差几个百分点，逐段累积把整页下部推下去。
+        float lhFactor = CssValueParser.ParseLineHeight(Val("line-height"));
+        s.LineHeightFactor = float.IsNaN(lhFactor)
+            ? PaperSharp.Layout.FontManager.NormalLineHeight(s.FontFamily, s.FontWeight)
+            : lhFactor;
         // direction：computed 拿不到时按 CSS 继承语义手动取父级；RTL 段落里 text-align 的
         // start/end 按书写方向解析（start→右），未显式设置时默认右对齐。
         var dirRaw = Raw("direction");
@@ -789,6 +930,10 @@ public static class StyleResolver
             "padding-top" => Edge(4), "padding-right" => Edge(5), "padding-bottom" => Edge(6), "padding-left" => Edge(7),
             _ => null,
         };
+        // 宿主元素的作者桶**不能**当伪元素的 padding 用：Resolve 只按宿主匹配，::after 于是继承了宿主的
+        // padding（m8 的 .card::after 声明 0 3px×6px，实测被 .card 的 padding:26px 撑到 30px 见宽、
+        // 整卡高 452.4 vs 浏览器 410）。padding 本就永不继承，宿主写没写过都对生成盒无效。
+        string? AuthorPadding(string prop) => string.IsNullOrEmpty(pseudo) ? AuthorEdge(prop) : null;
 
         string MarginVal(string prop)
         {
@@ -801,7 +946,7 @@ public static class StyleResolver
         string PaddingVal(string prop)
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已折好用值，无声明可谈
-            if (AuthorEdge(prop) is { Length: > 0 } pv) return pv;
+            if (AuthorPadding(prop) is { Length: > 0 } pv) return pv;
             return Size0(prop);
         }
         s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);
@@ -988,6 +1133,45 @@ public static class StyleResolver
         return s;
     }
 
+    /// <summary>
+    /// 每元素的属性读记忆化视图：同一个声明集合上每条属性**至多问 AngleSharp 一次**，
+    /// 结果（含 ExpandVars 后的串、空串、以及「读取抛异常」= null）都进字典。
+    /// 动机（pgbuild §5.7 实测）：ReadStyle 的包装函数彼此不缓存——<c>Val</c> 恒先 Spec 再 Get
+    /// （2 次读）、<c>Raw</c>/Lookup 在 computed 为空时还会再 Spec 一遍，每元素实际发生 ~130 次
+    /// <c>GetPropertyValue</c>（去重后唯一属性只有 ~94 个），是 buildDoc 里最大的单一开销。
+    /// 缓存安全的前提与 EagerStyleCollection 相同：渲染期间文档静态，同一声明的同一属性取值恒定。
+    /// 单条读失败退回空串（下游都有 fallback），不让整个渲染崩。
+    /// </summary>
+    sealed class PropCache
+    {
+        readonly ICssStyleDeclaration? _decl;
+        readonly IElement _element;
+        readonly DocContext _ctx;
+        Dictionary<string, string?>? _map;   // null 值 = 该属性读取抛过（缓存后不再重试、不再抛）
+
+        public PropCache(ICssStyleDeclaration? decl, IElement element, DocContext ctx)
+        {
+            _decl = decl;
+            _element = element;
+            _ctx = ctx;
+        }
+
+        public string Read(string prop)
+        {
+            var map = _map ??= new Dictionary<string, string?>(StringComparer.Ordinal);
+            if (map.TryGetValue(prop, out var cached)) return cached ?? "";
+            string? v;
+            try
+            {
+                var raw = _decl?.GetPropertyValue(prop);
+                v = string.IsNullOrEmpty(raw) ? "" : ExpandVars(raw!, _element, _ctx);
+            }
+            catch { v = null; }
+            map[prop] = v;
+            return v ?? "";
+        }
+    }
+
     // 从 background 简写里取顶层纯色分量：逐个 depth-0 token 试 ParseColor，
     // 跳过 linear-gradient(...)/url(...)/no-repeat 等非色值 token。
     static SKColor? ExtractBackgroundColor(string decl)
@@ -1022,6 +1206,11 @@ public static class StyleResolver
 
     static bool IsAutoKw(string v) => v.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
     static string FirstToken(string v) => (v ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+    static float PixelSpacing(string[] toks, int i, float fontSize)
+    {
+        var px = i < toks.Length ? CssValueParser.ToPixels(toks[i], fontSize) : float.NaN;
+        return float.IsNaN(px) || px < 0 ? 0 : px;
+    }
     static string CleanCounter(string? v) { v = (v ?? "").Trim(); return v.Length == 0 || v.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : v; }
     static float FirstRadius(string v, float fontSize)
     {
