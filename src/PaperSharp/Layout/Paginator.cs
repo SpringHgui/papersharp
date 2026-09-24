@@ -97,9 +97,12 @@ public static class Paginator
 
             // 相邻兄弟的共用 margin 只算一次。游标必须和 MeasureBlock/PositionRec 吃同一个值，
             // 否则「量出来按坍缩、翻页按不坍缩」会把多段样例凭空挤出一页（long 实测 2 → 3）。
-            CurY -= LayoutBuilder.AbsorbMargin(_flowPrev, s);
+            // 传盒而非 style：AbsorbMargin 比的是 EffTop（含首子逃逸上来的那截），见其注释。
+            CurY -= LayoutBuilder.AbsorbMargin(_flowPrev, box);
 
-            float h = box.TotalHeight;
+            // 流高同样走 LayoutBuilder 的坍缩口径：首子顶边距被父吸收时不该占页内空间，
+            // 按 TotalHeight 算会让分页版比长图版凭空多出一截、进而多切一页。
+            float h = LayoutBuilder.FlowHeight(box);
             float remaining = ContentBottom - CurY;
             if (h <= remaining + 0.5f)
             {
@@ -213,9 +216,8 @@ public static class Paginator
             float bx = x + s.MarginLeft;
             float innerX = bx + s.BorderWidthLeft + s.PaddingLeft;
             int startPage = Pages.Count - 1;
-            float headTop = CurY + s.MarginTop;
-
-            // 内容从 headTop + 上边框/内边距 开始
+            // 内容从 headTop + 上边框/内边距 开始（headTop 走 FlowInset：顶边距被父吸收时不再往下推）
+            float headTop = CurY + LayoutBuilder.FlowInset(box);
             CurY = headTop + s.BorderWidthTop + s.PaddingTop;
 
             if (box.WrappedLines != null)

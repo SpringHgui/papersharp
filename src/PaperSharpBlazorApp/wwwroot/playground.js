@@ -45,6 +45,10 @@ function measure(iframe) {
 
   const visit = (el, path) => {
     const cs = win.getComputedStyle(el);
+    // tagName 大小写陷阱：HTML 元素是 SVG 命名空间外的大写标签，而 <svg> 及其内部一律小写
+    // （el.tagName === "svg"）。直接 has("SVG") 判不中，就会下钻进 svg，把 rect/circle/path/text
+    // 量成「浏览器独有盒」——引擎侧 svg 是替换元素、内部不成盒，这些全是假差异。
+    const tn = el.tagName.toUpperCase();
     if (cs.display === "none") return;            // 引擎也不成盒，两边都不记
     if (!PASS_THROUGH_DISPLAY.has(cs.display)) {  // 行组不 emit，但要继续下钻找 tr/td
       const r = el.getBoundingClientRect();
@@ -57,11 +61,11 @@ function measure(iframe) {
         h: r.height,
       });
     }
-    if (NO_DESCEND.has(el.tagName)) return;
+    if (NO_DESCEND.has(tn)) return;
     const seq = childSeqMap();
     for (const kid of el.children) {
       const n = seq(kid.tagName);
-      if (NO_BOX.has(kid.tagName)) continue;      // 号已占，人不出现
+      if (NO_BOX.has(kid.tagName.toUpperCase())) continue;   // 号已占，人不出现
       visit(kid, pathOf(path, kid.tagName, n));
     }
   };
@@ -74,6 +78,9 @@ function measure(iframe) {
 async function settle(doc, win) {
   await new Promise((r) => win.requestAnimationFrame(() => win.requestAnimationFrame(r)));
   try { await doc.fonts?.ready; } catch { /* 老内核没有 FontFaceSet，忽略 */ }
+  // 动画定格：引擎出的是 animationTime 上的静态一帧（Playground 取初始帧），浏览器却在实时播放。
+  // 不钉回 t=0，被动画改过的盒每一帧都在报漂移，且数值随刷新时机随机变——比的就不是同一份输入了。
+  try { for (const a of doc.getAnimations()) { a.pause(); a.currentTime = 0; } } catch { /* 老内核无 Web Animations，忽略 */ }
   await new Promise((r) => win.requestAnimationFrame(() => win.requestAnimationFrame(r)));
 }
 

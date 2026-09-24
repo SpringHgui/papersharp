@@ -67,7 +67,8 @@ if (args.Length > 2 && args[0] == "svgpng")
 if (args.Length > 1 && args[0] == "tree")
 {
     var html = File.ReadAllText(Path.Combine(assets, args[1] + ".html"));
-    var css = File.ReadAllText(Path.Combine(assets, args[1] + ".css"));
+    var cssPath = Path.Combine(assets, args[1] + ".css");
+    var css = File.Exists(cssPath) ? File.ReadAllText(cssPath) : "";   // 样式内嵌于 <style> 的样例没有同名 .css
     float treeW = args.Length > 2 && float.TryParse(args[2], out var tw2) ? tw2 : 794;
     var doc = PaperSharp.Css.StyleResolver.BuildDocument(html, css, viewportWidth: treeW);
     var root = PaperSharp.Layout.LayoutBuilder.ToBoxTree(doc);
@@ -101,15 +102,16 @@ if (args.Length > 1 && args[0] == "boxes")
     var html = File.ReadAllText(Path.Combine(assets, name + ".html"));
     var css = File.Exists(Path.Combine(assets, name + ".css")) ? File.ReadAllText(Path.Combine(assets, name + ".css")) : "";
 
-    var r = Renderer.RenderRasterWithBoxes(html, css, boxW, baseDir: assets);
+    var r = Renderer.RenderRasterWithBoxes(html, css, boxW, baseDir: assets, scale: 2f);
+    File.WriteAllBytes(Path.Combine(outDir, $"boxes-{name}.png"), r.Bytes);   // 目视核对用（与金标同 2x 参数）
     File.WriteAllText(Path.Combine(outDir, $"boxes-{name}.json"),
-        System.Text.Json.JsonSerializer.Serialize(new { width = boxW, bodyX = r.BodyX, bodyY = r.BodyY, boxes = r.Boxes },
+        System.Text.Json.JsonSerializer.Serialize(new { width = boxW, contentWidth = r.ContentWidth, bodyX = r.BodyX, bodyY = r.BodyY, boxes = r.Boxes },
             new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
 
     var baseHref = "file:///" + assets.Replace('\\', '/').TrimEnd('/') + "/";
     var head = "<meta charset=\"utf-8\">" +
                $"<base href=\"{baseHref}\">" +
-               $"<style>{PaperSharp.Css.StyleResolver.UaStylesheet}</style>" +
+               $"<style>{PaperSharp.Css.StyleResolver.UaStylesheetForPreview}</style>" +
                (string.IsNullOrWhiteSpace(css) ? "" : $"<style>{css}</style>") +
                "<style>::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}" +
                "html{scrollbar-width:none!important;-ms-overflow-style:none!important}</style>";

@@ -26,7 +26,14 @@ public static class StyleResolver
         h2 { font-size: 24px; font-weight: bold; margin: 20px 0; }
         h3 { font-size: 19px; font-weight: bold; margin: 19px 0; }
         p { margin: 16px 0; }
-        /* 本表按 author 源注入：作者写了 margin（含 `* { margin:0 }` 重置）时由 AuthorMargins 微级联裁决，
+        /* 列表 UA 默认（实测 headless Edge：li 在 x=40、宽比 ul 少 40；本表缺这两行时引擎把 li 摆到 x=0 满宽，
+           是肉眼可见的错位而非比对口径问题）。嵌套列表的块边距归零也是浏览器行为。 */
+        ul, ol { margin: 1em 0; padding-left: 40px; }
+        ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; }
+        dd { margin-left: 40px; }
+        blockquote { margin: 1em 40px; }
+        figure { margin: 1em 40px; }
+        /* 本表按 author 源注入：作者写了 margin（含 `* { margin:0 }` 重置）时由 AuthorBoxSpacing 微级联裁决，
            不会像现在这样被这里的元素选择器反向压过重置；无作者声明才落到本表/内置 UA 默认值。 */
         div, section, article, header, footer, main { display: block; }
         /* 行内级元素默认 display:inline（AngleSharp 未必内置 UA 表，显式声明以驱动 inline 格式化上下文检测） */
@@ -44,11 +51,24 @@ public static class StyleResolver
         button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
         """;
 
+    /// <summary>
+    /// 注进「浏览器预览文档」的那一份：裹进 <c>@layer</c>，让作者样式（未分层）恒压过它。
+    /// 引擎侧本表是真 UA 源——作者写 <c>* { margin:0 }</c> 就把它压掉（AuthorBoxSpacing 裁决）；
+    /// 浏览器侧只能当 author 注，若不分层，<c>h2{margin:20px 0}</c>（0,0,1）会反胜 <c>*</c>（0,0,0），
+    /// 于是每个标题凭空差出 20px（pricing-mid 实测整棵子树下坠）。分层后两侧优先级才是一套。
+    /// </summary>
+    public static string UaStylesheetForPreview => "@layer paper-ua {\n" + UaStylesheet + "\n}";
+
     // AngleSharp.Css 不实现的属性（computed/declared 都拿不到），从原始 CSS 里按选择器兜底扫出来。
     // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
     // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
     // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
-    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y" };
+    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
+        // 盒对齐（Box Alignment）新写法的属性：AngleSharp 只认 flexbox 时代的关键字集，
+        // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
+        // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
+        // （_gsel 实测：align-self:start 高度 120 而非 21.6，justify-self:start 宽 200 而非 12.1）。
+        "align-self", "justify-self", "align-items", "justify-items", "place-self", "place-items", "align-content", "justify-content" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -75,8 +95,8 @@ public static class StyleResolver
         // display:block（computed/declared 都是），无法据其判断作者意图，故从原始 CSS 扫显式声明。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, List<Keyframe>> Keyframes = new();   // @keyframes 表（渲染传 animationTime 时按时刻取帧）
-        public AuthorMargins? Margins;      // margin 作者源微级联索引（见 AuthorMargins）
-        public float ViewportWidth = 1024;  // 供 Margins 的 @media 条件判定
+        public AuthorBoxSpacing? Spacing;       // margin/padding 作者源微级联索引（见 AuthorBoxSpacing）
+        public float ViewportWidth = 1024;  // 供 Spacing 的 @media 条件判定
         // 伪元素作用域 token 集（.cls / #id / tag）：只有 CSS 里所有伪元素选择器都能约成这种 token 时才非 null，
         // 用来跳过「明显不可能有 ::before/::after 的元素」——每次 GetComputedStyle(el, pseudo) 是一整轮层叠
         // （实测 1.7ms/元素/次，伪元素前后各一次 + 各自样式再一次 → 每元素最多多花 ~5ms），是快照类输入最大的开销。
@@ -106,9 +126,9 @@ public static class StyleResolver
         }
         ScanUnsupported(userCss, ctx);
         ScanVars(userCss, ctx);
-        // margin 作者源微级联（见 AuthorMargins）：AngleSharp 的 UA 源比较按特异度而非源，
+        // margin 作者源微级联（见 AuthorBoxSpacing）：AngleSharp 的 UA 源比较按特异度而非源，
         // `* { margin:0 }` 压不住 h4 等内置默认；作者声明了 margin 时由本索引裁决。
-        ctx.Margins = AuthorMargins.Parse(userCss ?? "");
+        ctx.Spacing = AuthorBoxSpacing.Parse(userCss ?? "");
         ctx.ViewportWidth = viewportWidth;
         // 展平快照（precomputed）才试建类名索引；CSS 里只要还有 @rule/组合器/特异度竞争就返回 null，整份走老路。
         if (precomputed) ctx.Flat = FlatCascade.TryBuild(userCss);
@@ -431,12 +451,13 @@ public static class StyleResolver
         bool blockish = cs.Display == "block" || cs.Display == "table-cell";
         cs.IsInlineFC = blockish && !hasBlockChild && (hasInlineEl || hasBr || (hasImgChild && cs.TextContent != null));
 
-        // 块级子元素与行内替换元素（img/svg）混排：浏览器把行内内容裹进匿名块成 IFC——img 坐在基线上，
-        // 行盒底还留一截 strut descent（经典「图片下方那道缝」）。此前引擎把 img 直接当块级子盒，
-        // 缺这截缝，img 之后的每个兄弟整体往上漂（img 样例里 27 盒有 12 盒因此 +5px）。
-        // 只在块自身没有直接文本时裹：有文本仍走老的 TextContent 路径，不节外生枝。
-        if (blockish && !cs.IsInlineFC && hasBlockChild && hasImgChild && string.IsNullOrEmpty(cs.TextContent))
-            cs.Children = WrapReplacedInlineRuns(cs);
+        // 块里与块级兄弟混排的行内级内容（inline 元素、img/svg）：CSS 会把它裹进匿名块再立行盒。
+        // 不裹的话它就是父块的一个普通块级子盒 —— 整行拉满、按块级定位（m1 的
+        // div.note > strong 实测引擎 1168×21 vs 浏览器 132×17，还连带把后面的 <ul> 顶下一行）。
+        // 只裹「元素行内片段」：直接文本参与裹行需要按 DOM 序切分文本，本引擎的 TextContent
+        // 是整块合并的，切不准则宁可退回老路径，故有直接文本时不接管。
+        if (blockish && !cs.IsInlineFC && string.IsNullOrEmpty(cs.TextContent))
+            cs.Children = WrapAnonymousInlineRuns(cs);
 
         // 伪元素 ::before/::after：仅当 CSS 里确有伪元素规则时才建生成盒（content 片段 + 自身样式），
         // 实际注入与 counter 回填在 BuildDocument 末尾的 PseudoContent.Apply 文档序 pass 里做。
@@ -450,22 +471,31 @@ public static class StyleResolver
     }
 
     /// <summary>
-    /// 把块级子元素之间连续的 img/svg 裹成匿名 inline-FC 块（CSS 的 anonymous block），其余子元素原位保留。
-    /// 浏览器对「图 + 块」混排正是这么建的：匿名块给图片立一行盒，图片下方那截 strut descent 才留得下来。
+    /// 把块级子元素之间连续的行内级片段（inline 元素 / img / svg）裹成匿名 inline-FC 块
+    /// （CSS 的 anonymous block），其余子元素原位保留。浏览器对「行内 + 块」混排正是这么建的：
+    /// 匿名块给行内内容立一行盒，图片下方那截 strut descent 也才留得下来。
+    /// 纯 img/svg 的run即便父块没有块级兄弟也要裹（保持原行为：块里只有图时整块就是行盒）；
+    /// 纯 inline 元素的run只有在确实与块级兄弟混排时才裹——全是行内时上面已判成 IsInlineFC。
     /// </summary>
-    static List<ComputedStyle> WrapReplacedInlineRuns(ComputedStyle owner)
+    static List<ComputedStyle> WrapAnonymousInlineRuns(ComputedStyle owner)
     {
+        bool Inlineish(ComputedStyle c) => c.Display != "none"
+            && (c.Tag is "img" or "svg" || ComputedStyle.IsInlineLevel(c.Display));
+        bool Replaced(ComputedStyle c) => c.Tag is "img" or "svg";
+        bool hasBlockSibling = owner.Children.Any(c => !Inlineish(c));
         var outList = new List<ComputedStyle>(owner.Children.Count);
         List<ComputedStyle>? run = null;
         void Flush()
         {
             if (run == null) return;
-            outList.Add(AnonInlineBlock(owner, run));
+            bool worthWrapping = hasBlockSibling || run.All(Replaced);
+            if (worthWrapping) outList.Add(AnonInlineBlock(owner, run));
+            else outList.AddRange(run);   // 没有块级兄弟可比照，退回原样（不凭空造匿名层）
             run = null;
         }
         foreach (var c in owner.Children)
         {
-            if (c.Tag is "img" or "svg" && c.Display != "none") (run ??= new List<ComputedStyle>()).Add(c);
+            if (Inlineish(c)) (run ??= new List<ComputedStyle>()).Add(c);
             else { Flush(); outList.Add(c); }
         }
         Flush();
@@ -744,14 +774,22 @@ public static class StyleResolver
 
         // margin / padding：按 longhand 读声明值（保留 %），布局期按包含块宽解析。
         // CSS 里 margin/padding 的百分比一律相对包含块的**行内尺寸（宽）**，横竖同基准。
-        // margin 不走继承，声明值即权威：AngleSharp 的 computed 会让内置 UA 的 margin-block-start
-        // 穿透作者 `* { margin:0 }` 重置（h4 实测返回 1.12em），故声明值优先、无声明才退 computed。
+        // 两者都不走继承，声明值即权威：AngleSharp 的 computed/declared 会让内置 UA 的
+        // margin-block-start、以及本表给 ul/ol 的 padding-left 穿透作者 `* { margin:0; padding:0 }`
+        // 重置（h4 实测返回 1.12em），故先交 AuthorBoxSpacing 按作者源裁决，无声明才退 AngleSharp。
         string MarginVal(string prop)
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已算好 used value，缺值即 0，Spec≡Get 无声明可谈
-            if (ctx.Margins != null && ctx.Margins.TryGet(element, ctx.ViewportWidth, prop, out var mv)) return mv;
+            if (ctx.Spacing != null && ctx.Spacing.TryGet(element, ctx.ViewportWidth, prop, out var mv)) return mv;
             var sp = Spec(prop);
             return string.IsNullOrWhiteSpace(sp) ? Get(prop) : sp;
+        }
+        /// <summary>padding 与 margin 同病同治：本表给 ul/ol/dd 写的 UA 默认不得压过作者的 `* { padding:0 }`。</summary>
+        string PaddingVal(string prop)
+        {
+            if (flat != null) return Size0(prop);   // 快照路径：浏览器已折好用值，无声明可谈
+            if (ctx.Spacing != null && ctx.Spacing.TryGet(element, ctx.ViewportWidth, prop, out var pv)) return pv;
+            return Size0(prop);
         }
         s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);
         s.MarginRightCss = CssValueParser.ParseSize(MarginVal("margin-right"), s.FontSize);
@@ -763,10 +801,10 @@ public static class StyleResolver
         s.MarginRightAuto = IsAutoKw(Get("margin-right"));
         s.MarginBottomAuto = IsAutoKw(Get("margin-bottom"));
         s.MarginLeftAuto = IsAutoKw(Get("margin-left"));
-        s.PaddingTopCss = CssValueParser.ParseSize(Size0("padding-top"), s.FontSize);
-        s.PaddingRightCss = CssValueParser.ParseSize(Size0("padding-right"), s.FontSize);
-        s.PaddingBottomCss = CssValueParser.ParseSize(Size0("padding-bottom"), s.FontSize);
-        s.PaddingLeftCss = CssValueParser.ParseSize(Size0("padding-left"), s.FontSize);
+        s.PaddingTopCss = CssValueParser.ParseSize(PaddingVal("padding-top"), s.FontSize);
+        s.PaddingRightCss = CssValueParser.ParseSize(PaddingVal("padding-right"), s.FontSize);
+        s.PaddingBottomCss = CssValueParser.ParseSize(PaddingVal("padding-bottom"), s.FontSize);
+        s.PaddingLeftCss = CssValueParser.ParseSize(PaddingVal("padding-left"), s.FontSize);
 
         // border-width：CSS 规范不接受百分比（AngleSharp 会直接丢弃），走 computed px/em，退回声明值。
         s.BorderWidthTop = Math.Max(0, CssValueParser.ToPixels(Val("border-top-width"), s.FontSize));
@@ -786,14 +824,41 @@ public static class StyleResolver
         // normal 是浏览器对未设 align/justify 的 computed 原话（快照会照抄），按规范折算：
         // align-items:normal ≡ stretch（布局只认 stretch，LayoutBuilder 的 stretchDefault 否则失效），
         // justify-content:normal ≡ flex-start。
-        s.JustifyContent = CssValueParser.ParseKeyword(Raw("justify-content"), "flex-start");
+        // 对齐属性一律走 Lookup：AngleSharp 丢掉的那批（start/end/justify-self/place-*）由原始 CSS 兜底表补回。
+        string Aln(string prop, string dflt) => CssValueParser.ParseKeyword(Lookup(prop, element, Raw(prop), ctx), dflt);
+        s.JustifyContent = Aln("justify-content", "flex-start");
         if (s.JustifyContent == "normal") s.JustifyContent = "flex-start";
-        s.AlignItems = CssValueParser.ParseKeyword(Raw("align-items"), "stretch");
+        s.AlignItems = Aln("align-items", "stretch");
         if (s.AlignItems == "normal") s.AlignItems = "stretch";
-        s.AlignSelf = CssValueParser.ParseKeyword(Raw("align-self"), "auto");
+        s.AlignSelf = Aln("align-self", "auto");
+        // grid 的两轴自对齐 + 多轨分布：longhand 缺省时才由 place-self/place-items 简写补
+        //（同条规则里长写恒压简写，与 margin 那套同理，按属性粒度裁决）。
+        s.JustifySelf = Aln("justify-self", "auto");
+        s.JustifyItems = Aln("justify-items", "stretch");
+        s.AlignContent = Aln("align-content", "normal");
+        if (CssValueParser.TryParsePositional2(Lookup("place-self", element, Raw("place-self"), ctx), out var psA, out var psJ))
+        {
+            if (string.IsNullOrWhiteSpace(Raw("align-self"))) s.AlignSelf = psA;
+            if (string.IsNullOrWhiteSpace(Raw("justify-self"))) s.JustifySelf = psJ;
+        }
+        if (CssValueParser.TryParsePositional2(Lookup("place-items", element, Raw("place-items"), ctx), out var piA, out var piJ))
+        {
+            if (string.IsNullOrWhiteSpace(Raw("align-items"))) s.AlignItems = piA == "auto" ? "stretch" : piA;
+            if (string.IsNullOrWhiteSpace(Raw("justify-items"))) s.JustifyItems = piJ == "auto" ? "stretch" : piJ;
+        }
+        if (s.AlignItems == "normal") s.AlignItems = "stretch";
+        if (s.JustifyItems == "normal") s.JustifyItems = "stretch";
         s.FlexGrow = CssValueParser.ParseFlexNumber(Raw("flex-grow"), 0f);
         s.FlexShrink = CssValueParser.ParseFlexNumber(Raw("flex-shrink"), 1f);
         s.FlexBasis = CssValueParser.ParseSize(Val("flex-basis"), s.FontSize);
+        // flex 简写：AngleSharp 不把它摊成三个长写，只读上面三行等于整条丢掉 `flex: 1`。
+        // 显式写了长写的那一项以长写为准（同条规则里长写覆盖简写），其余由简写补上。
+        if (CssValueParser.TryParseFlexShorthand(Raw("flex"), s.FontSize, out var fxG, out var fxS, out var fxB))
+        {
+            if (string.IsNullOrWhiteSpace(Raw("flex-grow"))) s.FlexGrow = fxG;
+            if (string.IsNullOrWhiteSpace(Raw("flex-shrink"))) s.FlexShrink = fxS;
+            if (string.IsNullOrWhiteSpace(Val("flex-basis"))) s.FlexBasis = fxB;
+        }
         s.Gap = CssValueParser.ParseSize(Val("gap"), s.FontSize);
 
         // Grid：模板串优先取声明值——computed 会把 calc()/repeat() 按 1024 视口提前折算成 px 列表，

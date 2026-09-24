@@ -135,7 +135,7 @@ public sealed class PlaygroundService
     {
         var head = "<meta charset=\"utf-8\">" +
                    (assetBaseHref is { Length: > 0 } b ? $"<base href=\"{b}\">" : "") +
-                   $"<style>{StyleResolver.UaStylesheet}</style>" +
+                   $"<style>{StyleResolver.UaStylesheetForPreview}</style>" +
                    (string.IsNullOrWhiteSpace(extraCss) ? "" : $"<style>{extraCss}</style>") +
                    $"<style>{PreviewOnlyStyles}</style>";
 

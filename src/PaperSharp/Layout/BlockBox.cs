@@ -72,6 +72,19 @@ public sealed class BlockBox
     public float ContentWidth;
     public float ContentHeight;
 
+    /// <summary>
+    /// 与首/尾流内子坍缩 margin 后，本盒对外呈现的上/下外边距（不参与坍缩时 = 自身 margin）。
+    /// 父盒据此决定「子里边占多少流高」，父的父据此决定兄弟间距。
+    /// </summary>
+    public float EffTop, EffBottom;
+    /// <summary>EffTop/EffBottom 里来自后代、已经不在本盒内占位的那一段（逃逸到本盒外面）。</summary>
+    public float EscapeTop => EffTop - Style.MarginTop;
+    public float EscapeBottom => EffBottom - Style.MarginBottom;
+
+    /// <summary>MeasureBlock 算好的两端坍缩结论，Position 与分页直接复用——三处必须同一口径。</summary>
+    public BlockBox? EdgeFirst, EdgeLast;
+    public bool EdgeCollapseTop, EdgeCollapseBottom;
+
     // 绝对定位：border-box 左上角（相对于根 body）
     public float BorderX;
     public float BorderY;
@@ -145,5 +158,14 @@ public sealed class GridInfo
     public float[] RowHeights = Array.Empty<float>();
     public float ColGap;
     public float RowGap;
+    /// <summary>align-content 为 start/center/end 时，行块在容器块轴确定高里的起始留白（stretch 时为 0）。</summary>
+    public float RowLead;
     public List<(int childIdx, int col, int row, int colSpan, int rowSpan)> Placements = new();
+    /// <summary>
+    /// 与 <see cref="Placements"/> 同序的**已裁决**自对齐（start|center|end|stretch）。
+    /// 测量期就要按它决定「拉伸还是收缩到 fit-content」，定位期按同一份算偏移——
+    /// 两处各判一次必然分叉（margin 坍缩的三处同算是同一课）。
+    /// </summary>
+    public string[] SelfCross = System.Array.Empty<string>();
+    public string[] SelfMain = System.Array.Empty<string>();
 }

@@ -275,6 +275,55 @@ public static class CssValueParser
         return float.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
     }
 
+    /// <summary>
+    /// flex 简写（CSS 2.2 flexbox §7.1.1）：
+    ///   none → 0 0 auto ｜ auto → 1 1 auto ｜ 单个 &lt;number&gt; → n 1 <b>0%</b> ｜
+    ///   单个 &lt;width&gt; → 1 1 width ｜ 其余按 grow / shrink / basis 位序，缺 shrink 补 1。
+    /// 要命的是 `flex: 1` 的 basis 是 0%（不是 auto）：只读三个长写就等于把简写整条丢掉，
+    /// 「等分剩余空间」会排成按内容宽（实测 flex 样例 448/362 vs 浏览器 404/404）。
+    /// 返回 false = 不是合法简写，调用方保留长写值不动。
+    /// </summary>
+    public static bool TryParseFlexShorthand(string value, float fontSize, out float grow, out float shrink, out CssSize basis)
+    {
+        grow = 0f; shrink = 1f; basis = CssSize.Auto;
+        var toks = (value ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (toks.Length == 0) return false;
+        if (toks.Length == 1 && toks[0] is "none") { shrink = 0f; return true; }
+        if (toks.Length == 1 && toks[0] is "auto") { grow = 1f; return true; }
+        if (toks.Length == 1 && toks[0] is "initial") return true;
+
+        static bool Num(string t, out float v) => float.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out v);
+        // 裸数字出现在 basis 位（`flex: 1 1 0`）按长度 0 解；带单位/百分比/auto/calc 交回 ParseSize
+        static CssSize BasisOf(string t, float em) => Num(t, out var z) ? CssSize.Abs(z) : ParseSize(t, em);
+
+        if (!Num(toks[0], out var g))
+        {
+            grow = 1f; basis = BasisOf(toks[0], fontSize);       // `flex: 200px` / `flex: 40%`
+            return toks.Length == 1;
+        }
+        grow = Math.Max(0, g);
+        int i = 1;
+        if (i < toks.Length && Num(toks[i], out var s)) { shrink = Math.Max(0, s); i++; }
+        if (i < toks.Length) { basis = BasisOf(toks[i], fontSize); i++; }
+        else if (toks.Length == 1) basis = CssSize.Pct(0);       // 单个 <number>：basis 归零
+        return i == toks.Length;
+    }
+
+    /// <summary>
+    /// positional 两值简写（place-items / place-self / gap）：拆成「交叉轴 主轴」两个关键字。
+    /// 一个值时两轴同值；带第二个关键字修饰（如 "left right"、"baseline center"）不认，交回长写路径。
+    /// </summary>
+    public static bool TryParsePositional2(string value, out string cross, out string main)
+    {
+        cross = main = "";
+        var toks = (value ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (toks.Length == 0) return false;
+        if (toks.Length == 1) { cross = main = toks[0].ToLowerInvariant(); return true; }
+        if (toks.Length != 2) return false;
+        cross = toks[0].ToLowerInvariant(); main = toks[1].ToLowerInvariant();
+        return true;
+    }
+
     /// <summary>归一化关键字（小写、去空格），空则回退。</summary>
     public static string ParseKeyword(string value, string fallback)
     {

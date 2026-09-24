@@ -88,6 +88,27 @@ public static class InlineLayout
         return lines;
     }
 
+    /// <summary>
+    /// inline 序列的 min-content 宽：把可用宽压到 0 再走**同一条**折行代码——每个断行机会都断开、
+    /// 行首空格吞掉、行尾空格裁掉，取最宽的一行。另起一套 token 口径必与真实折行分叉
+    /// （CJK 逐字、break-all、keep-all、white-space、原子盒全都要重新判一遍，且判不准）。
+    /// </summary>
+    public static float MinContentWidth(List<InlineAtom> atoms)
+    {
+        float w = 0;
+        foreach (var ln in BreakRaw(atoms, 0, null, 0, null)) w = Math.Max(w, ln.Width);
+        return w;
+    }
+
+    /// <summary>纯文本块（没有 Atoms、走 TextContent 老路径）的 min-content：最宽的可断行段。</summary>
+    public static float MinContentOfText(string text, ComputedStyle style)
+    {
+        float w = 0;
+        foreach (var tok in Tokenize(text, style.WhiteSpace, style.WordBreak))
+            if (tok != " " && tok != "\n") w = Math.Max(w, TextWidth(tok, style));
+        return w;
+    }
+
     static List<LineBox> BreakRaw(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY, ComputedStyle? strut)
     {
         var lines = new List<LineBox>();
@@ -183,15 +204,22 @@ public static class InlineLayout
     static void FinalizeLine(LineBox ln, ComputedStyle? strut)
     {
         float maxBase = 0, maxH = 0, w = 0;
+        bool baseByReplaced = false;
         foreach (var f in ln.Frags)
         {
-            maxBase = Math.Max(maxBase, f.Ascent);
+            if (f.Ascent > maxBase) { maxBase = f.Ascent; baseByReplaced = f.Box is { IsReplaced: true }; }
             maxH = Math.Max(maxH, f.Ascent + f.Descent);
             maxH = Math.Max(maxH, f.FontSize * f.Style.LineHeightFactor);
             w += f.Width;
         }
-        ln.Baseline = maxBase > 0 ? maxBase : 14;
-        ln.Height = Math.Max(maxH, ln.Baseline + StrutBelow(strut));
+        // strut（块自身的字体与行高）恒在每一行里：小图独占一行时行高也得不低于它
+        if (strut != null) maxH = Math.Max(maxH, strut.FontSize * strut.LineHeightFactor);
+        ln.Baseline = maxBase > 0 ? maxBase : strut?.FontSize ?? 14;
+        // 基线下方留多高，分两种：
+        // · 替换元素（img/svg）的底边就压在基线上 → 行盒还得再加一截 strut descent，
+        //   这就是浏览器里「图片下方那道缝」（探针实测 15px/1.6 → 6.2px）。
+        // · inline-block 的基线落在其内部文字上，盒底本就在基线上方，沿用旧经验值 3。
+        ln.Height = Math.Max(maxH, ln.Baseline + (baseByReplaced ? StrutBelow(strut) : 3f));
         ln.Width = w;
 
         // 文本 run 的 vertical-align（top/bottom 对齐行盒，super/sub 惯例偏移，length/% 相对基线上移）

@@ -6,10 +6,13 @@ namespace PaperSharp.Tests;
 public class PdfStructureTests
 {
     // 探针实测于 2026-09-22（master 551a72e 之后）。布局/分页有意变更后 UPDATE 基准并重跑探针。
+    // 2026-09-24 相邻兄弟 margin 坍缩修好后重探：pct 2→1、m2 5→4 已用 Chrome Page.printToPDF
+    // 在同一纸张（595×842 CSS px，引擎的 1px=1pt 口径）上取真值对上；m1 11→10 只是内容变矮少一页，
+    // 该页有固定宽度容器，Chrome 打印不会回流到 595，比不了，按引擎侧事实记。
     public static TheoryData<string, int> ExpectedPages => new()
     {
-        { "invoice", 1 }, { "long", 2 }, { "flex", 1 }, { "img", 1 }, { "report", 2 }, { "pct", 2 },
-        { "polish", 2 }, { "inline", 2 }, { "table", 1 }, { "m1", 11 }, { "m2", 5 }, { "m3", 3 },
+        { "invoice", 1 }, { "long", 2 }, { "flex", 1 }, { "img", 1 }, { "report", 2 }, { "pct", 1 },
+        { "polish", 2 }, { "inline", 2 }, { "table", 1 }, { "m1", 10 }, { "m2", 4 }, { "m3", 3 },
         { "m4", 2 }, { "m5", 2 },
     };
 

@@ -8,7 +8,7 @@
 // 浏览器用 Edge 无头 + --hide-scrollbars（品牌版 Chrome 会忽略部分开关，e2e 实测过）。
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,11 @@ async function main() {
     process.exit(1);
   }
   const engine = JSON.parse(readFileSync(boxesPath, "utf8"));
-  const browser = await measureInBrowser(docPath);
+  // 浏览器视口 = 引擎的排版宽（画布宽 − @page 左右页边距），与 Playground 给 iframe 设的是同一个数；
+  // 直接按画布宽量，声明了 @page margin 的样例会凭空整幅宽度漂移（pct 实测 91px）。
+  const vw = Math.max(1, Math.round(engine.contentWidth || WIDTH));
+  const browser = await measureInBrowser(docPath, vw);
+  if (browser == null) return;   // --probe 只看浏览器侧真值，不求差
 
   // ── 与 PlaygroundDiff.Compare 同一口径 ─────────────────────────────
   const emap = new Map(engine.boxes.map((b) => [b.domPath, b]));
@@ -60,15 +64,15 @@ async function main() {
 
   console.log(`${NAME} @ ${WIDTH}px · 引擎 ${emap.size} 盒 / 浏览器 ${bmap.size} 矩形 · ok ${ok} · 漂移 ${drift} · 引擎独 ${engineOnly} · 浏览器独 ${browserOnly} · 最坏 ${worst.toFixed(1)}px · 均值 ${(drift ? sum / drift : 0).toFixed(1)}px\n`);
   const f = (n) => (n >= 0 ? "+" : "") + n.toFixed(1).padStart(7);
-  for (const r of rows.filter((r) => r.kind !== "ok").sort((a, b) => b.max - a.max)) {
+  for (const r of rows.filter((r) => flag("all") || r.kind !== "ok").sort((a, b) => b.max - a.max)) {
     if (r.kind !== "drift") { console.log(`${r.kind.padEnd(5)} ${r.path}`); continue; }
     console.log(`dx${f(r.dx)} dy${f(r.dy)} dw${f(r.dw)} dh${f(r.dh)}  max ${String(r.max.toFixed(1)).padStart(6)}  ${r.path}`);
     console.log(`      引擎 e=(${r.e.x.toFixed(1)},${r.e.y.toFixed(1)}) ${r.e.w.toFixed(1)}×${r.e.h.toFixed(1)}   浏览器=(${r.b.x.toFixed(1)},${r.b.y.toFixed(1)}) ${r.b.w.toFixed(1)}×${r.b.h.toFixed(1)}`);
   }
 }
 
-/** 无头浏览器量矩形：与 playground.js 的 measure() 同构。 */
-async function measureInBrowser(docPath) {
+/** 无头浏览器量矩形：与 playground.js 的 measure() 同构。vw = 引擎排版宽（已扣 @page 页边距）。 */
+async function measureInBrowser(docPath, vw) {
   const browser = BROWSERS[arg("browser", "edge")]?.find(existsSync);
   if (!browser) throw new Error("找不到 Edge/Chrome 可执行文件");
   const profile = mkdtempSync(join(tmpdir(), "papersharp-boxdiff-"));
@@ -88,20 +92,27 @@ async function measureInBrowser(docPath) {
     await cdp.send("Page.enable", {}, sessionId);
     // 钉死布局视口：headless=new 的 --window-size 会受系统 DPI 影响（实测 200% 下 body 凭空窄 34px），
     // 与 Playground 的 iframe 定宽不等价，会造出一整类假宽度漂移。
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: 1000, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: 1000, deviceScaleFactor: 1, mobile: false }, sessionId);
     for (let i = 0; i < 60; i++) {
       const ready = await evalIn(cdp, sessionId, `document.readyState`);
       if (ready === "complete") break;
       await sleep(300);
     }
-    // 图全解码 + 字体就绪 + 两帧稳定，量晚不量早（与 playground.js 的 settle 同一意图）
+    // 图全解码 + 字体就绪 + 动画钉回 t=0 + 两帧稳定，量晚不量早（与 playground.js 的 settle 同一意图）
     await evalIn(cdp, sessionId, `(async()=>{
       await Promise.all([...document.images].map(img=>img.decode().catch(()=>{})));
       try { await document.fonts.ready; } catch {}
+      try { for (const a of document.getAnimations()) { a.pause(); a.currentTime = 0; } } catch {}
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       return 1; })()`, true);
+    if (arg("probe", "")) { console.log(JSON.stringify(await evalIn(cdp, sessionId, arg("probe"), true), null, 1)); return null; }
     if (flag("diag")) console.log("视口诊断：" + JSON.stringify(await evalIn(cdp, sessionId,
       `({innerWidth, clientWidth: document.documentElement.clientWidth, dpr: devicePixelRatio, bodyW: document.body.getBoundingClientRect().width})`)));
+    if (arg("shot", "")) {
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }, sessionId);
+      writeFileSync(arg("shot"), Buffer.from(data, "base64"));
+      console.log(`浏览器截图：${arg("shot")}`);
+    }
     return await evalIn(cdp, sessionId, MEASURE_SNIPPET, true);
   } finally {
     cdp.close();
@@ -120,17 +131,18 @@ const MEASURE_SNIPPET = `(() => {
   const out = [];
   const visit = (el, path) => {
     const cs = win.getComputedStyle(el);
+    const tn = el.tagName.toUpperCase();   // svg 及其内部 tagName 是小写，直接 has("SVG") 判不中会下钻出假盒
     if (cs.display === "none") return;
     if (!PASS_THROUGH_DISPLAY.has(cs.display)) {
       const r = el.getBoundingClientRect();
       out.push({ domPath: path, tag: el.tagName.toLowerCase(),
         x: r.left + win.scrollX - bodyRect.left, y: r.top + win.scrollY - bodyRect.top, w: r.width, h: r.height });
     }
-    if (NO_DESCEND.has(el.tagName)) return;
+    if (NO_DESCEND.has(tn)) return;
     const seq = childSeqMap();
     for (const kid of el.children) {
       const n = seq(kid.tagName);
-      if (NO_BOX.has(kid.tagName)) continue;
+      if (NO_BOX.has(kid.tagName.toUpperCase())) continue;
       visit(kid, pathOf(path, kid.tagName, n));
     }
   };

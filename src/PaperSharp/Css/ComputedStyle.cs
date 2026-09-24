@@ -66,6 +66,13 @@ public sealed class ComputedStyle
     /// <summary>display 是否行内级（inline / inline-block）。</summary>
     public static bool IsInlineLevel(string display) => display is "inline" or "inline-block" or "inline-flex" or "inline-grid";
 
+    /// <summary>
+    /// 原子行内级盒：自身按行内参与行盒，内部另立格式化上下文（尺寸由内容决定，不随父宽拉伸）。
+    /// inline-table 也算；纯 inline 不算（它没有自己的盒尺寸）。
+    /// </summary>
+    public static bool IsAtomicInlineLevel(string display)
+        => display is "inline-block" or "inline-flex" or "inline-grid" or "inline-table";
+
     /// <summary>是否为 flex 容器（含 inline-flex）：布局测量按 flex 走。</summary>
     public static bool IsFlexDisplay(string display) => display is "flex" or "inline-flex";
     /// <summary>是否为 grid 容器（含 inline-grid）：布局测量按 grid 走。</summary>
@@ -92,6 +99,9 @@ public sealed class ComputedStyle
     public CssSize FlexBasis;              // auto | 绝对 | 百分比
     public CssSize Gap;                    // 主轴/交叉轴统一间距（auto|绝对|百分比，百分比按内容宽解析）
     public string AlignSelf = "auto";      // auto|stretch|flex-start|center|flex-end
+    public string JustifySelf = "auto";    // grid 子项主轴（行内轴）自对齐：auto|stretch|start|center|end
+    public string JustifyItems = "stretch";// 容器给子项的主轴默认（grid）
+    public string AlignContent = "normal"; // 多轨交叉轴分布（flex wrap / grid）
 
     // Grid（Display == "grid" 时生效）
     public string GridTemplateColumns = ""; // 轨道定义，如 "100px 200px auto" 或 "1fr 2fr"
