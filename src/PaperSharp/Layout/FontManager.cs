@@ -5,9 +5,12 @@ namespace PaperSharp.Layout;
 
 /// <summary>
 /// 按 family name 加载 SKTypeface，跨平台回退。
-/// 优先加载 assets/fonts/ 下的**子集字体**（tools/subset-font.py 生成），
-/// 这样 PDF 里嵌入的是 ~1.8MB 子集而非 ~20MB 全量雅黑。
-/// 找不到子集文件时退回系统字体管理器（DirectWrite/CoreText/FontConfig）。
+/// 优先加载 assets/fonts/ 下的**子集字体**（src/PaperSharpSamples/tools/subset-font.py 生成），
+/// 这样 PDF 里嵌入的是 ~2.2MB 子集而非 ~17MB 全量字体。
+/// **打包了两族 face，按 CSS family 关键字分派**：参考浏览器把 `"Microsoft YaHei"` 解析到本机真装的
+/// 雅黑（normal 行盒 16px→21），把 generic `sans-serif` 解析到 Noto Sans SC（16px→24）——两者度量差
+/// 一整档，用一族替另一族会让每一行恒差 1~3px（实测反证：inline/table/m3 声明 sans-serif，
+/// m1/m2/long/invoice/report/pricing-* 声明雅黑）。找不到子集文件时退回系统字体管理器。
 /// 线程安全：@font-face 注册进当前 <see cref="RenderScope"/>（每请求隔离，路径按 Scope.BaseDir 解析）；
 /// RegisterFontDirectory 走全局注册表；子集/系统回退结果进程级缓存。
 /// </summary>
@@ -19,20 +22,45 @@ public static class FontManager
     // 全局注册表（RegisterFontDirectory 等 Scope 外注册）：路径按原样/当前 Scope.BaseDir 解析。
     static readonly ConcurrentDictionary<string, (int weight, string[] paths)[]> GlobalRegistered = new(StringComparer.OrdinalIgnoreCase);
 
-    // 子集字体：family 别名 → (regular 文件, bold 文件)
+    // 子集字体：一族两份字面（regular/bold），按 CSS family 关键字分派
     static readonly string FontDir = Path.Combine(AppContext.BaseDirectory, "assets", "fonts");
-    static readonly string RegularFile = Path.Combine(FontDir, "YaheiSub-Regular.ttf");
-    static readonly string BoldFile = Path.Combine(FontDir, "YaheiSub-Bold.ttf");
+    static readonly string[] NotoFiles =
+    [
+        Path.Combine(FontDir, "NotoSansSCSub-Regular.ttf"),
+        Path.Combine(FontDir, "NotoSansSCSub-Bold.ttf"),
+    ];
+    static readonly string[] YaheiFiles =
+    [
+        Path.Combine(FontDir, "YaheiSub-Regular.ttf"),
+        Path.Combine(FontDir, "YaheiSub-Bold.ttf"),
+    ];
+    static readonly string MonoRegularFile = Path.Combine(FontDir, "NSimSunSub-Regular.ttf");
 
-    // 命中这些 family 名时优先用打包的子集字体
-    static readonly HashSet<string> SubsetFamilies = new(StringComparer.OrdinalIgnoreCase)
+    // 命中这些 family 名时直接用打包子集，而不是去系统里找同名字体（PDF 体积 + 跨平台一致）。
+    // "YaheiSub" 是历史别名：样例 CSS 里直接把它当 family 名写过（m4 的 .dirfont），浏览器侧那是不
+    // 认识的名字、会落到下一个候选，引擎侧保持指向同一份子集才对得上。
+    static readonly HashSet<string> YaheiSubsetFamilies = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Microsoft YaHei", "微软雅黑", "YaheiSub", "sans-serif", "system-ui",
+        "Microsoft YaHei", "微软雅黑", "YaheiSub", "Microsoft YaHei UI", "system-ui",
+    };
+    static readonly HashSet<string> NotoSubsetFamilies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Noto Sans SC", "sans-serif",
+    };
+    // Blink 的 generic monospace 在本机解析到 NSimSun（ascent+descent 恰好 1.0em、Latin 字宽 0.5em），
+    // 不是 Consolas（1.17em / 0.55em）——写 `font-family: monospace` 或 UA 样式的 <code> 都走这里，
+    // 用 Consolas 会让每个 <code> 盒高 +2px、宽度 +3~11px，并把所在行整行撑高 1px（m1 全页下移 8px 之源）。
+    static readonly HashSet<string> MonoSubsetFamilies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "monospace",
     };
 
     static readonly object SubsetLock = new();
-    static SKTypeface? _subsetRegular;
-    static SKTypeface? _subsetBold;
+    static SKTypeface? _notoRegular;
+    static SKTypeface? _notoBold;
+    static SKTypeface? _yaheiRegular;
+    static SKTypeface? _yaheiBold;
+    static SKTypeface? _monoRegular;
     static volatile bool _loadedSubsetAttempted;
 
     /// <summary>登记一条 @font-face（单文件）。同 family+weight 覆盖旧的；在 <see cref="RenderScope"/> 内则登记为该请求私有。</summary>
@@ -91,42 +119,65 @@ public static class FontManager
         lock (SubsetLock)
         {
             if (_loadedSubsetAttempted) return;
-            try
-            {
-                if (File.Exists(RegularFile))
-                    _subsetRegular = SKTypeface.FromFile(RegularFile);
-                if (File.Exists(BoldFile))
-                    _subsetBold = SKTypeface.FromFile(BoldFile);
-            }
-            catch
-            {
-                _subsetRegular = _subsetBold = null;
-            }
+            (_notoRegular, _notoBold) = LoadPair(NotoFiles);
+            (_yaheiRegular, _yaheiBold) = LoadPair(YaheiFiles);
+            try { _monoRegular = FromFile(MonoRegularFile); }
+            catch { _monoRegular = null; }
             _loadedSubsetAttempted = true; // 最后置位：读侧见到 flag 即见到完整赋值（lock 提供屏障）
         }
+    }
+
+    static (SKTypeface?, SKTypeface?) LoadPair(string[] files)
+    {
+        try
+        {
+            return (FromFile(files[0]), FromFile(files[1]));
+        }
+        catch { return (null, null); }
+    }
+
+    /// <summary>从文件加载字面，并顺带登记它的字距对表（<see cref="KernTable"/>，只有打包子集带）。</summary>
+    static SKTypeface? FromFile(string path)
+    {
+        if (!File.Exists(path)) return null;
+        var tf = SKTypeface.FromFile(path);
+        if (tf != null) KernTable.Attach(tf, path);
+        return tf;
     }
 
     /// <summary>字形级回退首选：打包子集字体若覆盖该码位就优先用它（与正文同字体，PDF 嵌入不额外膨胀）。</summary>
     public static SKTypeface? SubsetIfCovers(int cp, int weight)
     {
         EnsureSubsetLoaded();
-        var primary = weight >= 700 ? _subsetBold : _subsetRegular;
-        var fallback = weight >= 700 ? _subsetRegular : _subsetBold;
+        // 两族子集覆盖同一字符集，字形级回退统一走 Noto（浏览器缺字时的兜底 face 也是它）
+        var primary = weight >= 700 ? _notoBold : _notoRegular;
+        var fallback = weight >= 700 ? _notoRegular : _notoBold;
         if (primary != null && primary.GetGlyph(cp) != 0) return primary;
         if (fallback != null && fallback.GetGlyph(cp) != 0) return fallback;
         return null;
     }
 
+    /// <summary>该实例是否为打包的 legacy 等宽子集（NSimSun）。浏览器渲染这张 face 时不做线性缩放，
+    /// 而是把 advance 网格对齐到整半格，度量必须走 <see cref="TextShaper.MonoGridWidth"/> 那条路。</summary>
+    public static bool IsLegacyMonoSubset(SKTypeface tf)
+    {
+        EnsureSubsetLoaded();
+        return ReferenceEquals(tf, _monoRegular);
+    }
+
     /// <summary>该实例是否为进程级共享字体（子集/默认）——调用方不得 Dispose。</summary>
     public static bool IsSharedTypeface(SKTypeface tf) =>
-        ReferenceEquals(tf, _subsetRegular) || ReferenceEquals(tf, _subsetBold) || ReferenceEquals(tf, SKTypeface.Default);
+        ReferenceEquals(tf, _notoRegular) || ReferenceEquals(tf, _notoBold)
+        || ReferenceEquals(tf, _yaheiRegular) || ReferenceEquals(tf, _yaheiBold)
+        || ReferenceEquals(tf, _monoRegular)
+        || ReferenceEquals(tf, SKTypeface.Default);
 
     // 常见 family 的跨平台别名表，尽量让同一份 CSS 在三大平台都能落到相似字形上。
     static readonly Dictionary<string, string[]> Fallbacks = new(StringComparer.OrdinalIgnoreCase)
     {
         ["sans-serif"] = new[] { "Segoe UI", "Arial", "Helvetica Neue", "DejaVu Sans", "Noto Sans" },
         ["serif"] = new[] { "Times New Roman", "Times", "Georgia", "DejaVu Serif", "Noto Serif" },
-        ["monospace"] = new[] { "Consolas", "Courier New", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono" },
+        ["monospace"] = new[] { "NSimSun", "SimSun", "Consolas", "Courier New", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono" },
         ["Microsoft YaHei"] = new[] { "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans CN", "WenQuanYi Micro Hei" },
         ["微软雅黑"] = new[] { "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans CJK SC" },
         ["SimSun"] = new[] { "SimSun", "宋体", "Songti SC", "Noto Serif CJK SC" },
@@ -216,7 +267,7 @@ public static class FontManager
         {
             var full = ResolveFontPath(raw, baseDir);
             if (full == null || !File.Exists(full)) continue;
-            try { var tf = SKTypeface.FromFile(full); if (tf != null) return tf; }
+            try { var tf = FromFile(full); if (tf != null) return tf; }
             catch { /* 该候选损坏 → 试下一个 src */ }
         }
         return null;
@@ -227,9 +278,16 @@ public static class FontManager
         EnsureSubsetLoaded();
 
         // 命中子集字体族且子集可用 → 用打包子集（按字重选 regular/bold）
-        if (SubsetFamilies.Contains(family))
+        if (MonoSubsetFamilies.Contains(family))
         {
-            var subset = weight >= 700 ? (_subsetBold ?? _subsetRegular) : _subsetRegular;
+            if (_monoRegular != null) return _monoRegular;
+        }
+        else if (YaheiSubsetFamilies.Contains(family) || NotoSubsetFamilies.Contains(family))
+        {
+            bool yahei = YaheiSubsetFamilies.Contains(family);
+            var regular = yahei ? _yaheiRegular : _notoRegular;
+            var bold = yahei ? _yaheiBold : _notoBold;
+            var subset = weight >= 700 ? (bold ?? regular) : regular;
             if (subset != null) return subset;
         }
 
@@ -266,7 +324,7 @@ public static class FontManager
             tf?.Dispose();
         }
 
-        // 最后兜底：如果加载了任何子集，宁可返回子集也不返回纯拉丁默认字体（避免中文方框）
-        return _subsetRegular ?? SKTypeface.Default;
+        // 最后兜底：宁可返回子集也不返回纯拉丁默认字体（避免中文方框）
+        return _notoRegular ?? _yaheiRegular ?? SKTypeface.Default;
     }
 }

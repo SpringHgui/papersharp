@@ -44,7 +44,7 @@ public static class TextPainter
         if (!s.BackgroundColor.Equals(SKColor.Empty))
         {
             float top = baseline - f.FontSize;
-            float bgH = f.FontSize * Math.Max(1f, s.LineHeightFactor);
+            float bgH = Math.Max(f.FontSize, s.LineHeightPx());
             using var bp = new SKPaint
             {
                 Color = s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * (float)alpha)),
@@ -91,7 +91,7 @@ public static class TextPainter
         };
         if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         float ls = s.LetterSpacing;
-        float lineHeight = s.FontSize * s.LineHeightFactor;
+        float lineHeight = s.LineHeightPx();
         float baseline = top + s.FontSize;
 
         for (int k = 0; k < count; k++)

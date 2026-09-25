@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", Arial, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  .cols { display: grid; grid-template-columns: repeat(5, 1fr); gap: 24px; }
+  .col { display: flex; flex-direction: column; }
+  .col h4 { font-size: 16px; color: #8b8f96; margin-bottom: 26px; }
+  .col a { font-size: 16px; color: #24262a; text-decoration: none; margin-bottom: 26px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: repeat(3, 1fr); row-gap: 48px; } }
+  @media (max-width: 560px) { .cols { grid-template-columns: repeat(2, 1fr); } }
+</style></head>
+<body>
+<div class="wrap"><div class="cols">
+  <div class="col"><h4>立即使用</h4><a>Qoder 桌面版</a><a>Qoder 移动端</a><a>JetBrains 插件</a><a>CLI</a></div>
+  <div class="col"><h4>立即获取</h4><a>企业版</a><a>价格</a><a>下载</a></div>
+  <div class="col"><h4>资源</h4><a>能力市场</a><a>活动</a><a>文档</a><a>博客</a><a>常见问题</a></div>
+  <div class="col"><h4>服务条款</h4><a>隐私政策</a><a>法务信息</a></div>
+  <div class="col"><h4>联系我们</h4><a>关于我们</a><a>社区</a></div>
+</div></div>
+</body></html>

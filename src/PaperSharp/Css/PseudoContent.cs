@@ -256,10 +256,16 @@ public static class PseudoContent
     {
         var disp = gen.Style.Display;
         bool blockishPseudo = disp is "block" or "list-item" or "flex" or "grid" or "table";
-
         // 图片片段（url()）：合成行内替换元素
         var imageRuns = gen.Runs.Where(r => r.Kind == ContentRunKind.Image).ToList();
         string text = ResolveRuns(gen, counters);
+        if (System.Environment.GetEnvironmentVariable("PS_PSEUDODBG") == "1")
+        {
+            static string Sz(CssSize v) => v.IsAuto ? "auto" : v.Absolute.ToString("0.##");
+            Console.Error.WriteLine($"[pseudo] {(isBefore ? "before" : "after ")} owner=<{owner.Tag}> disp={disp} " +
+                $"padT={Sz(gen.Style.PaddingTopCss)} padB={Sz(gen.Style.PaddingBottomCss)} padL={Sz(gen.Style.PaddingLeftCss)} padR={Sz(gen.Style.PaddingRightCss)} " +
+                $"marT={Sz(gen.Style.MarginTopCss)} marR={Sz(gen.Style.MarginRightCss)} W={Sz(gen.Style.Width)} H={Sz(gen.Style.Height)} fs={gen.Style.FontSize} txt=[{text.Replace(' ', '·')}]");
+        }
 
         if (blockishPseudo)
         {
@@ -274,6 +280,7 @@ public static class PseudoContent
                 anon.InlinePieces = new();
                 anon.Before = anon.After = null;
                 anon.Display = "block";
+                StripBoxSpacing(anon);
                 owner.TextContent = null;
                 owner.Children.Insert(0, anon);
             }
@@ -343,6 +350,7 @@ public static class PseudoContent
         anon.Display = "block";
         anon.IsInlineFC = true;
         anon.HasGeneratedInline = false;
+        StripBoxSpacing(anon);
         owner.TextContent = null;
         owner.InlinePieces = new();
         owner.Children.Insert(0, anon);
@@ -354,9 +362,29 @@ public static class PseudoContent
         img.Tag = "img";
         img.Display = "inline";
         img.ImageSrc = url;
+        // content:url() 的图**不是**伪元素本身：规范里它是伪元素盒里面的一个匿名行内替换盒，
+        // 伪元素上写的 width/height 只作用于伪元素自己（display:inline 时压根不参与定尺寸），
+        // 于是图永远按自然尺寸出。m8 的 .with-icon::before{content:url(qr.png);width:18px;height:18px}
+        // 浏览器实测 120×120（qr.png 原尺寸），照搬 18px 会让整段少 102px 高。
+        img.Width = img.Height = CssSize.Auto;
         img.Children = new();
         img.InlinePieces = new();
         img.TextContent = null;
         return img;
+    }
+
+    /// <summary>
+    /// 匿名盒只继承**可继承**属性：margin/padding/border 属于盒间距，浏览器不会从宿主带进来。
+    /// CloneShallow 出来的匿名块若原样留着宿主的 padding，会在宿主内容盒里再套一层同样的缩进
+    /// （m8 .card{padding:12px 14px} 的两条装饰条之间多 24px，整卡 122.5 vs 浏览器 74.5）。
+    /// </summary>
+    static void StripBoxSpacing(ComputedStyle s)
+    {
+        s.MarginTopCss = s.MarginRightCss = s.MarginBottomCss = s.MarginLeftCss = CssSize.Abs(0);
+        s.PaddingTopCss = s.PaddingRightCss = s.PaddingBottomCss = s.PaddingLeftCss = CssSize.Abs(0);
+        s.MarginTopAuto = s.MarginRightAuto = s.MarginBottomAuto = s.MarginLeftAuto = false;
+        s.MarginTop = s.MarginRight = s.MarginBottom = s.MarginLeft = 0;
+        s.PaddingTop = s.PaddingRight = s.PaddingBottom = s.PaddingLeft = 0;
+        s.BorderWidthTop = s.BorderWidthRight = s.BorderWidthBottom = s.BorderWidthLeft = 0;
     }
 }

@@ -199,6 +199,20 @@ public sealed class ComputedStyle
     public float FontSize = 14f;
     public int FontWeight = 400;
     public float LineHeightFactor = 1.4f;
+    /// <summary>CSS 是否显式给出数字/百分比行高。false = normal（走字体度量，浏览器对它不做 1/64 量化）。</summary>
+    public bool LineHeightNumeric;
+
+    /// <summary>
+    /// used line-height。Blink 的口径：font-size 先量化到 1/64px（就近），再对「量化后的 fs × 倍数」
+    /// 向下取到 1/64px。13.3333×1.6 → 21.3125 而不是 21.3333——每行 −0.0208px 看着无害，长文档里
+    /// 逐行累积到页面下部就是 2~3px 的整体纵向漂移（m1 探针实测：td 高 38.3125 = 8+8+1+21.3125）。
+    /// </summary>
+    public float LineHeightPx()
+    {
+        if (!LineHeightNumeric) return FontSize * LineHeightFactor;
+        double fs = Math.Round((double)FontSize * 64d, MidpointRounding.AwayFromZero) / 64d;
+        return (float)(Math.Floor(fs * LineHeightFactor * 64d + 1e-6d) / 64d);
+    }
     public CssTextAlign TextAlignment = CssTextAlign.Left;
     public string TextDecoration = "none";   // none | underline | line-through | overline
     public float LetterSpacing;              // px

@@ -32,27 +32,29 @@ public class TableSpecifiedColumnTests
     [Fact]
     public void Percentage_column_keeps_its_share_even_when_content_is_wider()
     {
-        // 实测（无头 Edge）：td1 = 319.6（=40%），td2 = 479.4（吃掉剩下的 60%）
+        // 无头 Edge 实测（同一份标记放进 800px 容器）：td1 = 319.59375、td2 = 479.40625。
+        // 净宽不是 800 而是 799：collapse 表的外层网格线被单元格边框骑跨，格区四边各内缩半框（见 :306 注释）。
         var (a, b) = TwoCols($"<table class=t><tr><td class=p40>{Long}</td><td>短</td></tr></table>");
-        Assert.Equal(320, a, 1);
-        Assert.Equal(480, b, 1);
+        Assert.Equal(319.6f, a, 1);
+        Assert.Equal(479.4f, b, 1);
     }
 
     [Fact]
     public void Px_column_is_not_rescaled_by_the_fit_to_available_width()
     {
-        // 实测：td1 = 200 原样，td2 = 599 拿走余量。缩放只作用于 auto 列。
+        // 实测：td1 = 200 原样，td2 = 599 拿走余量（799 净宽扣掉定宽列）。缩放只作用于 auto 列。
         var (a, b) = TwoCols("<table class=t><tr><td class=w200>px 列内容</td><td>auto 列内容 auto 列内容</td></tr></table>");
         Assert.Equal(200, a, 1);
-        Assert.Equal(600, b, 1);
+        Assert.Equal(599, b, 1);
     }
 
     [Fact]
     public void All_auto_columns_still_share_by_max_content()
     {
-        // 没有任何声明宽时保持旧行为：按内容宽比例分（实测 744.9 / 54.1，容 1px 余量口径）。
+        // 没有任何声明宽时保持旧行为：按内容宽比例分。实测 740.4 / 58.6（引擎 739.5 / 59.5，两列各差 0.93px），
+        // 重点是别把定宽列的逻辑漏进来——所以先验比例，再验总宽恰好铺满 799。
         var (a, b) = TwoCols($"<table class=t><tr><td>{Long}</td><td>中中中</td></tr></table>");
         Assert.True(a > b * 8, $"两列分配比失衡：{a} vs {b}");
-        Assert.Equal(800, a + b, 2);
+        Assert.Equal(799, a + b, 2);
     }
 }

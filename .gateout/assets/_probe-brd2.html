@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root { --bc: #333; }
+body { font-family: sans-serif; font-size: 14px; margin: 0; }
+div { height: 10px; width: 50px; }
+.a { border: 1px dashed #aa6; }
+.b { border: 1px dashed var(--bc); }
+.c { border: 1px dotted #aa6; }
+.d { border-bottom: calc(2px + 1pt) solid #333; }
+.e { border-bottom: 3.333px solid #333; }
+.f { border-bottom: calc(2px + 1pt) solid var(--bc); }
+.g { border-width: 3px; border-style: dashed; border-color: #333; }
+</style></head><body>
+<div class="a"></div><div class="b"></div><div class="c"></div><div class="d"></div>
+<div class="e"></div><div class="f"></div><div class="g"></div>
+</body></html>

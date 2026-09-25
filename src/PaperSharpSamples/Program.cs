@@ -11,6 +11,19 @@ var assets = Path.Combine(baseDir, "assets");
 var outDir = Path.Combine(baseDir, "output");
 Directory.CreateDirectory(outDir);
 
+// 自检：某字族下字符串的「hmtx 裸宽 + 字体字距对」分解，用于核对 KernTable 是否生效。
+// dotnet run -- kern <text> [family]
+if (args.Length > 1 && args[0] == "kern")
+{
+    var family = args.Length > 2 ? args[2] : "Microsoft YaHei";
+    var tf = PaperSharp.Layout.FontManager.Get(family, 400);
+    using var p = new SKPaint { Typeface = tf, TextSize = 14 };
+    float bare = p.MeasureText(args[1]);
+    float kern = PaperSharp.Layout.KernTable.Of(args[1], tf, 14f);
+    Console.WriteLine($"kern [{family}] \"{args[1]}\" @14: bare={bare:0.###} kern={kern:0.####} total={bare + kern:0.###} hasTable={PaperSharp.Layout.KernTable.HasTable(tf)}");
+    return;
+}
+
 // 基准测试模式：dotnet run -- bench [iters]  /  dotnet run -- cold <sample>
 if (args.Length > 0 && args[0] == "bench")
 {

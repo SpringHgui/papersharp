@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+/* b1b 复现 v2：容器故意窄到放不下，逼出 flex 收缩。
+   c1 首项 flex:none（=0 0 auto）→ 浏览器不该缩它，余量全压给可缩的第二项。
+   若引擎把 flex:none 的首项也缩了，即 shrink:0 未被遵守。 */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font: 14px/1.5 Arial, sans-serif; }
+.wrap { width: 300px; }
+.flex { display: flex; gap: 14px; align-items: flex-start; }
+.a { width: 100px; height: 20px; background: #cde; flex: none; }
+.b { background: #edc; }
+.a2 { width: 100px; height: 20px; background: #cde; }          /* 对照：不写 flex:none，默认 0 1 auto 可缩 */
+</style></head><body>
+<div class="wrap" id="c1"><div class="flex"><div class="a"></div><span>第二项是可伸缩的长文本占位，用来制造溢出以观察谁被压缩掉宽度</span></div></div>
+<div class="wrap" id="c2"><div class="flex"><div class="a2"></div><span>第二项是可伸缩的长文本占位，用来制造溢出以观察谁被压缩掉宽度</span></div></div>
+</body></html>

@@ -1,0 +1,16 @@
+'<code>break-before: page</code>'
+'<code>break-inside: avoid</code>'
+'<code>break-after: page</code>'
+'<code>widows: 3; orphans: 3</code>'
+'<code>counter(page, cjk-ideographic)</code>'
+'<code>counter(page, trad-chinese-informal)</code>'
+--- css code rules ---
+--- p rules ---
+
+
+body {
+    font-family: "Microsoft YaHei", "SimSun", sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #333;
+}

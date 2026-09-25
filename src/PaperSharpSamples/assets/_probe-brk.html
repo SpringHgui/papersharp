@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+/* 断行机会 / 空格宽度判别探针。
+   .h*：固定高度不判读；.w66：窄盒，行数由高度反推（每行 22.4）。 */
+body { font-family: "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.6; margin: 0; color:#000; }
+.nw { display: inline-block; white-space: nowrap; }
+.c66 { width: 66px; }
+.c132 { width: 132px; }
+.c40 { width: 40px; }
+</style></head><body>
+<!-- 1. 连字符断行：浏览器把 "margin-top" 折成 2 行（margin- / top），只认空格的实现会溢出成 1 行 -->
+<div class="c66" id="h1">margin-top</div>
+<div class="c66" id="h2">border-radius</div>
+<div class="c66" id="h3">aaaaaa-aaaaaa</div>
+<div class="c66" id="h4">margin-top calc(20px + 0.5rem)</div>
+<div class="c66" id="h5">xxxxxxxx yyyyyyyy</div>
+<span class="nw" id="s1">margin-top</span>
+<span class="nw" id="s2">margin-</span>
+<span class="nw" id="s3">top</span>
+<span class="nw" id="s4">margin-top calc(20px</span>
+<span class="nw" id="s5">margin-top calc(20px +</span>
+<span class="nw" id="s6">0.5rem)</span>
+<i class="nw">‌</i>
+<!-- 2. 空格宽度：a b 与 ab 的差 = 一个空格的_advance -->
+<span class="nw" id="w1">a b</span>
+<span class="nw" id="w2">ab</span>
+<span class="nw" id="w3">a  b</span>
+<span class="nw" id="w4">数字 2026 与</span>
+<span class="nw" id="w5">数字2026与</span>
+<span class="nw" id="w6">文本基线x</span>
+<span class="nw" id="w7">文本基线 x</span>
+</body></html>

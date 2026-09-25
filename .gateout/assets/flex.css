@@ -1,0 +1,111 @@
+body {
+  font-family: "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: #222222;
+  padding: 36px;
+  background-color: #ffffff;
+  line-height: 1.5;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: bold;
+  color: #1e40af;
+  margin: 0 0 16px 0;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: bold;
+  color: #333333;
+  margin: 18px 0 8px 0;
+}
+
+/* 1. row + space-between */
+.row-between {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.label { color: #888888; }
+.value { font-weight: bold; color: #111111; }
+
+/* 2. 等分三列 */
+.grid-row {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 2px;
+}
+.grid-row .cell {
+  flex: 1;
+  padding: 6px 8px;
+  background-color: #f5f7fa;
+  border: 1px solid #e5e7eb;
+}
+.grid-row.header .cell {
+  font-weight: bold;
+  background-color: #1e40af;
+  color: #ffffff;
+}
+
+/* 3. 固定宽 + 弹性宽混排 */
+.mixed {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.badge {
+  width: 28px;
+  height: 28px;
+  background-color: #b91c1c;
+  color: #ffffff;
+  text-align: center;
+  font-weight: bold;
+}
+.grow {
+  flex: 1;
+  background-color: #fffbeb;
+  padding: 8px;
+  color: #6b4a00;
+}
+
+/* 4. 定高 column + space-between */
+.tall {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 120px;
+  border: 1px solid #cccccc;
+  padding: 10px;
+}
+.t-top { background-color: #dcfce7; padding: 6px; }
+.t-mid { background-color: #dbeafe; padding: 6px; }
+.t-bot { background-color: #fee2e2; padding: 6px; }
+
+/* 5. 嵌套 */
+.nested {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}
+.n-left {
+  flex: 2;
+  background-color: #ede9fe;
+  padding: 12px;
+  color: #5b21b6;
+}
+.n-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.n-item {
+  flex: 1;
+  background-color: #cffafe;
+  padding: 10px;
+  color: #155e75;
+}

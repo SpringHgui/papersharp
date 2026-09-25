@@ -17,43 +17,47 @@ public static class CssValueParser
     public static float ToPixels(string value, float parentFontSize, float rootFontSize = 16f)
     {
         if (string.IsNullOrWhiteSpace(value)) return 0;
-        value = value.Trim();
-        if (value == "0" || value == "auto" || value == "normal") return 0;
+        // 全程走 span 切片（09-25 span 化）：单位剥离不再产生 value[..^2] 子串分配。
+        // 所有关键字比较保持 Ordinal 大小写敏感——与原 `value == "auto"` 逐字一致。
+        var v = value.AsSpan().Trim();
+        if (v.Equals("0", StringComparison.Ordinal) || v.Equals("auto", StringComparison.Ordinal) || v.Equals("normal", StringComparison.Ordinal)) return 0;
 
-        if (value.Contains("calc(", StringComparison.OrdinalIgnoreCase))
+        if (v.IndexOf("calc(", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             var ev = EvalCalc(value, parentFontSize, rootFontSize);
             return ev.HasValue ? ev.Value.abs : 0;   // 无包含块基准，百分比项忽略
         }
-        if (value.EndsWith("px")) return ParseFloat(value[..^2]);
-        if (value.EndsWith("pt")) return ParseFloat(value[..^2]) * 96f / 72f;
-        if (value.EndsWith("rem")) return ParseFloat(value[..^3]) * rootFontSize;
-        if (value.EndsWith("em")) return ParseFloat(value[..^2]) * parentFontSize;
-        if (value.EndsWith("%")) return -1f; // 百分比不在这里折算（需包含块尺寸），由 ParseSize 走 CssSize
-        return ParseFloat(value);
+        if (v.EndsWith("px", StringComparison.Ordinal)) return ParseFloat(v[..^2]);
+        if (v.EndsWith("pt", StringComparison.Ordinal)) return ParseFloat(v[..^2]) * 96f / 72f;
+        if (v.EndsWith("rem", StringComparison.Ordinal)) return ParseFloat(v[..^3]) * rootFontSize;
+        if (v.EndsWith("em", StringComparison.Ordinal)) return ParseFloat(v[..^2]) * parentFontSize;
+        if (v.EndsWith("%", StringComparison.Ordinal)) return -1f; // 百分比不在这里折算（需包含块尺寸），由 ParseSize 走 CssSize
+        return ParseFloat(v);
     }
 
     /// <summary>解析 width/height/flex-basis/偏移：auto→Auto；%→Percent；px/pt/em/rem→Absolute（含负值，供 top/left 偏移）；calc()→Calc/Absolute。</summary>
     public static CssSize ParseSize(string value, float fontSize)
     {
-        value = value?.Trim() ?? "";
-        if (value.Length == 0 || value == "auto" || value == "none") return CssSize.Auto;
-        if (value.Contains("calc(", StringComparison.OrdinalIgnoreCase))
+        var v = (value ?? "").AsSpan().Trim();   // span 化：见 ToPixels 同款注释
+        if (v.Length == 0 || v.Equals("auto", StringComparison.Ordinal) || v.Equals("none", StringComparison.Ordinal)) return CssSize.Auto;
+        if (v.IndexOf("calc(", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             var ev = EvalCalc(value, fontSize);
             if (!ev.HasValue) return CssSize.Auto;
             return ev.Value.pct != 0 ? CssSize.Calc(ev.Value.pct, ev.Value.abs) : CssSize.Abs(ev.Value.abs);
         }
-        if (value.EndsWith("%"))
+        if (v.EndsWith("%", StringComparison.Ordinal))
         {
-            var p = ParseFloat(value[..^1]);
-            return value[..^1].Trim().Length > 0 ? CssSize.Pct(p) : CssSize.Auto;
+            var num = v[..^1];                    // 与原实现逐字一致：数值取未 trim 切片（"50 %" → ParseFloat 失败 = 0）
+            return num.Trim().Length > 0 ? CssSize.Pct(ParseFloat(num)) : CssSize.Auto;
         }
-        bool isLen = value.EndsWith("px") || value.EndsWith("pt") || value.EndsWith("em") || value.EndsWith("rem");
+        bool isLen = v.EndsWith("px", StringComparison.Ordinal) || v.EndsWith("pt", StringComparison.Ordinal)
+                  || v.EndsWith("em", StringComparison.Ordinal) || v.EndsWith("rem", StringComparison.Ordinal);
         float px = ToPixels(value, fontSize);
         if (px > 0) return CssSize.Abs(px);
         if (px < 0 && isLen) return CssSize.Abs(px);   // 负偏移（top:-10px 等）合法
-        if (value == "0" || value == "0px" || value == "0pt" || value == "0em") return CssSize.Abs(0);
+        if (v.Equals("0", StringComparison.Ordinal) || v.Equals("0px", StringComparison.Ordinal)
+            || v.Equals("0pt", StringComparison.Ordinal) || v.Equals("0em", StringComparison.Ordinal)) return CssSize.Abs(0);
         return CssSize.Auto;
     }
 
@@ -156,10 +160,18 @@ public static class CssValueParser
         float Number()
         {
             int start = Pos;
-            while (Pos < S.Length && (char.IsDigit(S[Pos]) || S[Pos] == '.' || S[Pos] == '-' || S[Pos] == '+' || S[Pos] == 'e' || S[Pos] == 'E')) Pos++;
+            while (Pos < S.Length && (char.IsDigit(S[Pos]) || S[Pos] == '.' || S[Pos] == '-' || S[Pos] == '+')) Pos++;
+            // e/E 只有紧跟数字时才是科学计数法的指数，否则它属于单位 em：
+            // "calc(0.5em + 8px)" 曾被切成数字 "0.5e" + 单位 "m"，整条 calc 抛错折成 0（m4 的 .c 实测少 30px）。
+            if (Pos < S.Length && (S[Pos] == 'e' || S[Pos] == 'E') && ExpDigits(Pos + 1))
+                for (Pos++; Pos < S.Length && (char.IsDigit(S[Pos]) || S[Pos] == '+' || S[Pos] == '-'); Pos++) { }
             if (start == Pos) throw new FormatException();
             return float.Parse(S[start..Pos], NumberStyles.Float, CultureInfo.InvariantCulture);
         }
+
+        /// <summary>e/E 之后是否确实是指数数字（可带符号）。</summary>
+        bool ExpDigits(int i) =>
+            i < S.Length && (char.IsDigit(S[i]) || ((S[i] == '+' || S[i] == '-') && i + 1 < S.Length && char.IsDigit(S[i + 1])));
 
         (float num, string unit) NumUnit()
         {
@@ -180,8 +192,10 @@ public static class CssValueParser
         value = value.Trim();
         if (value == "transparent") return new SKColor(0, 0, 0, 0);
 
-        var hex = ReHex.Match(value);
-        if (hex.Success)
+        // 两条正则都是 ^ 锚定的：前导字符不符就必然失配。ExtractBackgroundColor 对每个 depth-0
+        // token（"no-repeat"/"url(...)" 之类占多数）都调一次，这层守卫省掉几乎全部 Match 分配。
+        var hex = value[0] == '#' ? ReHex.Match(value) : null;
+        if (hex is { Success: true })
         {
             var s = hex.Groups[1].Value;
             if (s.Length == 3)
@@ -192,8 +206,10 @@ public static class CssValueParser
             return new SKColor(r, g, b);
         }
 
-        var rgb = ReRgb.Match(value);
-        if (rgb.Success)
+        Match? rgb = null;
+        if (value.Length >= 4 && (value[0] is 'r' or 'R') && (value[1] is 'g' or 'G') && (value[2] is 'b' or 'B'))
+            rgb = ReRgb.Match(value);
+        if (rgb is { Success: true })
         {
             byte r = byte.Parse(rgb.Groups[1].Value, CultureInfo.InvariantCulture);
             byte g = byte.Parse(rgb.Groups[2].Value, CultureInfo.InvariantCulture);
@@ -209,45 +225,49 @@ public static class CssValueParser
         return named;
     }
 
-    static SKColor? TryParseNamedColor(string name) => name.ToLowerInvariant() switch
+    // 命名色表很小：逐条 IgnoreCase 等值比较即可，不再为整串分配 ToLowerInvariant 结果。
+    static SKColor? TryParseNamedColor(string name)
     {
-        "black" => SKColors.Black,
-        "white" => SKColors.White,
-        "red" => SKColors.Red,
-        "green" => new SKColor(0, 128, 0),
-        "blue" => SKColors.Blue,
-        "gray" or "grey" => SKColors.Gray,
-        "lightgray" or "lightgrey" => SKColors.LightGray,
-        "darkgray" or "darkgrey" => SKColors.DarkGray,
-        "yellow" => SKColors.Yellow,
-        "orange" => SKColors.Orange,
-        "navy" => SKColors.Navy,
-        "silver" => SKColors.Silver,
-        _ => null,
-    };
+        var n = name.AsSpan();
+        if (n.Equals("black", StringComparison.OrdinalIgnoreCase)) return SKColors.Black;
+        if (n.Equals("white", StringComparison.OrdinalIgnoreCase)) return SKColors.White;
+        if (n.Equals("red", StringComparison.OrdinalIgnoreCase)) return SKColors.Red;
+        if (n.Equals("green", StringComparison.OrdinalIgnoreCase)) return new SKColor(0, 128, 0);
+        if (n.Equals("blue", StringComparison.OrdinalIgnoreCase)) return SKColors.Blue;
+        if (n.Equals("gray", StringComparison.OrdinalIgnoreCase) || n.Equals("grey", StringComparison.OrdinalIgnoreCase)) return SKColors.Gray;
+        if (n.Equals("lightgray", StringComparison.OrdinalIgnoreCase) || n.Equals("lightgrey", StringComparison.OrdinalIgnoreCase)) return SKColors.LightGray;
+        if (n.Equals("darkgray", StringComparison.OrdinalIgnoreCase) || n.Equals("darkgrey", StringComparison.OrdinalIgnoreCase)) return SKColors.DarkGray;
+        if (n.Equals("yellow", StringComparison.OrdinalIgnoreCase)) return SKColors.Yellow;
+        if (n.Equals("orange", StringComparison.OrdinalIgnoreCase)) return SKColors.Orange;
+        if (n.Equals("navy", StringComparison.OrdinalIgnoreCase)) return SKColors.Navy;
+        if (n.Equals("silver", StringComparison.OrdinalIgnoreCase)) return SKColors.Silver;
+        return null;
+    }
 
     /// <summary>行高倍数。<c>normal</c>/未声明 → NaN（调用方按字体度量取 normal 行距，勿在此凑一个经验值）。</summary>
     public static float ParseLineHeight(string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value == "normal") return float.NaN;
-        value = value.Trim();
-        if (value.EndsWith("%"))
+        var v = value.AsSpan().Trim();
+        if (v.EndsWith("%", StringComparison.Ordinal))
         {
-            var p = ParseFloat(value[..^1]);
+            var p = ParseFloat(v[..^1]);
             return p > 0 ? p / 100f : float.NaN;
         }
-        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
+        if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
             return factor > 0 ? factor : float.NaN;
         // 带单位（px/em）的行高这里按 normal 兜底（demo 不做绝对行高单位换算）
         return float.NaN;
     }
 
-    public static CssTextAlign ParseTextAlign(string value) => value?.Trim().ToLowerInvariant() switch
+    public static CssTextAlign ParseTextAlign(string value)
     {
-        "center" => CssTextAlign.Center,
-        "right" or "end" => CssTextAlign.Right,
-        _ => CssTextAlign.Left,
-    };
+        if (value is null) return CssTextAlign.Left;
+        var v = value.AsSpan().Trim();
+        if (v.Equals("center", StringComparison.OrdinalIgnoreCase)) return CssTextAlign.Center;
+        if (v.Equals("right", StringComparison.OrdinalIgnoreCase) || v.Equals("end", StringComparison.OrdinalIgnoreCase)) return CssTextAlign.Right;
+        return CssTextAlign.Left;
+    }
 
     public static string ParseFirstFontFamily(string value)
     {
@@ -259,21 +279,20 @@ public static class CssValueParser
     public static int ParseFontWeight(string value, int fallback = 400)
     {
         if (int.TryParse(value, out var w)) return w;
-        return value?.Trim().ToLowerInvariant() switch
-        {
-            "bold" => 700,
-            "bolder" => 800,
-            "lighter" => 300,
-            "normal" => 400,
-            _ => fallback,
-        };
+        if (value is null) return fallback;
+        var v = value.AsSpan().Trim();
+        if (v.Equals("bold", StringComparison.OrdinalIgnoreCase)) return 700;
+        if (v.Equals("bolder", StringComparison.OrdinalIgnoreCase)) return 800;
+        if (v.Equals("lighter", StringComparison.OrdinalIgnoreCase)) return 300;
+        if (v.Equals("normal", StringComparison.OrdinalIgnoreCase)) return 400;
+        return fallback;
     }
 
     /// <summary>flex-grow / flex-shrink：无单位数字，非法时回退默认。</summary>
     public static float ParseFlexNumber(string value, float fallback)
     {
         if (string.IsNullOrWhiteSpace(value)) return fallback;
-        return float.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+        return float.TryParse(value.AsSpan().Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
     }
 
     /// <summary>
@@ -337,14 +356,14 @@ public static class CssValueParser
     /// <summary>opacity：0..1 数字或百分比；非法回退 1。</summary>
     public static float ParseOpacity(string value)
     {
-        value = value?.Trim() ?? "";
-        if (value.Length == 0) return 1f;
-        if (value.EndsWith("%"))
+        var v = (value ?? "").AsSpan().Trim();
+        if (v.Length == 0) return 1f;
+        if (v.EndsWith("%", StringComparison.Ordinal))
         {
-            var p = ParseFloat(value[..^1]);
+            var p = ParseFloat(v[..^1]);
             return Clamp01(p / 100f);
         }
-        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) return Clamp01(v);
+        if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var x)) return Clamp01(x);
         return 1f;
     }
 
@@ -662,5 +681,9 @@ public static class CssValueParser
     }
 
     public static float ParseFloat(string s) =>
+        float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
+
+    /// <summary>span 版：与 string 版同一 NumberStyles/文化，失败回退 0，不再为切单位分配子串。</summary>
+    public static float ParseFloat(ReadOnlySpan<char> s) =>
         float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
 }

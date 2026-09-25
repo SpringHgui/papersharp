@@ -1,0 +1,5 @@
+body { font-family: sans-serif; font-size: 15px; line-height: 1.6; margin: 0; padding: 8px; }
+p { margin: 4px 0; }
+.mono { font-family: monospace; }
+.serif { font-family: serif; }
+.ib { display: inline-block; border: 1px solid #888888; padding: 0 6px; font-size: 12px; }

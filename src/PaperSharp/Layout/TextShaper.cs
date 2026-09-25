@@ -103,10 +103,59 @@ public static class TextShaper
 
     // ── 度量与绘制 ─────────────────────────────────────────────────────
 
+    // ── 等宽链的整像素 advance 网格 ─────────────────────────────────────
+    // 参考浏览器（Blink + DirectWrite）渲染 legacy 等宽 face（NSimSun，Blink 的 generic monospace 落点）时
+    // 不对 advance 做线性缩放，而是网格对齐到整「半格」：半宽字形 = ⌈fs/2⌉，全宽（CJK/全角）= 2×⌈fs/2⌉，
+    // 合成粗体（NSimSun 无粗体面）每字再 +1px。实测 12~17px 恒成立、≥18px 起回到线性。
+    // 14.6667px 的 <code> 每字 8px（hmtx 线性只有 7.333px → 整串窄 12/11，m1 六个 code 盒各差 12~24px）；
+    // 13.3333px 的 .num 表头「序号」粗体 = 2×15 = 30（引擎按 Noto 兜底只给 26.67 → 该列最大内容宽少 3.33px，
+    // 自动表格布局按比例摊到别列，整张表 357 个格 dx≈5）。
+    // Consolas / Courier New 这类真等宽 face 自身仍是线性（实测各字号恒 0.5498em），只有它们覆盖不到、
+    // 由 CSS family 链兜到 generic monospace 的码位才落进这张网格。
+    const float MonoFitMaxPx = 18f;
+
+    /// <summary>等宽网格口径下的整串宽（含 letter-spacing）。不适用该口径时返回 -1，由调用方走线性通路。</summary>
+    public static float MonoGridWidth(string text, SKTypeface tf, float size, float ls)
+    {
+        if (string.IsNullOrEmpty(text) || size >= MonoFitMaxPx || NeedsShaping(text)) return -1;
+        bool legacy = FontManager.IsLegacyMonoSubset(tf);
+        if (!legacy && (!tf.IsFixedPitch || FirstUncovered(text, tf) == 0)) return -1;
+
+        float half = (float)Math.Ceiling(size / 2f);
+        int fauxBold = tf.FontWeight >= 700 ? 1 : 0;
+        // 真等宽 face 自己覆盖的码位：全字符同一 advance，量一次就够
+        float own = 0;
+        if (!legacy)
+        {
+            for (int i = 0; i < text.Length;)
+            {
+                int cp = char.ConvertToUtf32(text, i);
+                i += char.IsHighSurrogate(text[i]) ? 2 : 1;
+                if (tf.GetGlyph(cp) == 0) continue;
+                using var paint = new SKPaint { Typeface = tf, TextSize = size };
+                own = paint.MeasureText(char.ConvertFromUtf32(cp));
+                break;
+            }
+        }
+
+        float w = 0;
+        for (int i = 0; i < text.Length;)
+        {
+            int cp = char.ConvertToUtf32(text, i);
+            i += char.IsHighSurrogate(text[i]) ? 2 : 1;
+            bool wide = cp is > 0 and <= 0xFFFF && TextMeasurer.IsCjkChar((char)cp);
+            if (!legacy && tf.GetGlyph(cp) != 0) { w += own; continue; }
+            w += (wide ? half * 2 : half) + fauxBold;
+        }
+        return w + ls * Math.Max(0, GraphemeCount(text) - 1);
+    }
+
     /// <summary>统一宽度：shaped run 用 HarfBuzz advance（字距对连写 run 不加 ls，见类注释）；否则走老公式。</summary>
     public static float WidthOf(string text, SKTypeface tf, float size, float ls)
     {
         if (string.IsNullOrEmpty(text)) return 0;
+        float mono = MonoGridWidth(text, tf, size, ls);
+        if (mono >= 0) return mono;
         if (NeedsShaping(text))
         {
             var typeface = ResolveTypeface(text, tf);
@@ -117,7 +166,7 @@ public static class TextShaper
         }
         var fallback = ResolveTypeface(text, tf);
         using var p2 = new SKPaint { Typeface = fallback, TextSize = size };
-        return p2.MeasureText(text) + ls * Math.Max(0, GraphemeCount(text) - 1);
+        return p2.MeasureText(text) + KernTable.Of(text, fallback, size) + ls * Math.Max(0, GraphemeCount(text) - 1);
     }
 
     /// <summary>Shaped 整段绘制（连写形式正确）。返回是否消费了该文本。</summary>

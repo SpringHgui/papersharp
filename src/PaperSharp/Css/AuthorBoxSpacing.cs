@@ -33,6 +33,9 @@ sealed class AuthorBoxSpacing
     readonly Dictionary<string, List<Rule>> _byTag = new();
     readonly Dictionary<string, List<Rule>> _byClass = new();
     readonly Dictionary<string, List<Rule>> _byId = new();
+    // 伪元素规则单独两摞：宿主的 margin/padding 绝不能落到生成盒上，而 AngleSharp 的
+    // computed/declared 两条读取路都会把宿主声明混进伪元素结果里（见 StyleResolver 的 PseudoEdge）。
+    readonly List<Rule> _before = new(), _after = new();
     int _count;
 
     static readonly Regex SpacingDecl = new(@"(^|[{;])\s*((margin|padding)(-(top|right|bottom|left))?)\s*:", RegexOptions.IgnoreCase);
@@ -75,11 +78,17 @@ sealed class AuthorBoxSpacing
 
     void AddRules(string header, string body, float maxW, float minW)
     {
-        if (header.Contains("::")) return;   // 伪元素不适用（其 margin/padding 走各自路径）
         string[] decls = body.Split(';', StringSplitOptions.RemoveEmptyEntries);
         foreach (string rawSel in header.Split(','))
         {
             string sel = rawSel.Trim();
+            if (sel.Length == 0) continue;
+            List<Rule>? pseudoSink = null;
+            if (Regex.IsMatch(sel, @"::?before\b", RegexOptions.IgnoreCase)) pseudoSink = _before;
+            else if (Regex.IsMatch(sel, @"::?after\b", RegexOptions.IgnoreCase)) pseudoSink = _after;
+            else if (sel.Contains("::")) continue;   // ::first-line 等其它伪元素：不支持
+            if (pseudoSink != null)
+                sel = Regex.Replace(sel, @"::?(before|after)", "").Trim();   // 宿主选择器拿去匹配元素
             if (sel.Length == 0) continue;
             Rule? r = null;
             foreach (string d in decls)
@@ -106,6 +115,7 @@ sealed class AuthorBoxSpacing
                 }
             }
             if (r == null) continue;
+            if (pseudoSink != null) { if (!pseudoSink.Contains(r)) pseudoSink.Add(r); continue; }
             // 索引桶 = 末段简单选择器的**每个**主 token（tag / .class / #id）；一个都不剩才归通配。
             // 只认第一个 token 会把 "h2.sec" 整串当标签名建桶（查询按 el.TagName="h2" 取），
             // 于是 `.band h2.sec{margin-bottom:44px}` 永不被扫到，反让 `*{margin:0}` 独赢 → 整页下坠。
@@ -188,13 +198,25 @@ sealed class AuthorBoxSpacing
         return v8;
     }
 
+    /// <summary>
+    /// 生成盒的八条边：只按伪元素自己的规则裁决（内联 style 属于宿主，与生成盒无关）。
+    /// 条目 null = 作者没为这条边写过声明 → 调用方按初值 0 处理，绝不回落到宿主值。
+    /// </summary>
+    public string?[] ResolvePseudo(IElement el, string pseudo, float viewportW)
+    {
+        var v8 = new string?[8];
+        ScanRules(el, viewportW, v8,
+            pseudo.Contains("before", StringComparison.OrdinalIgnoreCase) ? _before : _after);
+        return v8;
+    }
+
     static bool Open(string?[] v8)
     {
         for (int i = 0; i < 8; i++) if (v8[i] is not { Length: > 0 }) return true;
         return false;
     }
 
-    void ScanRules(IElement el, float viewportW, string?[] v8)
+    void ScanRules(IElement el, float viewportW, string?[] v8, List<Rule>? only = null)
     {
         var best = new Rule?[8];
         var bestSpec = new int[8];
@@ -223,10 +245,14 @@ sealed class AuthorBoxSpacing
             }
         }
 
-        Scan(_any);
-        Scan(_byTag.TryGetValue(el.TagName.ToLowerInvariant(), out var t) ? t : null);
-        if (!string.IsNullOrEmpty(el.Id)) Scan(_byId.TryGetValue(el.Id, out var i) ? i : null);
-        foreach (string cls in el.ClassList) Scan(_byClass.TryGetValue(cls, out var c) ? c : null);
+        if (only != null) Scan(only);
+        else
+        {
+            Scan(_any);
+            Scan(_byTag.TryGetValue(el.TagName.ToLowerInvariant(), out var t) ? t : null);
+            if (!string.IsNullOrEmpty(el.Id)) Scan(_byId.TryGetValue(el.Id, out var i) ? i : null);
+            foreach (string cls in el.ClassList) Scan(_byClass.TryGetValue(cls, out var c) ? c : null);
+        }
 
         for (int k = 0; k < 8; k++) if (best[k] is { } r && r.Val[k] is { } val) v8[k] = val;
     }
@@ -241,10 +267,16 @@ sealed class AuthorBoxSpacing
         try { return el.Matches(selector); } catch { return false; }
     }
 
+    /// <summary>
+    /// 按 CSS 简写语义把 1~4 个值摊到四条边。**切分必须跳过括号内的空白**：
+    /// `margin: calc(1rem + 8px) 0 10px` 裸按空格切会得到 5 段，四条边全体错位（m4 的 h2 实测 21px vs 24px），
+    /// `padding: calc(0.5em + 8px)` 更直接被切成 "calc(0.5em" 这种解析不出来的半截串（实测折成 0）。
+    /// </summary>
     static void ExpandShorthand(string val, string?[] into, int at)
     {
-        string[] p = val.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var (t, r, b, l) = p.Length switch
+        var p = SplitTopLevel(val);
+        if (p.Count == 0) return;
+        var (t, r, b, l) = p.Count switch
         {
             1 => (p[0], p[0], p[0], p[0]),
             2 => (p[0], p[1], p[0], p[1]),
@@ -252,6 +284,30 @@ sealed class AuthorBoxSpacing
             _ => (p[0], p[1], p[2], p[3]),
         };
         into[at] = t; into[at + 1] = r; into[at + 2] = b; into[at + 3] = l;
+    }
+
+    /// <summary>按空白切值，但只在括号深度 0 处切（函数值如 calc()/var()/env() 内部整体算一个值）。</summary>
+    static List<string> SplitTopLevel(string val)
+    {
+        var list = new List<string>();
+        int depth = 0, start = 0;
+        for (int i = 0; i <= val.Length; i++)
+        {
+            bool cut = i == val.Length;
+            if (!cut)
+            {
+                char c = val[i];
+                if (c == '(') depth++;
+                else if (c == ')') depth = Math.Max(0, depth - 1);
+                cut = depth == 0 && char.IsWhiteSpace(c);
+            }
+            if (cut)
+            {
+                if (start < i) list.Add(val[start..i]);
+                start = i + 1;
+            }
+        }
+        return list;
     }
 
     /// <summary>

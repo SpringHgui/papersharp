@@ -3,7 +3,7 @@
 > 对象：`paper-sharp`（AngleSharp.Css + SkiaSharp + 手写布局层的 HTML/CSS → PDF/PNG 渲染器）。
 > 方法：可复现基准入口 `src/PaperSharpSamples/Benchmark.cs`（在 PaperSharpSamples 目录下 `dotnet run -c Release -- bench|cold|scale|pgstage|pgenc|pgbuild|pgalloc`），全部数字为本机 `Stopwatch` 实测。
 > **除 §5.5、§5.6、§6、§6.8 与 §0.3 / §5.1 的补注外，§0–§5、§7 的数字仍是 2026-09-22 Release `bench 50` 净跑**（无并发负载），原始输出：`src/PaperSharpSamples/bench_20260922.txt`。旧版 Debug + python 满载干扰下的数字已全部替换；唯 §2 冷启动仍是旧 Debug 实测（未重跑）。
-> **§5.5 是 2026-09-24 的作者 CSS 层叠定性 + 落地**（物化样式表集合），原始输出：`src/PaperSharpSamples/pgstyle_20260924.csv`；该节已把 §5.1 的 O(n^2.5) 定性为「一处未物化的 LINQ」并消掉。**§5.6 是同一天在其基础上的第二刀**（按元素缓存层叠结果 + `ReadStyle` 双轮并一轮），Playground 全语料 buildDoc 1.76×，原始输出：`src/PaperSharpSamples/pgstyle_20260924_H.csv`、`pgstage_20260924_eager.csv` / `..._cached.csv`。**§5.7 是两刀之后对 buildDoc 残差的解剖**（AngleSharp 53% / 自研 47%，属性读才是 AngleSharp 剩余大头），原始输出：`pgbuild_20260924_split.csv`。**§5.8 是当晚按 §5.7 结论落地的第 1 刀**（每元素属性记忆化视图 `PropCache`，同树 worktree A/B buildDoc −8~−11%），原始输出：`wt_pgstage_20260924_prepropcache.csv` / `wt_pgstage_20260924_propcache.csv`。
+> **§5.5 是 2026-09-24 的作者 CSS 层叠定性 + 落地**（物化样式表集合），原始输出：`src/PaperSharpSamples/pgstyle_20260924.csv`；该节已把 §5.1 的 O(n^2.5) 定性为「一处未物化的 LINQ」并消掉。**§5.6 是同一天在其基础上的第二刀**（按元素缓存层叠结果 + `ReadStyle` 双轮并一轮），Playground 全语料 buildDoc 1.76×，原始输出：`src/PaperSharpSamples/pgstyle_20260924_H.csv`、`pgstage_20260924_eager.csv` / `..._cached.csv`。**§5.7 是两刀之后对 buildDoc 残差的解剖**（AngleSharp 53% / 自研 47%，属性读才是 AngleSharp 剩余大头），原始输出：`pgbuild_20260924_split.csv`。**§5.8 是当晚按 §5.7 结论落地的第 1 刀**（每元素属性记忆化视图 `PropCache`，同树 worktree A/B buildDoc −8~−11%），原始输出：`wt_pgstage_20260924_prepropcache.csv` / `wt_pgstage_20260924_propcache.csv`。**§5.9 是第 2 刀**（自研值解析 span 化，22/22 字节全等，重页 buildDoc −7%、全语料 ~−1%），原始输出：`wt_pgstage_20260925_prespan.csv` / `wt_pgstage_20260925_span.csv`。
 > **§6 是 2026-09-24 新增的 Playground 语料**（22 个真实页面样例，换自研 PNG 编码器前后对拍），原始输出：`src/PaperSharpSamples/pgstage_20260924_head.csv` / `..._work.csv`。本轮实测已**部分推翻** §0.3 / §5.1 的笼统断言，措辞已按「像素数 vs 元素数」两个轴改写，见 §5.1 末与 §6。
 
 ## 0. 结论速览（TL;DR）
@@ -314,6 +314,19 @@
 
 原始输出：`src/PaperSharpSamples/wt_pgstage_20260924_prepropcache.csv`（A 臂）、`wt_pgstage_20260924_propcache.csv`（B2）、`pgbuild_20260924_propcache.csv`。
 
+### 5.9 第 2 刀落地：自研值解析 span 化，收益比 §5.7 的账面预估**小一个量级**（CSS 重页 buildDoc −7%、全语料 ~−1%）（2026-09-25 凌晨）
+
+`CssValueParser` 十个自研函数（`ToPixels`/`ParseSize`/`ParseColor`/`TryParseNamedColor`/`ParseLineHeight`/`ParseTextAlign`/`ParseFontWeight`/`ParseOpacity`/`ParseFlexNumber` + `ParseFloat(span)` 重载）改走 `ReadOnlySpan<char>` 切片，单位剥离不再产生 `value[..^2]` 子串分配；`EndsWith`/`Equals` 从 culture-sensitive 实例重载换成 `Ordinal(IgnoreCase)`（对 AngleSharp 计算值这种纯 ASCII 小写串逐字符等价）。**公开签名全部不变**，语义边角逐字保真（如 `ParseSize` 百分比分支：数值取**未 trim** 切片、判空用 trim 后切片，`"50 %"` 解析为 0 的行为原样保留）。
+
+**正确性门（同树 worktree 两臂）**：
+- 对照臂 B′ = span 文件**只回退我的 9 个方法体**（保留对端混在同一文件里的 calc 指数修复 `ExpDigits`，见下）；实验臂 C′ = 现主树文件。两臂 22 样例 `boxes` JSON **22/22 字节全等**。
+- 期间插曲：前一晚的臂间 m4 +30px「疑似回归」经全量 diff + 双跑探针（新旧实现同进程逐调用对账，0 mismatch）+ hybrid 臂三分定位，**确证是对端 `EvalCalc` 指数词法修复**（`0.5em + 8px` 曾被切成 `0.5e`+单位 `m` 致整条 calc 归 0），不是 span 刀。`CssValueParser.cs` 自此也是**混合作者文件**，提交时要按 hunk 拆。
+- 非 golden 测试 185/203；5 个非像素失败（InlineImageShrinkWrap ×2、TableSpecifiedColumn ×3）在 B′ 臂（无我的 hunk）+ 对端最新布局文件上**同样失败**，归属对端在研。
+
+**性能量化（同树四轮 pgstage，B1→C1→B2→C2）**：全语料 buildDoc 合计 B2 762.6 → C 755.7/757.4（**−0.8%**）；第一轮 B1 838.5 是冷启动垫高的假 baseline（由此前「B1→C1 −9.9%」的误读纠偏）。对 4 个重样例 15 迭代 ×3 轮取中位：pricing-page 136.0→125.5（**−7.7%**）、pricing-mid 95.1→87.9（**−7.6%**）、pricing-top 52.6→49.1（**−6.7%**）、m1 ≈0%（AngleSharp/inline 主导，无差异）。小样例（login-page +57%、invoice +31%）经 25 迭代 ×2 轮复测回落为噪声/反向小赢，与 §6.6 「10ms 量级分段不可信」的告诫一致。
+
+**判读**：§5.7 那块 161ms（props+ParseSize − props）里约七成是 AngleSharp `GetPropertyValue` 自己的字符串分配，PropCache 命中后自研解析只对**未缓存的首读**起作用——所以 span 化的真实收益是「CSS 值密度高的页面 buildDoc −7%」，不是账面 15%。方向仍赚（字节全等 + 分配下降），保留。下一档杠杆只剩：display 分型跳读（回归面大）、正则预处理/DomPath 门控（残差 32% 未拆）。
+
 ## 6. Playground 路径 · 换 PNG 编码器前后对拍（2026-09-24 本轮新增）
 
 **口径**：`dotnet run -c Release --project src/PaperSharpSamples -- pgstage 9`，与 Playground 页面同参数（宽 1284 / `scale:2` / `domPath:true`），22 个真实页面样例 × 9 次迭代。
@@ -459,7 +472,9 @@
    - ~~(b) 让每个元素只做一轮层叠~~ **✅ 已随 (a) 一并落地（见 §5.6）**：raw 声明串直接吃 computed 轮的缓存条目（缓存的是**折算前**的声明，折算现做），双轮并一轮。与 §6.4 被否决的「启发式跳过第二轮」无关——那条是没缓存时每次都必问一次，这条是问过的必然命中。
    - 两刀合起来引擎真实入口 `pgstage 9` 全语料 buildDoc **1,701 → 964ms（1.76×）**、e2e **2,893 → 2,001ms（1.45×）**。
    - ~~彻底移除 `AngleSharp.Css` 依赖（原 M6 步骤①③④⑤⑥）~~ **性能理由已不存在**（(a)(b) 之后层叠固定成本只剩值折算 + 属性读 + 建树），只剩**依赖收敛**诉求，不必为性能启动。
-   - ~~（新，§5.7 取证后的下一档）属性记忆化视图~~ **✅ 已落地（09-24 夜，见 §5.8）**：buildDoc 里 AngleSharp 那 31% 的**重复读**已用每元素 2 个惰性 `PropCache`（`Get`/`Spec` 各一，Dictionary 按需填）削掉，同树 A/B 实测 buildDoc **−8~−11%**。当初设想的「一趟枚举建全量字典」不需要——真正贵的是重复首读而非唯一首读。剩余同量级杠杆回到：display 分型跳读（回归面大）、自研值解析 span 化（§5.7 的 15% 块）、正则预处理/DomPath 门控（残差 32% 未再拆）。
+   - ~~（新，§5.7 取证后的下一档）属性记忆化视图~~ **✅ 已落地（09-24 夜，见 §5.8）**：buildDoc 里 AngleSharp 那 31% 的**重复读**已用每元素 2 个惰性 `PropCache`（`Get`/`Spec` 各一，Dictionary 按需填）削掉，同树 A/B 实测 buildDoc **−8~−11%**。当初设想的「一趟枚举建全量字典」不需要——真正贵的是重复首读而非唯一首读。
+   - ~~自研值解析 span 化（§5.7 的 15% 块）~~ **✅ 已落地（09-25 凌晨，见 §5.9）**：字节全部门控通过，但真实收益是 **CSS 重页 buildDoc −7%、全语料 ~−1%**——那块 161ms 里约七成是 AngleSharp 自己的串分配，PropCache 命中后自研解析只吃首读。账面百分比要按「缓存命中率之后」折减再看。
+   剩余同量级杠杆回到：display 分型跳读（回归面大）、正则预处理/DomPath 门控（残差 32% 未再拆）。
 4. **✅ 已修（2026-09-24）：WASM 导出显式关掉自研 PNG 快路**（数据与机制见 §6.8）：同一份快照夹具、生产同参数下 3.38s（开）vs 2.53s（`UseFastPng=false`），慢 **1.3–1.5×**——那条快路的收益主要来自并行，WASM 单线程 + Mono 解释器里逐字节 managed 滤波反而贵过 Skia 的 native zlib。落地为 `Api` 静态构造里的 `Renderer.UseFastPng = false`，Playground / 服务端这些 native 宿主保持默认开；落地后扩展产物与 9-23 那份 **SHA-1 一字不差**。
 5. **降 PDF 编码成本**：`paintEncode` 占小文档 PDF 的 85–95%（§4），本轮只解决了 **PNG** 侧，PDF 侧原样未动。可选：(a) SkiaSharp 3.x 的 PDF 字体子集化；(b) 批量导出复用同一 `SKDocument` 多页；(c) 常驻服务用 PDF 侧字体复用方案。
 6. **Playground 真实链路尚未量过**：§6 全部数字来自控制台 harness，SignalR 往返、`/api/playground/image/{token}` 取图、iframe `srcdoc` 装载 + 浏览器量测回传都没测过一次（页脚把「引擎 ms / 浏览器量测 ms」分开显示就是为这一步刚加的）。拿到真实值后才能判断引擎渲染与浏览器量测要不要并行（现 `RenderOnceAsync` 里两者串行）。

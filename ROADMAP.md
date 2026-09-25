@@ -43,6 +43,7 @@
 - **(b) ✅ 让每个元素只做一轮层叠**：raw 声明串直接吃 computed 轮缓存的**折算前**条目，双轮并一轮。⚠️ 与**已否决**的「无缓存时按元素启发式跳过第二轮」不是一回事（那条失败在 computed 对未声明属性返回空串、兜底必问一次；这条是问过的必然命中），见 PERF_REPORT §6.4 的更正。
 - 合起来引擎真实入口 `pgstage 9`：buildDoc **1,701 → 964ms（1.76×）**、e2e **2,893 → 2,001ms（1.45×）**。门：22 真实样例 × {宿主,::before,::after} × {computed,raw} × 94 属性 = **1,274,452 次比对 0 不一致**。
 - **(c) ✅ 第 3 刀：每元素属性记忆化视图 `PropCache`**（09-24 夜，PERF_REPORT §5.8）：`ReadStyle` 的 `Get`/`Spec` 各包一个惰性 Dictionary（引擎每元素 ~130 次属性读里重复的那部分变命中）。**同树 worktree A/B** 实测 buildDoc **−8~−11%**、e2e **−11%**（m1/pricing 系 −17~−19%）；门：两臂 22 样例 `boxes` JSON 22/22 字节全等。层叠侧性能杠杆到此连续兑现三刀，剩余候选转向自研值解析 span 化与预处理/DomPath 门控（§5.7 的自研 47%）。
+- **(d) ✅ 第 4 刀：自研值解析 span 化**（09-25 凌晨，PERF_REPORT §5.9）：`CssValueParser` 十个函数改 `ReadOnlySpan<char>` 切片 + Ordinal 比较，公开签名不变。门：worktree 两臂（对照臂只回退本刀的 9 个方法体、保留对端混在同文件的 `ExpDigits` 修复）22 样例 boxes 22/22 字节全等。实测**远小于 §5.7 账面**：CSS 重页 buildDoc −7%、全语料 ~−1%——那 161ms 里七成是 AngleSharp 自己的串分配，PropCache 之后自研解析只吃未缓存的首读。教训：拆块百分比要按缓存命中率折减。剩余候选：display 分型跳读（回归面大）、正则预处理/DomPath 门控。
 
 **六步计划（原方案，现仅为「彻底移除 AngleSharp.Css 依赖」服务；除②⑥已交付外不再阻塞性能）**：
 

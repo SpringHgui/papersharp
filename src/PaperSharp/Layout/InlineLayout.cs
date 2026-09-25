@@ -131,7 +131,7 @@ public static class InlineLayout
             var ln = new LineBox();
             if (fc != null)
             {
-                float est = firstStyle != null ? firstStyle.FontSize * firstStyle.LineHeightFactor : 16;
+                float est = firstStyle != null ? firstStyle.LineHeightPx() : 16;
                 var (l, r) = fc.Insets(yCursor, est);
                 ln.Inset = l;
                 ln.Avail = Math.Max(1, maxWidth - l - r);
@@ -244,7 +244,7 @@ public static class InlineLayout
         }
         if (b.WrappedLines is { Length: > 0 } ws)
         {
-            float lh = s.FontSize * s.LineHeightFactor;    // 与 MeasureBlock 那条折行同一口径
+            float lh = s.LineHeightPx();    // 与 MeasureBlock 那条折行同一口径
             var (asc, _) = BoxOf(s);
             return (lh - asc) + Math.Max(0, b.ContentHeight - ws.Length * lh) + deco;
         }
@@ -252,6 +252,27 @@ public static class InlineLayout
         if (kids.Count == 0) return null;
         var last = kids[^1];
         return (BaselineToBottom(last) ?? 0f) + last.Style.MarginBottom + deco;
+    }
+
+    /// <summary>
+    /// 盒「上边框外缘」到其**第一条基线**的距离（flex/grid 的 align-items:baseline 用）；
+    /// null = 盒里找不到基线（替换元素、空盒）——调用方按合成基线落在上外边距边处理，即距离 0。
+    /// 与 <see cref="BaselineToBottom"/> 同一套行盒定位口径：纯文本块的首行基线 = leading/2 取整 + ascent。
+    /// </summary>
+    internal static float? BaselineToTop(BlockBox b)
+    {
+        var s = b.Style;
+        float deco = s.BorderWidthTop + s.PaddingTop;
+        if (b.Lines is { Count: > 0 } ls) return deco + ls[0].Baseline;
+        if (b.WrappedLines is { Length: > 0 })
+        {
+            var (asc, _) = BoxOf(s);
+            return deco + asc;
+        }
+        var kids = InFlowChildren(b);
+        if (kids.Count == 0) return null;
+        var cb = BaselineToTop(kids[0]);
+        return cb == null ? null : deco + cb;
     }
 
     /// <summary>常规流子盒（浮动与绝对定位不参与「最后一个行盒」的认定）。</summary>
@@ -273,12 +294,12 @@ public static class InlineLayout
     /// 原子盒（inline-block / 行内 img）的上下两段由 <see cref="AtomicExtents"/> 给，不再套 leading。
     /// </summary>
     static (float Asc, float Desc) BoxOf(InlineFrag f)
-        => f.Box != null ? (f.Ascent, f.Descent) : BoxOf(f.Ascent, f.Descent, f.FontSize * f.Style.LineHeightFactor);
+        => f.Box != null ? (f.Ascent, f.Descent) : BoxOf(f.Ascent, f.Descent, f.Style.LineHeightPx());
 
     static (float Asc, float Desc) BoxOf(ComputedStyle s)
     {
         var (a, d) = FontManager.TextExtents(s.FontFamily, s.FontWeight, s.FontSize);
-        return BoxOf(a, d, s.FontSize * s.LineHeightFactor);
+        return BoxOf(a, d, s.LineHeightPx());
     }
 
     static (float Asc, float Desc) BoxOf(float asc, float desc, float lineHeight)
@@ -321,8 +342,11 @@ public static class InlineLayout
                 // top/bottom：把该片段自己的行高盒上/下边贴到行盒对应边上（相对基线换算成下移量）
                 case "top": dy = fAsc - ln.Baseline; break;
                 case "bottom": dy = (ln.Height - ln.Baseline) - fDesc; break;
-                case "super": dy = -0.35f * f.FontSize; break;
-                case "sub": dy = 0.25f * f.FontSize; break;
+                // Chrome 实测：super 上抬 = 父字号/3 + 1px，sub 下移 = 父字号/5 + 1px，
+                // 只看**父**字号（4 字体 × 3 行高 × 7 档父字号拟合残差 ≤0.006px）。
+                // 旧式按自身字号算：m3 的 sup{font-size:11px} 在 16px 段里少抬 2.48px。
+                case "super": dy = -(ParentFontSize(f) / 3f + 1f); break;
+                case "sub": dy = ParentFontSize(f) / 5f + 1f; break;
                 default:
                     float len = va.EndsWith('%')
                         ? ln.Height * CssValueParser.ParseFloat(va[..^1]) / 100f
@@ -336,14 +360,16 @@ public static class InlineLayout
         ReorderForRtl(ln);
     }
 
-    /// <summary>RTL 基底方向：把行内 frag 按强方向分组并反转为视觉序（规则与 TextShaper.BidiRuns 一致），重排 X。</summary>
+    /// <summary>RTL 基底方向：把行内 frag 按强方向分组并反转为视觉序（规则与 TextShaper.BidiRuns 一致），重排 X。
+    /// 反转分两级：段序整体倒排（RTL 段最先出现在最右），且 RTL 段**内部**也倒排——阿拉伯语词序自右向左，
+    /// LTR 段（拉丁词/数字）内部保持逻辑序。旧实现只做第一级，于是纯 RTL 段里的 inline-block 停在段首，
+    /// 实测偏移 317px。</summary>
     static void ReorderForRtl(LineBox ln)
     {
         if (ln.Frags.Count < 2) return;
-        var firstText = ln.Frags.FirstOrDefault(f => f.Text != null);
-        if (firstText == null || firstText.Style.Direction != "rtl") return;
+        if (ln.Frags[0].Style.Direction != "rtl") return;
 
-        var groups = new List<List<InlineFrag>>();
+        var groups = new List<(int Dir, List<InlineFrag> Frags)>();
         var cur = new List<InlineFrag>();
         int curDir = 0;
         foreach (var f in ln.Frags)
@@ -351,16 +377,22 @@ public static class InlineLayout
             int dir = f.Text != null ? TextShaper.StrongDir(f.Text) : 0; // 原子盒按中性处理
             if (curDir == 0) { cur.Add(f); if (dir != 0) curDir = dir; }
             else if (dir == 0 || dir == curDir) cur.Add(f);
-            else { groups.Add(cur); cur = new List<InlineFrag> { f }; curDir = dir; }
+            else { groups.Add((curDir, cur)); cur = new List<InlineFrag> { f }; curDir = dir; }
         }
-        if (cur.Count > 0) groups.Add(cur);
-        if (groups.Count < 2) return;
+        if (cur.Count > 0) groups.Add((curDir, cur));
 
         groups.Reverse();
         float x = 0;
-        foreach (var g in groups)
+        foreach (var (dir, g) in groups)
+        {
+            if (dir > 0) g.Reverse();
             foreach (var f in g) { f.X = x; x += f.Width; }
+        }
     }
+
+    /// <summary>CSS 2.1 §10.8.1 的 sub/super 偏移以**父元素**字号为基（ComputedStyle.Parent 在样式期已挂好）。</summary>
+    static float ParentFontSize(InlineFrag f)
+        => f.Style.Parent is { FontSize: > 0 } p ? p.FontSize : f.FontSize;
 
     static string LastText(LineBox ln)
     {
@@ -443,6 +475,14 @@ public static class InlineLayout
             {
                 Flush();
                 tokens.Add(g);
+            }
+            else if (wordBreak != "keep-all" && g.Length == 1 && g[0] == '-' && sb.Length > 0
+                     && sb[^1] is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9'))
+            {
+                // 词内连字符后是断点（UAX#14 的 LD 类，Blink 照它折）："border-radius" → "border-" / "radius"。
+                // 前面不是词字符的 '-'（"calc(18px - 0.5rem)"）不算，否则会把运算符当断点。
+                sb.Append(g);
+                Flush();
             }
             else sb.Append(g);
         }

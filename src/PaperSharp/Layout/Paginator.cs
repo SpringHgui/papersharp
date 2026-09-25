@@ -248,7 +248,7 @@ public static class Paginator
         void FlowText(BlockBox box, float innerX)
         {
             var s = box.Style;
-            float lineHeight = s.FontSize * s.LineHeightFactor;
+            float lineHeight = s.LineHeightPx();
             var lines = box.WrappedLines!;
             int i = 0;
             while (i < lines.Length)

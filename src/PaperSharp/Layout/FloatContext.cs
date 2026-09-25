@@ -41,25 +41,30 @@ public sealed class FloatContext
     }
 
     /// <summary>
-    /// 放置一个浮动盒：先在自身容器里向下避开同侧浮动区，再在同排带上贴着已占边缘排布。
+    /// 放置一个浮动盒（CSS 2.1 §9.5.1）：在候选 top 的那条带上贴着同侧已占边缘排布，**只有放不下才下移**。
+    /// 「同侧有交叠就下移」是错的：两个 120px 的左浮动并排放得下，浏览器给同一行 x=0/x=120，
+    /// 老实现却把它们摞成两行（第二个 top 被推到第一个的底边），容器撑高也因此从 60 变 100。
     /// 返回 margin-box 左上角（x 相对本容器内容左缘，y 全局）并登记浮动区。
     /// </summary>
     public (float x, float top) Place(bool isLeft, float containerW, float wantTop, float totalW, float totalH)
     {
         float top = wantTop;
-        bool moved;
-        do
+        float edge = 0;
+        while (true)
         {
-            moved = false;
+            edge = 0;                       // 同带内同侧已占边缘（左浮动=距左缘，右浮动=距右缘）
+            float other = 0;                // 异侧已占的宽度
+            float descend = float.NaN;      // 让位时要落到的最低底边（**两侧都算**：被对岸挤下也要越过对岸）
             foreach (var g in Own)
-                if (g.IsLeft == isLeft && g.Bottom > top && g.Top < top + totalH)
-                { top = g.Bottom; moved = true; }
-        } while (moved);
-
-        float edge = 0; // 同带内已占边缘（左侧=距左缘，右侧=距右缘）
-        foreach (var g in Own)
-            if (g.IsLeft == isLeft && g.Bottom > top && g.Top < top + totalH)
-                edge = Math.Max(edge, g.Edge);
+                if (g.Bottom > top && g.Top < top + totalH)
+                {
+                    if (g.IsLeft == isLeft) edge = Math.Max(edge, g.Edge);
+                    else other = Math.Max(other, g.Edge);
+                    if (float.IsNaN(descend) || g.Bottom > descend) descend = g.Bottom;
+                }
+            if (totalW <= containerW - edge - other || float.IsNaN(descend)) break;
+            top = descend;                  // 本带被占满：落到最矮可让位处再试
+        }
 
         float x = isLeft ? edge : Math.Max(0, containerW - totalW - edge);
         float regionEdge = isLeft ? x + totalW : containerW - x;

@@ -63,7 +63,7 @@ public static class StyleResolver
     // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
     // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
     // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
-    static readonly string[] UnsupportedProps = { "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
+    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
         // 盒对齐（Box Alignment）新写法的属性：AngleSharp 只认 flexbox 时代的关键字集，
         // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
         // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
@@ -128,6 +128,7 @@ public static class StyleResolver
             htmlBody = Regex.Replace(htmlBody, @"<style[^>]*>.*?</style>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         }
         userCss = InlineUniqueVars(userCss);   // 必须先于下面所有索引与 AngleSharp：见方法注释
+        userCss = ExpandVarBorderShorthands(userCss);   // 同上：AngleSharp 丢带 var() 的 border 简写
         ScanUnsupported(userCss, ctx);
         ScanVars(userCss, ctx);
         // margin 作者源微级联（见 AuthorBoxSpacing）：AngleSharp 的 UA 源比较按特异度而非源，
@@ -205,6 +206,14 @@ public static class StyleResolver
     }
 
     /// <summary>取属性值：有 AngleSharp 结果就用；否则按元素 class/id/tag 命中兜底索引。</summary>
+    /// <summary>少数「UA 默认值由标签决定、但 AngleSharp 与作者 CSS 都读不到」的属性兜底。</summary>
+    static string? TagDefaultVerticalAlign(IElement el) => el.TagName.ToUpperInvariant() switch
+    {
+        "SUP" => "super",
+        "SUB" => "sub",
+        _ => null,
+    };
+
     static string Lookup(string prop, IElement element, string current, DocContext ctx)
     {
         if (string.IsNullOrWhiteSpace(current))
@@ -285,6 +294,102 @@ public static class StyleResolver
     /// 那个串，文本内联与逐元素展开结果一致，且顺带把 calc()/简写里的引用一并喂给了 AngleSharp。
     /// 只改引用处、不动 `--x: …` 声明本身，故 VarMap 仍完整（内联 style 属性里的 var 照旧走逐元素路）。
     /// </summary>
+    /// <summary>
+    /// 把值里带 <c>var()</c> 的 <c>border</c> / <c>border-{side}</c> 简写拆成 12 条（或 3 条）长写。
+    ///
+    /// 为什么必须拆：AngleSharp 认不出值里含 var() 的**简写**，整条声明直接丢弃（探针 _probe-brd5 实测
+    /// <c>border: 4px solid var(--multi)</c> 四条边全没、<c>border-bottom: calc(2px + 1pt) solid var(--x)</c>
+    /// 少 3px），而 m4 的 h1/.scoped/.quote 正好都是这一形。长写带 var() 是读的（同探针 .e 用例：
+    /// <c>border-bottom-color: var(--multi)</c> 盒高与浏览器一致），引擎侧再由 <see cref="ExpandVars"/>
+    /// 逐元素展开，作用域覆盖照常生效。
+    /// 只对「值里确实有 var()」的简动手，其余简写原样留给 AngleSharp（它解析得比我们好）。
+    /// 缺的分量按 CSS 初值补：width=medium、style=none、color=currentColor —— 简写本就重置这三项。
+    /// </summary>
+    static string ExpandVarBorderShorthands(string css)
+    {
+        if (string.IsNullOrWhiteSpace(css) || !css.Contains("var(", StringComparison.OrdinalIgnoreCase)) return css;
+        return Regex.Replace(css, @"(^|[{;\s])((?:border|border-top|border-right|border-bottom|border-left)(?<!-)\w*)\s*:\s*([^;{}]*)",
+            m =>
+            {
+                var prop = m.Groups[2].Value;
+                var value = m.Groups[3].Value;
+                // 只处理精确的 border 系列属性名（挡掉 border-radius / border-spacing / border-image / -collapse）
+                if (prop.Length > 6 && !prop.Equals("border-top", StringComparison.OrdinalIgnoreCase)
+                    && !prop.Equals("border-right", StringComparison.OrdinalIgnoreCase)
+                    && !prop.Equals("border-bottom", StringComparison.OrdinalIgnoreCase)
+                    && !prop.Equals("border-left", StringComparison.OrdinalIgnoreCase)
+                    && !prop.Equals("border", StringComparison.OrdinalIgnoreCase)) return m.Value;
+                if (!value.Contains("var(", StringComparison.OrdinalIgnoreCase)) return m.Value;
+                var pre = m.Groups[1].Value;
+                return pre + string.Join(";", Sides(prop).SelectMany(side =>
+                {
+                    var (w, st, c) = SplitBorderValue(value);
+                    return new[] { $"{side}-width:{w}", $"{side}-style:{st}", $"{side}-color:{c}" };
+                })) + ";";
+            });
+    }
+
+    static IEnumerable<string> Sides(string prop) => prop.Length > 6
+        ? new[] { prop } : new[] { "border-top", "border-right", "border-bottom", "border-left" };
+
+    /// <summary>把 border 简写值按顶层空格切 token，分派 width / style / color 三段；未知 token（含 var()）三段都填。</summary>
+    static (string Width, string Style, string Color) SplitBorderValue(string value)
+    {
+        string w = null, st = null, co = null;
+        foreach (var tok in SplitTopLevel(value))
+        {
+            if (tok.Length == 0) continue;
+            if (IsBorderWidthKw(tok) || IsSizeToken(tok)) w ??= tok;
+            else if (IsBorderStyleKw(tok)) st ??= tok;
+            else if (tok.StartsWith("var(", StringComparison.OrdinalIgnoreCase)) { w ??= tok; st ??= tok; co ??= tok; }
+            else co ??= tok;
+        }
+        return (w ?? "medium", st ?? "none", co ?? "currentColor");
+    }
+
+    /// <summary>是否长度类 token：数字打头（含符号/小数点）、带单位函数（calc()/min()/max()/clamp()）或百分比。</summary>
+    static bool IsSizeToken(string t)
+    {
+        if (t.Length == 0) return false;
+        var c0 = t[0];
+        if (char.IsDigit(c0) || c0 == '.' || c0 == '+' || c0 == '-') return true;
+        return t.StartsWith("calc(", StringComparison.OrdinalIgnoreCase)
+            || t.StartsWith("min(", StringComparison.OrdinalIgnoreCase)
+            || t.StartsWith("max(", StringComparison.OrdinalIgnoreCase)
+            || t.StartsWith("clamp(", StringComparison.OrdinalIgnoreCase)
+            || t.StartsWith("env(", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsBorderWidthKw(string t) =>
+        t.Equals("thin", StringComparison.OrdinalIgnoreCase) || t.Equals("medium", StringComparison.OrdinalIgnoreCase)
+        || t.Equals("thick", StringComparison.OrdinalIgnoreCase);
+
+    static bool IsBorderStyleKw(string t) => t.Equals("none", StringComparison.OrdinalIgnoreCase) || t.Equals("hidden", StringComparison.OrdinalIgnoreCase)
+        || t.Equals("dotted", StringComparison.OrdinalIgnoreCase) || t.Equals("dashed", StringComparison.OrdinalIgnoreCase)
+        || t.Equals("solid", StringComparison.OrdinalIgnoreCase) || t.Equals("double", StringComparison.OrdinalIgnoreCase)
+        || t.Equals("groove", StringComparison.OrdinalIgnoreCase) || t.Equals("ridge", StringComparison.OrdinalIgnoreCase)
+        || t.Equals("inset", StringComparison.OrdinalIgnoreCase) || t.Equals("outset", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>按顶层空格切分：括号与字符串内部的空格不是分隔符（calc(1px + 2pt)、var(--a, #f00)）。</summary>
+    static List<string> SplitTopLevel(string v)
+    {
+        var outp = new List<string>();
+        var sb = new StringBuilder();
+        int depth = 0;
+        char quote = '\0';
+        foreach (var c in v)
+        {
+            if (quote != '\0') { sb.Append(c); if (c == quote) quote = '\0'; continue; }
+            if (c is '"' or '\'' or '`') { quote = c; sb.Append(c); continue; }
+            if (c == '(') depth++;
+            else if (c == ')') depth = Math.Max(0, depth - 1);
+            if (c == ' ' && depth == 0) { if (sb.Length > 0) { outp.Add(sb.ToString()); sb.Clear(); } continue; }
+            sb.Append(c);
+        }
+        if (sb.Length > 0) outp.Add(sb.ToString());
+        return outp;
+    }
+
     static string InlineUniqueVars(string css)
     {
         if (string.IsNullOrWhiteSpace(css) || !css.Contains("var(")) return css;
@@ -896,6 +1001,7 @@ public static class StyleResolver
         // 浏览器量的就是 ascent+descent+lineGap（雅黑 1.318em、serif 回退 1.4875em），
         // 统一按 1.4 兜底会让每一段正文各差几个百分点，逐段累积把整页下部推下去。
         float lhFactor = CssValueParser.ParseLineHeight(Val("line-height"));
+        s.LineHeightNumeric = !float.IsNaN(lhFactor);
         s.LineHeightFactor = float.IsNaN(lhFactor)
             ? PaperSharp.Layout.FontManager.NormalLineHeight(s.FontFamily, s.FontWeight)
             : lhFactor;
@@ -921,7 +1027,6 @@ public static class StyleResolver
         // 八条边**一次算完**再按槽位取：AuthorBoxSpacing 每问一条边都要重跑一遍规则桶（桶里每条规则
         // 做一次 el.Matches 真匹配），逐条问就是把同样的匹配做八遍。pgbuild 实测这是 AngleSharp 层叠
         // 之外最贵的一项（m1 510 元素 buildDoc 1072ms，其中 computed+declared 两段只占 578ms）。
-        // 伪元素沿用宿主元素的裁决结果——与原先逐条查询时的行为一致，不是新的取舍。
         string?[]? author8 = flat == null ? ctx.Spacing?.Resolve(element, ctx.ViewportWidth) : null;
         string? Edge(int i) => author8 is { } a ? a[i] : null;
         string? AuthorEdge(string prop) => prop switch
@@ -930,14 +1035,26 @@ public static class StyleResolver
             "padding-top" => Edge(4), "padding-right" => Edge(5), "padding-bottom" => Edge(6), "padding-left" => Edge(7),
             _ => null,
         };
-        // 宿主元素的作者桶**不能**当伪元素的 padding 用：Resolve 只按宿主匹配，::after 于是继承了宿主的
-        // padding（m8 的 .card::after 声明 0 3px×6px，实测被 .card 的 padding:26px 撑到 30px 见宽、
-        // 整卡高 452.4 vs 浏览器 410）。padding 本就永不继承，宿主写没写过都对生成盒无效。
-        string? AuthorPadding(string prop) => string.IsNullOrEmpty(pseudo) ? AuthorEdge(prop) : null;
+        // 宿主元素的作者桶**不能**当伪元素的 padding/margin 用：Resolve 只按宿主匹配，::after 于是继承了宿主的
+        // padding（m8 的 .card::after 被 .card 的 padding:12px 撑成 30px 见高，整卡 122.5 vs 浏览器 74.5）、
+        // margin（ul.tags li{margin-right:10px} 钻进 li::after，徽标平白宽 10px）。两者本就永不继承。
+        // 而 AngleSharp 的 computed **和** declared 两条读取路都会把宿主声明混进伪元素结果里
+        // （GetDeclarations(el,"before") 实测原样吐 .card 的 padding），所以生成盒的八条边只能自己裁决：
+        // 作者为该伪元素写过就用，没写过就是初值 0。
+        bool isPseudo = !string.IsNullOrEmpty(pseudo);
+        string?[]? pseudo8 = flat == null && isPseudo ? ctx.Spacing?.ResolvePseudo(element, pseudo!, ctx.ViewportWidth) : null;
+        string PseudoEdge(string prop) => pseudo8?[Slot(prop)] is { Length: > 0 } pv ? pv : "0px";
+        static int Slot(string prop) => prop switch
+        {
+            "margin-top" => 0, "margin-right" => 1, "margin-bottom" => 2, "margin-left" => 3,
+            "padding-top" => 4, "padding-right" => 5, "padding-bottom" => 6, "padding-left" => 7,
+            _ => -1,
+        };
 
         string MarginVal(string prop)
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已算好 used value，缺值即 0，Spec≡Get 无声明可谈
+            if (isPseudo) return PseudoEdge(prop);
             if (AuthorEdge(prop) is { Length: > 0 } mv) return mv;
             var sp = Spec(prop);
             return string.IsNullOrWhiteSpace(sp) ? Get(prop) : sp;
@@ -946,7 +1063,8 @@ public static class StyleResolver
         string PaddingVal(string prop)
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已折好用值，无声明可谈
-            if (AuthorPadding(prop) is { Length: > 0 } pv) return pv;
+            if (isPseudo) return PseudoEdge(prop);
+            if (AuthorEdge(prop) is { Length: > 0 } pv) return pv;
             return Size0(prop);
         }
         s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);
@@ -955,20 +1073,22 @@ public static class StyleResolver
         s.MarginLeftCss = CssValueParser.ParseSize(MarginVal("margin-left"), s.FontSize);
         // 作者是否真的写了 auto：AngleSharp 对未声明的 margin 也返回空串，令 CssSize.IsAuto 无法区分
         // "auto" 与 "没设"。computed 值里 "auto" 才是真自动边距（快照路径浏览器已折成解析后 px，恒非 auto）。
-        s.MarginTopAuto = IsAutoKw(Get("margin-top"));
-        s.MarginRightAuto = IsAutoKw(Get("margin-right"));
-        s.MarginBottomAuto = IsAutoKw(Get("margin-bottom"));
-        s.MarginLeftAuto = IsAutoKw(Get("margin-left"));
+        // 伪元素仍走 computed 会把宿主的 `margin:0 auto` 当成自己的自动边距，只认它自己的裁决结果。
+        string AutoSrc(string prop) => isPseudo ? (pseudo8?[Slot(prop)] ?? "") : Get(prop);
+        s.MarginTopAuto = IsAutoKw(AutoSrc("margin-top"));
+        s.MarginRightAuto = IsAutoKw(AutoSrc("margin-right"));
+        s.MarginBottomAuto = IsAutoKw(AutoSrc("margin-bottom"));
+        s.MarginLeftAuto = IsAutoKw(AutoSrc("margin-left"));
         s.PaddingTopCss = CssValueParser.ParseSize(PaddingVal("padding-top"), s.FontSize);
         s.PaddingRightCss = CssValueParser.ParseSize(PaddingVal("padding-right"), s.FontSize);
         s.PaddingBottomCss = CssValueParser.ParseSize(PaddingVal("padding-bottom"), s.FontSize);
         s.PaddingLeftCss = CssValueParser.ParseSize(PaddingVal("padding-left"), s.FontSize);
 
         // border-width：CSS 规范不接受百分比（AngleSharp 会直接丢弃），走 computed px/em，退回声明值。
-        s.BorderWidthTop = Math.Max(0, CssValueParser.ToPixels(Val("border-top-width"), s.FontSize));
-        s.BorderWidthRight = Math.Max(0, CssValueParser.ToPixels(Val("border-right-width"), s.FontSize));
-        s.BorderWidthBottom = Math.Max(0, CssValueParser.ToPixels(Val("border-bottom-width"), s.FontSize));
-        s.BorderWidthLeft = Math.Max(0, CssValueParser.ToPixels(Val("border-left-width"), s.FontSize));
+        s.BorderWidthTop = UsedBorderWidth(Val("border-top-width"), s.FontSize);
+        s.BorderWidthRight = UsedBorderWidth(Val("border-right-width"), s.FontSize);
+        s.BorderWidthBottom = UsedBorderWidth(Val("border-bottom-width"), s.FontSize);
+        s.BorderWidthLeft = UsedBorderWidth(Val("border-left-width"), s.FontSize);
         s.BorderColor = CssValueParser.ParseColor(Raw("border-color"))
                      ?? CssValueParser.ParseColor(Raw("border-top-color"))
                      ?? s.Color;
@@ -1011,7 +1131,14 @@ public static class StyleResolver
         s.FlexBasis = CssValueParser.ParseSize(Val("flex-basis"), s.FontSize);
         // flex 简写：AngleSharp 不把它摊成三个长写，只读上面三行等于整条丢掉 `flex: 1`。
         // 显式写了长写的那一项以长写为准（同条规则里长写覆盖简写），其余由简写补上。
-        if (CssValueParser.TryParseFlexShorthand(Raw("flex"), s.FontSize, out var fxG, out var fxS, out var fxB))
+        // ⚠️ 未解：`flex: none` 这条整条失效——TrackContentFloorTests.Flex_item_with_flex_none_is_not_shrunk
+        // 用无头 Edge 实测钉住了它（浏览器 [100,186] 不缩，引擎 50.89 = 与「默认可缩」对照组同值），
+        // 说明 FlexShrink 停在初始值 1。换 Raw→Spec 做守卫已试过、无变化；下一步要打印这三项的
+        // Get()/Spec()/Raw() 取值才能分清是 AngleSharp 拒绝 none 关键字，还是简写串根本没读到。
+        // ⚠️ AngleSharp 在**声明阶段**就丢弃 `flex: none`（实测 decls 里没有 flex、computed 三长写全空，
+        // 于是 FlexShrink 停在初始值 1，`flex:none` 项照被收缩——Edge 实测 [100,186] 不缩 / 引擎 50.89）。
+        // 故简写串走 Lookup：computed/declared 都为空时，从作者 CSS 的自扫描表（UnsupportedProps）兜底取回。
+        if (CssValueParser.TryParseFlexShorthand(Lookup("flex", element, Raw("flex"), ctx), s.FontSize, out var fxG, out var fxS, out var fxB))
         {
             if (string.IsNullOrWhiteSpace(Raw("flex-grow"))) s.FlexGrow = fxG;
             if (string.IsNullOrWhiteSpace(Raw("flex-shrink"))) s.FlexShrink = fxS;
@@ -1071,7 +1198,12 @@ public static class StyleResolver
                        || AnyClips(Lookup("overflow-y", element, Raw("overflow-y"), ctx));
 
         // 文本高级：vertical-align / text-wrap / text-fit（非标准，走属性兜底 + HTML 属性）
-        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Raw("vertical-align"), ctx), "baseline")!;
+        // Chrome UA 表给 sub/sup 的 vertical-align。AngleSharp 不认这条属性（全靠 UnsupportedProps 扫作者
+        // CSS 兜底），而 ScanUnsupported 又只扫作者 CSS、不扫本引擎注入的 UA 表，所以 UA 里写了也读不到
+        // ——实测 m3 的 <sup>/<sub> 因此两条都落在基线上（y 完全相同，与浏览器差 -6.0/+4.5）。
+        // 放在级联与作者扫描**之后**，保证作者显式声明仍能压过它。
+        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Raw("vertical-align"), ctx),
+                                        TagDefaultVerticalAlign(element), "baseline")!;
         s.TextWrap = CssValueParser.ParseKeyword(Lookup("text-wrap", element, Raw("text-wrap"), ctx), "wrap");
         var tf = Lookup("text-fit", element, Raw("text-fit"), ctx);
         if (string.IsNullOrWhiteSpace(tf)) tf = element.GetAttribute("text-fit") ?? "";
@@ -1212,6 +1344,18 @@ public static class StyleResolver
         return float.IsNaN(px) || px < 0 ? 0 : px;
     }
     static string CleanCounter(string? v) { v = (v ?? "").Trim(); return v.Length == 0 || v.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : v; }
+    /// <summary>
+    /// 边框宽的**用值**：Chrome 在有边框时把计算值向下取整，且不足 1px 仍按 1px 画。
+    /// 无头 Edge 实测（九档边框宽对拍）：0.4/0.5/0.6px→1，1.5→1，1.99→1，2.5→2，2.51→2，3.5→3，4.9→4，
+    /// 上下两条 4.9px 各折 4（合计 8 而非 9.8 取整）。不折的话整页非整数边框（calc(2px + 1pt) 等）
+    /// 每处多 0.1~0.9px，m4 的 h1 边框实测差 3px。
+    /// </summary>
+    static float UsedBorderWidth(string v, float fontSize)
+    {
+        var px = CssValueParser.ToPixels(v, fontSize);
+        return px <= 0 ? 0 : Math.Max(1, MathF.Floor(px));
+    }
+
     static float FirstRadius(string v, float fontSize)
     {
         var tok = FirstToken(v);

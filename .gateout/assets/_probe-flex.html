@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>P</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color:#111; }
+  .field { display: flex; align-items: center; height: 90px; border: 1px solid #e6e8eb; }
+  .field input { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0 26px; font-size: 22px; }
+  .prefix { display: flex; align-items: center; gap: 10px; padding: 0 22px; height: 100%; font-size: 22px; border-right: 1px solid #eee; flex: none; }
+  .suffix { flex: none; height: 100%; display: flex; align-items: center; padding: 0 30px; border-left: 1px solid #eee; font-size: 22px; white-space: nowrap; }
+  .oauth { display: inline-flex; align-items: center; gap: 14px; height: 68px; padding: 0 26px; border: 1px solid #e6e8eb; font-size: 20px; }
+  .badge { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; flex: none; background:#eef3fb; }
+  .blk { font-size: 22px; padding: 0 30px; border: 1px solid #eee; }
+  .wrap { border: 1px solid #ccc; }
+</style></head>
+<body>
+  <div class="field"><div class="suffix">获取验证码</div></div>
+  <div class="field"><div class="prefix">+86
+      <svg width="16" height="10" viewBox="0 0 16 10"><path d="M1 1.5L8 8l7-6.5" stroke="#6b7280" stroke-width="1.6"/></svg>
+    </div><input type="tel"></div>
+  <div class="wrap"><button class="oauth">
+      <span class="badge"><svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="#1a5cf0" stroke-width="1.4"/></svg></span>
+      CCF会员授权登录
+    </button></div>
+  <div class="wrap"><div class="blk">获取验证码</div></div>
+</body></html>

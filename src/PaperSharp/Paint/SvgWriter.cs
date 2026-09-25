@@ -342,7 +342,7 @@ public static class SvgWriter
             var s = box.Style;
             var typeface = box.Typeface;
             using var paint = new SKPaint { TextSize = s.FontSize, Typeface = typeface };
-            float lineHeight = s.FontSize * s.LineHeightFactor;
+            float lineHeight = s.LineHeightPx();
             float baseline = top + s.FontSize;
             float width = box.ContentWidth;
             for (int i = 0; i < box.WrappedLines!.Length; i++)

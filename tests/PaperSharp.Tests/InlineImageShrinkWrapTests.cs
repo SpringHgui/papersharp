@@ -53,7 +53,7 @@ public class InlineImageShrinkWrapTests
     [Fact]
     public void ImageFollowedByBlock_keepsStrutDescentBelowBaseline()
     {
-        // 20px 字号 / 行高 2 → strut 基线下方 = 20*0.22 + (40-(20+4.4))/2 = 12.2
+        // 20px 字号 / 行高 2 → 行盒 40，strut 基线下方 12（字体上下伸 28 的那对半里，向下取整侧）
         var c = Layout(
             "<div class='c'><img class='im'/><p>x</p></div>",
             ".c{width:400px;font-size:20px;line-height:2} .im{width:100px;height:50px} p{margin:0;height:20px}",
@@ -64,7 +64,7 @@ public class InlineImageShrinkWrapTests
         Assert.True(anon.IsInlineFC, "图与块混排时图应落进匿名 inline 块，而不是当块级子盒");
         Assert.Null(anon.Style.DomPath);                   // 匿名盒不对应真实元素，不参与盒比对
         Assert.Equal(50, anon.Atoms![0].Box!.TotalHeight, 1);
-        Assert.Equal(62.2f, p.BorderY, 1);                 // 50 + 12.2：图片下方那道缝必须在
+        Assert.Equal(62, p.BorderY, 1);                   // 50 + 12：图片下方那道缝必须在
     }
 
     [Fact]
@@ -81,12 +81,14 @@ public class InlineImageShrinkWrapTests
     [Fact]
     public void InlineBlockOnBaseline_doesNotInheritReplacedElementDescent()
     {
-        // inline-block 的基线落在其内部文字上，盒底本就在基线上方：给它加 strut descent 会把行盒撑高（inline 样例实测 +4.2/行）
+        // inline-block 的基线落在其内部最后一行的基线上；空盒没有行 → 基线=下外边距边（CSS 10.8.1），
+        // 于是整盒 30px 全在基线上方，行盒被撑到 30+12=42。它自己**不再**额外吃一份替换元素 descent
+        // （那会变成 30+12+12），浏览器实测同一份标记（Arial/20px/行高2）=43，与引擎逐盒 0px。
         var body = Layout(
             "<p class='t'><span class='ib'></span> 文字</p>",
             ".t{width:400px;margin:0;font-size:20px;line-height:2} .ib{display:inline-block;width:30px;height:30px}",
             400);
 
-        Assert.Equal(40, body.Children[0].ContentHeight, 1);   // max(行高 40, 30+3)，不是 30+12.2
+        Assert.Equal(42, body.Children[0].ContentHeight, 1);   // 30 + strut descent 12，不是 30+12+12
     }
 }

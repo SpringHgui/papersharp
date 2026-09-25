@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+/* 判别探针（只喂引擎，不用浏览器）：A 靠 UA 默认、B 作者显式声明 vertical-align、C 父元素声明（不该继承）。
+   若 A==C≠基线 而 B 不同 → 级联通、只缺 UA 默认；若 A==B==C 全同一 y → 文本 run 的 vertical-align 通路本身是死的。 */
+body { font-family: sans-serif; font-size: 16px; line-height: 1.6; margin: 0; }
+p { white-space: nowrap; }
+sup, sub { font-size: 11px; }
+.decl-super { vertical-align: super; }
+.decl-sub { vertical-align: sub; }
+</style></head><body>
+<p id="a"><span>ref</span><sup>A-ua-default</sup></p>
+<p id="b"><span>ref</span><sup class="decl-super">B-author-declared</sup></p>
+<p id="c" class="decl-super"><span>ref</span><sup>C-declared-on-parent</sup></p>
+<p id="d"><span>ref</span><sub>D-ua-default</sub></p>
+<p id="e"><span>ref</span><sub class="decl-sub">E-author-declared</sub></p>
+<p id="f"><span>ref</span><span class="decl-super">F-plain-inline-span</span></p>
+</body></html>

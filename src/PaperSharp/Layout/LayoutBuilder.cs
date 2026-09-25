@@ -100,6 +100,11 @@ public static class LayoutBuilder
         anon.PaddingTopCss = anon.PaddingRightCss = anon.PaddingBottomCss = anon.PaddingLeftCss = default;
         anon.MarginTop = anon.MarginRight = anon.MarginBottom = anon.MarginLeft = 0;
         anon.PaddingTop = anon.PaddingRight = anon.PaddingBottom = anon.PaddingLeft = 0;
+        // 出流标志同样要清：容器自己 position:absolute 时，克隆来的定位属性会把匿名文本项也变成
+        // 「绝对定位的 flex 子项」——它被逐出 flex 线（行高只剩图标的 12），文字再按 right:0 单独
+        // 定位到行尾（pricing-top 的 .more 实测整块错位 70px）。
+        anon.Position = "static";
+        anon.OffsetTop = anon.OffsetRight = anon.OffsetBottom = anon.OffsetLeft = default;
         anon.BorderWidthTop = anon.BorderWidthRight = anon.BorderWidthBottom = anon.BorderWidthLeft = 0;
         anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
         anon.BackgroundColor = SKColor.Empty;
@@ -340,7 +345,7 @@ public static class LayoutBuilder
             {
                 if (info.Span == 1)
                 {
-                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell) + 1;
+                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell);
                     float spec = SpecifiedCellWidth(info.Cell, targetGridForPct);
                     if (spec > 0) { colW[info.Col] = Math.Max(colW[info.Col], spec); colMin[info.Col] = colW[info.Col]; colSpec[info.Col] = true; }
                     else
@@ -448,6 +453,9 @@ public static class LayoutBuilder
                 float cellOuterW = spacingX * (info.Span - 1);
                 for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += colW[j];
                 Measure(cell, cellOuterW);
+                // 跨行格不计入本行高：它自己的上下两条 collapse 边框线（:676 只对未跨到末行的格子清过底边）
+                // 会让它比单行格净高 1px，全记在本行就等于把整行撑高 1px（m1 实测 row6 39.3125 vs 浏览器 38.3125）。
+                if (info.RowSpan > 1) continue;
                 rh = Math.Max(rh, cell.ContentHeight + CellVDeco(cell));
             }
             rowH[r] = rh;
@@ -569,41 +577,12 @@ public static class LayoutBuilder
             }
         }
 
-        // 跟踪被 rowspan 占据的列（值=剩余跨行数）
-        var rowspanOccupied = new Dictionary<int, int>();
+        // direction:rtl 的表列序镜像（Chrome 实测首列贴右缘）
+        bool rtl = box.Style.Direction == "rtl";
         for (int r = 0; r < numRows; r++)
         {
-            // 递减并移除已到期的 rowspan 占用
-            var expired = new List<int>();
-            foreach (var kv in rowspanOccupied)
-            {
-                if (kv.Value <= 1) expired.Add(kv.Key);
-                else rowspanOccupied[kv.Key] = kv.Value - 1;
-            }
-            foreach (var k in expired) rowspanOccupied.Remove(k);
-
-            // 按列顺序定位本行单元格，跳过被 rowspan 占据的列
-            float x = originX;
-            int colCursor = 0;
             foreach (var info in box.TRows[r])
-            {
-                // 跳过被 rowspan 占据的列，累加其宽度
-                while (colCursor < info.Col)
-                {
-                    x += box.TColW[colCursor];
-                    if (colCursor < info.Col) x += spacingX;
-                    colCursor++;
-                }
-                float cellOuterW = spacingX * (info.Span - 1);
-                for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += box.TColW[j];
-                PositionRec(info.Cell, x, rowY[r], cb);
-                // 标记 rowspan 占用
-                if (info.RowSpan > 1)
-                    for (int dc = 0; dc < info.Span; dc++)
-                        rowspanOccupied[info.Col + dc] = info.RowSpan;
-                x += cellOuterW + spacingX;
-                colCursor = info.Col + info.Span;
-            }
+                PositionRec(info.Cell, TableCellX(box, info.Col, info.Span, rtl, originX), rowY[r], cb);
         }
         // bottom caption 定位在网格下方
         if (box.TCaption != null && box.TCaptionBottom)
@@ -634,24 +613,33 @@ public static class LayoutBuilder
                 rowBox.ContentWidth = rowRectW; rowBox.ContentHeight = box.TRowH[r];
             }
             // 逐格定位
-            float x = originX;
-            int colCursor = 0;
+            bool rtl = box.Style.Direction == "rtl";
             foreach (var info in box.TRows[r])
-            {
-                while (colCursor < info.Col)
-                {
-                    x += box.TColW[colCursor] + spacingX;
-                    colCursor++;
-                }
-                float cellOuterW = spacingX * (info.Span - 1);
-                for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += box.TColW[j];
-                PositionRec(info.Cell, x, y, null);
-                x += cellOuterW + spacingX;
-                colCursor = info.Col + info.Span;
-            } 
+                PositionRec(info.Cell, TableCellX(box, info.Col, info.Span, rtl, originX), y, null);
             y += box.TRowH[r] + spacingY;
         }
         return y - startY - spacingY; // 减去末尾多余的 spacing
+    }
+
+    /// <summary>
+    /// 第 col 列、跨 span 列的单元格左边缘 x。列位置一律由列号算前缀和得出（不再沿行游标推进），
+    /// 这样 direction:rtl 的镜像才有落脚点：以整网格右缘为轴翻转，首列贴右、次列往左。
+    /// </summary>
+    static float TableCellX(BlockBox box, int col, int span, bool rtl, float originX)
+    {
+        var colW = box.TColW!;
+        float sx = box.TSpacing;
+        float Left(int j)
+        {
+            float p = originX;
+            for (int k = 0; k < j && k < colW.Length; k++) p += colW[k] + sx;
+            return p;
+        }
+        float l = Left(col), w = sx * (span - 1);
+        for (int k = col; k < col + span && k < colW.Length; k++) w += colW[k];
+        if (!rtl) return l;
+        int n = colW.Length;
+        return originX + (Left(n - 1) + colW[n - 1] - (l + w));
     }
 
     static void CollectRows(BlockBox table, List<List<BlockBox>> rows, List<string> groupTypes)
@@ -732,7 +720,13 @@ public static class LayoutBuilder
             ? w.Resolve(float.NaN)            // px/em/calc 的绝对项：与基准无关
             : w.Resolve(targetGridW);         // %
         if (float.IsNaN(contentW) || contentW <= 0) return 0;
-        return cell.Style.BoxSizing == "border-box" ? contentW : contentW + CellHDeco(cell);
+        // 百分比单元格宽是**列的外宽**，不再叠 padding+border：Blink 的 auto 表布局把 x% 直接分配给列，
+        // 内容盒 = x% − deco。实测 m3 `.va-table{width:100%} .va-top{width:40%}`（padding 6 / border 1，
+        // content-box）：浏览器 td rect = 487.6（= 40% × 1219），引擎按 contentW+13 报 500.6，
+        // 多出的 13px 从另外三个 auto 列里扣走（3.7+4.0+5.3），四格齐漂。
+        // 绝对值（px/em/calc）仍是 content-box 语义，要叠 deco。
+        return cell.Style.BoxSizing == "border-box" || w.Kind == CssSizeKind.Percent
+            ? contentW : contentW + CellHDeco(cell);
     }
 
     static void ZeroCellMargins(BlockBox c)
@@ -762,6 +756,15 @@ public static class LayoutBuilder
     /// </summary>
     internal static bool Collapsible(ComputedStyle s)
         => !ComputedStyle.IsInlineLevel(s.Display) && s.Float == "none";
+
+    /// <summary>
+    /// 该盒是否建立独立格式化上下文（CSS 2.1 §9.4.1）：只有 BFC 根才把浮动子算进自动高度。
+    /// flex/grid 容器不在此列（其子会被块化、float 失效），故不必列出。
+    /// </summary>
+    static bool ContainsFloats(ComputedStyle s) =>
+        s.ClipsOverflow || s.Display is "flow-root" or "inline-block" or "inline-flex" or "inline-grid"
+                            or "table-cell" or "table-caption" or "caption"
+        || s.Float != "none" || s.Position is "absolute" or "fixed";
 
     /// <summary>CSS 相邻 margin 坍缩值：同正取大、同负取更负、异号相加。</summary>
     static float CollapseMargins(float a, float b)
@@ -813,7 +816,7 @@ public static class LayoutBuilder
         var gp = p.Parent?.Style;
         if (gp != null && (ComputedStyle.IsFlexDisplay(gp.Display) || ComputedStyle.IsGridDisplay(gp.Display)
                            || gp.Display is "table-cell")) return false;
-        return s.Display == "block" && !s.ClipsOverflow && s.Float == "none" && s.Position != "absolute"
+        return (s.Display is "block" or "list-item") && !s.ClipsOverflow && s.Float == "none" && s.Position != "absolute"
             && string.IsNullOrEmpty(s.TextContent) && Collapsible(c.Style)
             && (top ? s.BorderWidthTop + s.PaddingTop : s.BorderWidthBottom + s.PaddingBottom) == 0
             && (top || s.Height.IsAuto);   // 父高被写死时，尾子的底边距留在父内
@@ -826,7 +829,12 @@ public static class LayoutBuilder
         bool top = p?.EdgeFirst == c && p.EdgeCollapseTop, bot = p?.EdgeLast == c && p.EdgeCollapseBottom;
         return c.TotalHeight
              - (top ? c.Style.MarginTop : 0f) + (top ? 0f : c.EscapeTop)
-             - (bot ? c.Style.MarginBottom + c.EscapeBottom : 0f) + (bot ? 0f : c.EscapeBottom);
+             // ⚠️ 只扣本盒自己声明的下 margin：EscapeBottom 那道「逃出去的 margin」在本盒
+             // 自己的 MeasureBlock 里已经按同一条规则从末子身上扣过一遍（不再含在 ContentHeight 内），
+             // 这里再扣一次就是重复扣减——实测 m3 的 section[10] TotalHeight=193.78（m 0/8、border 185.78）、
+             // EscapeBottom=8，旧式扣 16 → 贡献 177.78，body 高停在 1817.39，比末子 border 底边矮整 8px
+             // （浏览器两者重合于 1824.88）。
+             - (bot ? c.Style.MarginBottom : 0f) + (bot ? 0f : c.EscapeBottom);
     }
 
     /// <summary>本盒边框顶相对父流游标的偏移（顶边距被父吃掉时不再把它往下推）。</summary>
@@ -865,7 +873,7 @@ public static class LayoutBuilder
             box.LineLefts = lefts;
             if (s.TextOverflow == "ellipsis" && s.WhiteSpace == "nowrap" && !s.Width.IsAuto)
                 box.WrappedLines = TruncateEllipsis(box.WrappedLines, box.ContentWidth, font, s.LetterSpacing);
-            h += box.WrappedLines.Length * s.FontSize * s.LineHeightFactor;
+            h += box.WrappedLines.Length * s.LineHeightPx();
 
             // text-fit: scale-down —— 高度定死且文本溢出时逐步缩字号重排（下限 6px）
             if (s.TextFit == "scale-down" && !float.IsNaN(childContainingHeight) && childContainingHeight > 0)
@@ -875,7 +883,7 @@ public static class LayoutBuilder
                     using var fitFont = new SKFont(box.Typeface, s.FontSize);
                     box.WrappedLines = TextMeasurer.Wrap(s.TextContent, box.ContentWidth, fitFont, s, ambient, contentTopY, out var fl);
                     box.LineLefts = fl;
-                    h = box.WrappedLines.Length * s.FontSize * s.LineHeightFactor;
+                    h = box.WrappedLines.Length * s.LineHeightPx();
                 }
         }
 
@@ -888,11 +896,14 @@ public static class LayoutBuilder
             if (cs.Position == "absolute") { MeasureChild(c, box.ContentWidth, childContainingHeight); continue; }
 
             // clear：把流 cursor 推到同侧浮动区之下。被 clear 顶开之后两侧不再相邻，坍缩链断掉。
+            // ⚠️ 落点是本盒的 **border box 顶**（CSS 2.1 §9.5.2：clearance 补足到浮动底边，自身 margin-top
+            // 被吸收而非叠加）。原先按 margin box 比，.clear-both{margin-top:10px} 实测多下坠 10px。
             if (cs.Clear != "none" && fc != null)
             {
                 float yAbs = contentTopY + h;
-                float pushed = fc.ClearTo(cs.Clear is "left" or "both", cs.Clear is "right" or "both", yAbs);
-                if (pushed > yAbs) { h = pushed - contentTopY; flowPrev = null; }
+                float borderTop = yAbs + cs.MarginTop;
+                float pushed = fc.ClearTo(cs.Clear is "left" or "both", cs.Clear is "right" or "both", borderTop);
+                if (pushed > borderTop) { h = pushed - cs.MarginTop - contentTopY; flowPrev = null; }
             }
 
             if (cs.Float != "none" && cs.Position == "static")
@@ -921,6 +932,13 @@ public static class LayoutBuilder
         // 对外边距：与首/尾子合并后的结果，供父盒（以及父盒的父）继续往上传。
         box.EffTop = box.EdgeCollapseTop ? CollapseMargins(s.MarginTop, box.EdgeFirst!.EffTop) : s.MarginTop;
         box.EffBottom = box.EdgeCollapseBottom ? CollapseMargins(s.MarginBottom, box.EdgeLast!.EffBottom) : s.MarginBottom;
+
+        // BFC 根要「包含浮动」：自动高度的盒一旦成为独立格式化上下文（裁剪溢出 / flow-root / inline-block /
+        // 浮动 / 绝对定位），其浮动子就参与撑高。Chrome 实测 .calc-pair{overflow:hidden} 高 88.8 = 两个浮动
+        // pane 的底边；引擎原先按流内子算高 → 0，下面整页上抬 75.9px。
+        if (hasFloats && ContainsFloats(s) && !float.IsNaN(contentTopY))
+            foreach (var g in fc!.Own)
+                h = Math.Max(h, g.Bottom - contentTopY);
 
         if (placements != null)
         {
@@ -963,6 +981,8 @@ public static class LayoutBuilder
         }
         return new[] { line[..keep] + ell };
     }
+
+    static readonly bool FlexDbg = System.Environment.GetEnvironmentVariable("PS_FLEXDBG") == "1";
 
     static float MeasureFlex(BlockBox box, float? myDefH)
     {
@@ -1039,6 +1059,7 @@ public static class LayoutBuilder
                 float used = gap * (line.ItemIndices.Count - 1);
                 for (int i = 0; i < line.ItemIndices.Count; i++) used += lineBase[i] + lineDeco[i];
                 float free = lineMainAvail - used;
+                if (FlexDbg) Console.Error.WriteLine($"[flex] {s.Tag} avail={lineMainAvail} used={used} free={free} base=[{string.Join(",", lineBase)}]");
 
                 if (free > 0.5f)
                 {
@@ -1197,8 +1218,9 @@ public static class LayoutBuilder
             // （沿用「换行只由软断点决定」把 IsBreak 直接 continue 掉，会把 <br> 两侧行宽相加：
             //  pricing-foot 的 .copy 实测 299.4 + 194.0 = 493.4 撑爆整列）。
             float w = 0, seg = 0;
-            foreach (var a in c.Atoms)
+            for (int ai = 0; ai < c.Atoms.Count; ai++)
             {
+                var a = c.Atoms[ai];
                 if (a.IsBreak) { w = Math.Max(w, seg); seg = 0; continue; }
                 // 原子盒一律递归取内在宽：替换元素在里面先认 CSS 显式宽（width:120px 的图就是 120），
                 // 没有显式宽才回退自然宽。直接读 NaturalW 会把缩放图撑回原尺寸，整条 flex 行跟着错位。
@@ -1210,28 +1232,48 @@ public static class LayoutBuilder
                     // 内在宽漏掉就会与真实折行分叉。cbW 传 0：此处是 max-content 通道，无包含块宽可依，
                     // 而 inline padding 的百分比本就相对包含块，留给 BreakRaw 那条路折算。
                     var (ipl, ipr) = a.HDeco(0);
-                    seg += TextMeasurer.NaturalWidth(a.Text!, f, a.Style) + ipl + ipr;
+                    // seg>0：前面已有兄弟片段，本片段段首那个空格不在行首，浏览器不会吞（m8 的
+                    // li::after{content:" " counter(tag)} 被吞掉后徽标少 4.4px，挤成两行、整卡高 55 vs 29.5）。
+                    // 尾空格同理：max-content 是一条不断行的直线，只有**行末**那一个尾空格会被吞，
+                    // 所以除序列末尾之外一律保留（「含 <span>高亮</span>」中间的那个空格）。
+                    bool atLineEnd = true;
+                    for (int j = ai + 1; j < c.Atoms.Count; j++)
+                    {
+                        var n = c.Atoms[j];
+                        if (n.IsBreak) { atLineEnd = true; break; }
+                        if (n.Box != null || !string.IsNullOrEmpty(n.Text)) { atLineEnd = false; break; }
+                    }
+                    seg += TextMeasurer.NaturalWidth(a.Text!, f, a.Style,
+                        keepLeadingSpace: seg > 0, keepTrailingSpace: !atLineEnd) + ipl + ipr;
                 }
             }
             return Math.Max(w, seg);
         }
-        // flex/grid 容器里直接文本会被包成匿名子项，与元素子项并排占主轴 → 内在宽须"文本 + 各子项"求和；
-        // 普通块则文本与块级子项各占独立行，取二者较大即可（沿用旧的"文本优先短路"）。
-        // （试过删掉这里的 TextOf 项、以为与匿名子项重复：pricing-top 均值 20.6→42.8，.menu 的链接
-        //  直接塌成 19.1 宽并折行——文字其实只从这里进，匿名子项那条路另算，勿再"去重"。）
+        // flex/grid 容器里直接文本会被包成匿名子项（见 ToBoxTree 的 IsFlexDisplay 分支），与元素子项并排占主轴
+        // → 内在宽走 Children 那条路即可。只有在**没有子盒**承载文字时（content:"…" 伪元素盒）才须另加 TextOf，
+        // 否则同一段文字计两遍：login-page 的 .suffix/.prefix/.oauth 各凭空宽出一个文字宽（最坏 +102px）。
+        // （试过无条件删掉这里的 TextOf 项：pricing-top 均值 20.6→42.8，.menu 的链接直接塌成 19.1 宽并折行
+        //  ——伪元素盒的文字只从这里进，Children 那条路没有它，勿再无条件去掉。）
         if (ComputedStyle.IsFlexDisplay(s.Display) || ComputedStyle.IsGridDisplay(s.Display))
         {
             // 只有沿主轴并排的子项才「求和」：row flex / grid 的 max-content 宽 = 各项相加；
             // column flex 子项纵向堆叠，内在宽仍是各项之最——求和会把每一列都撑成整行之和。
             bool alongMain = ComputedStyle.IsGridDisplay(s.Display) || s.FlexDirection.StartsWith("row");
             float both = 0;
-            if (!string.IsNullOrEmpty(s.TextContent))
+            if (!string.IsNullOrEmpty(s.TextContent) && c.Children.Count == 0)
                 both += TextOf(s.TextContent!, c, s, kind);
+            int items = 0;
             foreach (var g in c.Children)
             {
                 float w = IntrinsicWidth(g, kind) + MainDeco(g, true);
                 both = alongMain ? both + w : Math.Max(both, w);
+                items++;
             }
+            // 主轴 gap 也要算进内在宽：max-content 是一条直线，n 个并排项之间有 n-1 段间距。
+            // 漏算会让上层 flex 容器以为这一项很窄，把宽度分给它时压到不足内容宽，
+            // 整行项目被迫收缩换行（pricing-top 的 .menu 内在 312 而实际需 482，六个链接全塌，dx 133px）。
+            if (alongMain && items > 1 && ComputedStyle.IsFlexDisplay(s.Display))
+                both += ResolveGap(s, 0) * (items - 1);
             return both;
         }
         if (!string.IsNullOrEmpty(s.TextContent)) return TextOf(s.TextContent!, c, s, kind);
@@ -1331,7 +1373,8 @@ public static class LayoutBuilder
 
         // ── 列定尺 ──
         float[] colW = SizeGridTracks(colTracks, box.ContentWidth, colGap,
-            placements.Select(p => (p.col, p.colSpan, MeasureNeedWidth(box.Children[p.childIdx], box.ContentWidth))).ToArray());
+            placements.Select(p => (p.col, p.colSpan, MeasureNeedWidth(box.Children[p.childIdx], box.ContentWidth),
+                                    MeasureNeedMinWidth(box.Children[p.childIdx]))).ToArray());
 
         // ── 按格宽复测子项 ──
         // 自对齐先裁决一次：非 stretch 的那一轴不铺满轨道，测量就得按 fit-content 收，
@@ -1364,7 +1407,8 @@ public static class LayoutBuilder
 
         // ── 行定尺 ──
         float[] rowH = SizeGridTracks(rowTracks, rowAvail, rowGap,
-            placements.Select(p => (p.row, p.rowSpan, box.Children[p.childIdx].TotalHeight)).ToArray());
+            // 行轴自动最小要的是子项 min-content **高**（本引擎未计算）→ 地板传 0 = 维持旧行为。
+            placements.Select(p => (p.row, p.rowSpan, box.Children[p.childIdx].TotalHeight, 0f)).ToArray());
 
         // 块轴的容器确定高：height 优先，其次 min-height 折算到 content 盒（% 无基准则忽略）。
         float vbDeco = s.BoxSizing == "border-box"
@@ -1435,6 +1479,26 @@ public static class LayoutBuilder
             + s.PaddingLeft + s.PaddingRight;
     }
 
+    /// <summary>
+    /// 网格子项的「自动最小尺寸」贡献（CSS Grid §12.6.2 + Sizing §9.4.1）：min-width:auto 且
+    /// overflow 为 visible 时，轨道底不得小于它的 min-content。两个豁免缺一不可：写了具体
+    /// min-width 用它；overflow 非 visible（裁剪容器可合法压到内容以下）则无内容地板——
+    /// pricing 的 .plan-card{overflow:hidden} 就是靠这条不立底。
+    /// </summary>
+    static float MeasureNeedMinWidth(BlockBox child)
+    {
+        var s = child.Style;
+        float deco = s.MarginLeft + s.MarginRight + s.BorderWidthLeft + s.BorderWidthRight
+            + s.PaddingLeft + s.PaddingRight;
+        if (!s.MinWidth.IsAuto)
+        {
+            float m = s.MinWidth.Resolve(float.NaN);
+            return float.IsNaN(m) ? deco : Math.Max(0, m) + deco;
+        }
+        if (s.ClipsOverflow) return 0;
+        return MinContentWidth(child) + deco;
+    }
+
     static bool Intersects(HashSet<(int, int)> occ, int col, int row, int colSpan, int rowSpan)
     {
         for (int dc = 0; dc < colSpan; dc++)
@@ -1458,7 +1522,7 @@ public static class LayoutBuilder
     }
 
     /// <summary>轨道定尺：固定值直接用；auto 按单跨内容取大；多跨不足均摊；fr 按剩余空间比例分配。</summary>
-    static float[] SizeGridTracks(List<GridTrack> tracks, float avail, float gap, (int start, int span, float need)[] items)
+    static float[] SizeGridTracks(List<GridTrack> tracks, float avail, float gap, (int start, int span, float need, float minNeed)[] items)
     {
         int n = tracks.Count;
         float[] size = new float[n];
@@ -1475,27 +1539,64 @@ public static class LayoutBuilder
             foreach (var it in items.Where(i => i.start == t && i.span == 1))
                 size[t] = Math.Max(size[t], it.need);
         }
-        // 多跨不足：均摊给跨内轨道
+        // 多跨不足：均摊给跨内轨道。⚠️ 只摊给**非 fr** 轨道——fr 轨道下面会被 free*Fr/sumFr 整体覆写，
+        // 而 used 又把这笔临时值算进已占用，于是 free 凭空少掉一份、fr 轨集体缩水（m2 的
+        // grid-template-columns:repeat(3,1fr) 实测 309/327 vs 浏览器 340，整幅右缘空转 39~93px）。
         foreach (var it in items.Where(i => i.span > 1))
         {
             float sum = SumSpan(size, it.start, it.span, gap);
             float shortAmt = it.need - sum;
-            if (shortAmt > 0.5f)
-                for (int t = it.start; t < it.start + it.span && t < n; t++)
-                    size[t] += shortAmt / it.span;
+            if (shortAmt <= 0.5f) continue;
+            // 只数能留下这笔钱的下界轨道；全是 fr 时整笔作废（剩余空间天然会分给它们）
+            int fixedN = 0;
+            for (int t = it.start; t < it.start + it.span && t < n; t++)
+                if (tracks[t].Fr == 0) fixedN++;
+            if (fixedN == 0) continue;
+            for (int t = it.start; t < it.start + it.span && t < n; t++)
+                if (tracks[t].Fr == 0) size[t] += shortAmt / fixedN;
         }
-        // fr 分配剩余
+        // fr 轨道：§12.6.2 自动最小地板 + §12.7.1「find the size of an fr」。
+        // 尺寸 = fr × 假想 fr 值，其中假想值 = (容器 − 缝 − 非 fr 定尺 − 已冻结 fr 轨的地板) / 在算 fr 因子和；
+        // 某轨地板高于它该分的份额时**冻结在地板上并剔除出分配**后重算（不是把地板再加回去——
+        // 写成 size = 地板 + 份额·Fr/ΣFr 会让每条轨重复计入约 0.75×地板，实测把 pricing 整页撑溢出 88.9px）。
+        // 地板全高于份额时 free 为负：轨道停在地板，网格照浏览器那样整体溢出（login-page 实测轨道
+        // 640px/372px，640+372+48 = 1060 > 内容盒 1052，浏览器就是故意溢出 8px）。
         float sumFr = 0;
         foreach (var tr in tracks) sumFr += tr.Fr;
         if (sumFr > 0 && !float.IsNaN(avail))
         {
-            float used = 0;
-            for (int t = 0; t < n; t++) used += size[t];
-            used += gap * Math.Max(0, n - 1);
-            float free = avail - used;
-            if (free > 0)
+            var floor = new float[n];
+            var frozen = new bool[n];
+            for (int t = 0; t < n; t++)
+            {
+                if (tracks[t].Fr <= 0) continue;
+                foreach (var it in items.Where(i => i.start == t && i.span == 1))
+                    floor[t] = Math.Max(floor[t], it.minNeed);
+            }
+            for (int guard = 0; guard < n + 1; guard++)
+            {
+                float leftover = avail - gap * Math.Max(0, n - 1), sumFrA = 0;
                 for (int t = 0; t < n; t++)
-                    if (tracks[t].Fr > 0) size[t] = free * tracks[t].Fr / sumFr;
+                {
+                    if (tracks[t].Fr <= 0) leftover -= size[t];
+                    else if (frozen[t]) leftover -= floor[t];
+                    else sumFrA += tracks[t].Fr;
+                }
+                if (sumFrA <= 0)
+                {
+                    for (int t = 0; t < n; t++) if (tracks[t].Fr > 0) size[t] = floor[t];
+                    break;
+                }
+                float hyp = leftover > 0 ? leftover / sumFrA : 0;
+                bool kicked = false;
+                for (int t = 0; t < n; t++)
+                    if (tracks[t].Fr > 0 && !frozen[t] && floor[t] > hyp * tracks[t].Fr + 1e-3f)
+                    { frozen[t] = true; kicked = true; }
+                if (kicked) continue;
+                for (int t = 0; t < n; t++)
+                    if (tracks[t].Fr > 0) size[t] = frozen[t] ? floor[t] : hyp * tracks[t].Fr;
+                break;
+            }
         }
         return size;
     }
@@ -1672,7 +1773,7 @@ public static class LayoutBuilder
         float contentX = bx + s.BorderWidthLeft + s.PaddingLeft;
         float contentY = by + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
         if (box.WrappedLines != null)
-            contentY += box.WrappedLines.Length * s.FontSize * s.LineHeightFactor;
+            contentY += box.WrappedLines.Length * s.LineHeightPx();
 
         // 子代的包含块：本盒若定位（relative/absolute）则用本盒 padding box，否则继承上层；根盒兜底
         CB childCb = s.Position != "static" || cb == null
@@ -1716,19 +1817,23 @@ public static class LayoutBuilder
                 {
                     float before = cy;
                     bool wantL = cs.Clear is "left" or "both", wantR = cs.Clear is "right" or "both";
-                    float yRel = cy - contentY;
+                    // 与 MeasureBlock 同一判据：浮动底边对齐的是本盒 border box 顶，不是 margin box 顶。
+                    float yRel = cy - contentY + cs.MarginTop;
                     foreach (var b in bands)
                         if ((b.IsLeft && wantL || !b.IsLeft && wantR) && b.BottomRel > yRel)
                             yRel = Math.Max(yRel, b.BottomRel);
-                    cy = contentY + yRel;
+                    cy = contentY + yRel - cs.MarginTop;
                     if (cy != before) flowPrev = null;   // 被顶开即不再与上一块相邻
                 }
 
                 if (cs.Float != "none" && cs.Position == "static")
                 {
                     var p = placements?.FirstOrDefault(pl => pl.ChildIndex == i);
+                    // Place 返回的就是 **margin box** 左上角，而 PositionRec 的入参同样是 margin box 原点
+                    // （它内部再 +MarginLeft / +FlowInset 折出 border box）。再减一次 margin 等于把盒往左上
+                    // 各拽回一个 margin：m2 的 .float-right{margin-left:15px} 实测贴右缘时少算 15px。
                     if (p.HasValue)
-                        PositionRec(c, contentX + p.Value.X - cs.MarginLeft, contentY + p.Value.YRel - cs.MarginTop, childCb);
+                        PositionRec(c, contentX + p.Value.X, contentY + p.Value.YRel, childCb);
                     else
                         PositionRec(c, contentX, cy, childCb);   // 无测量记录（旧回退路径）
                     continue;
@@ -1786,8 +1891,14 @@ public static class LayoutBuilder
             ln.Left = ln.Inset + align;
             float x = contentX + ln.Left;
             foreach (var f in ln.Frags)
-                if (f.Box != null)
-                    PositionRec(f.Box, x + f.X, AtomicTop(f, y, ln), cb);
+            {
+                if (f.Box == null) continue;
+                float sx = x + f.X, sy = AtomicTop(f, y, ln);
+                // 行内上下文里的绝对定位子盒：静态位置就是它作为原子盒本应占的地方（上面已算好），
+                // 一旦写了 left/right/top/bottom 再按包含块改判（PositionInline 走不到 :1757 那条块级分支）。
+                if (f.Box.Style.Position == "absolute") PlaceAbsolute(f.Box, cb, sx, sy);
+                else PositionRec(f.Box, sx, sy, cb);
+            }
             y += ln.Height;
         }
     }
@@ -1816,8 +1927,8 @@ public static class LayoutBuilder
         }
     }
 
-    /// <summary>absolute 子盒：按包含块 + 偏移定位（left 优先，其次 right 反推；auto 落到包含块原点）。</summary>
-    static void PlaceAbsolute(BlockBox c, CB cb)
+    /// <summary>absolute 子盒：按包含块 + 偏移定位（left 优先，其次 right 反推；auto 落到静态位置）。</summary>
+    static void PlaceAbsolute(BlockBox c, CB cb, float? staticX = null, float? staticY = null)
     {
         var s = c.Style;
         float? left = OffP(s.OffsetLeft, cb.Width), right = OffP(s.OffsetRight, cb.Width);
@@ -1840,12 +1951,15 @@ public static class LayoutBuilder
             c.ContentHeight = Math.Max(0, stretchH - (s.BoxSizing == "border-box" ? decoH : 0));
         }
 
+        // 两轴都没写偏移时，落**静态位置**（调用方给的）而不是 CB 起点角：CSS Position §10.1 的
+        // auto 语义就是「用它在常规流里本应占的位置」。staticX/staticY 缺省（块级子、grid 子）时
+        // 才退回 CB 原点——那两种情形下静态位置本就等于起点角。
         float mx = left != null ? cb.Left + left.Value
                : right != null ? cb.Left + cb.Width - right.Value - c.TotalWidth
-               : cb.Left;
+               : staticX ?? cb.Left;
         float my = top != null ? cb.Top + top.Value
                : bottom != null ? cb.Top + cb.Height - bottom.Value - c.TotalHeight
-               : cb.Top;
+               : staticY ?? cb.Top;
 
         PositionRec(c, mx, my, cb);
     }
@@ -1862,7 +1976,7 @@ public static class LayoutBuilder
         float gap = ResolveGap(s, box.ContentWidth);
         var kids = box.Children.FindAll(c => c.Style.Position != "absolute");
         int n = kids.Count;
-        if (n == 0 || box.FlexLines == null) { PlaceAbsChildren(box, cb); return; }
+        if (n == 0 || box.FlexLines == null) { PlaceAbsChildren(box, cb, contentX, contentY); return; }
 
         float mainSize = isRow ? box.ContentWidth : box.ContentHeight;
         float crossSize = isRow ? box.ContentHeight : box.ContentWidth;
@@ -1891,8 +2005,18 @@ public static class LayoutBuilder
                 lineMainUsed += isRow ? kids[idx].TotalWidth : kids[idx].TotalHeight;
             float lineFree = mainSize - lineMainUsed;
 
+            // 主轴 auto 边距先吃掉全部自由空间（CSS Flexbox §9.1：一旦有 auto 边距，justify-content 失效）。
+            // 单边 auto 把该子项推到行尾/行首，双边 auto 即旧的「居中」——所以居中只是它的一个特例。
+            int autoEdges = 0;
+            foreach (int idx in line.ItemIndices)
+                autoEdges += isRow
+                    ? (kids[idx].Style.MarginLeftAuto ? 1 : 0) + (kids[idx].Style.MarginRightAuto ? 1 : 0)
+                    : (kids[idx].Style.MarginTopAuto ? 1 : 0) + (kids[idx].Style.MarginBottomAuto ? 1 : 0);
+            float autoShare = autoEdges > 0 && lineFree > 0 ? lineFree / autoEdges : 0;
+
             float cursor, between;
-            switch (s.JustifyContent)
+            if (autoShare > 0) { cursor = 0; between = gap; }
+            else switch (s.JustifyContent)
             {
                 case "center": cursor = lineFree / 2; between = gap; break;
                 case "flex-end": case "end": cursor = lineFree; between = gap; break;
@@ -1900,6 +2024,15 @@ public static class LayoutBuilder
                 case "space-around": between = line.ItemIndices.Count > 0 ? gap + lineFree / line.ItemIndices.Count : gap; cursor = between / 2; break;
                 case "space-evenly": between = gap + lineFree / (line.ItemIndices.Count + 1); cursor = between; break;
                 default: cursor = 0; between = gap; break;
+            }
+
+            // 基线组：参与 baseline 对齐的子项共用一条基线，其位置取最深的基线（谁都不越出交叉轴起点）。
+            float lineBaseline = 0;
+            foreach (int idx in line.ItemIndices)
+            {
+                var ms = kids[idx].Style;
+                if ((ms.AlignSelf == "auto" ? s.AlignItems : ms.AlignSelf) != "baseline") continue;
+                lineBaseline = Math.Max(lineBaseline, InlineLayout.BaselineToTop(kids[idx]) ?? 0);
             }
 
             // 定位该行的每个子项。row/column-reverse 时 MeasureFlex 给的 ItemIndices 已经是反的，
@@ -1916,14 +2049,18 @@ public static class LayoutBuilder
                 {
                     "center" => Math.Max(0, (lineCross - cf) / 2),
                     "flex-end" or "end" => Math.Max(0, lineCross - cf),
+                    "baseline" => Math.Max(0, lineBaseline - (InlineLayout.BaselineToTop(c) ?? 0)),
                     _ => 0, // flex-start / stretch
                 };
 
                 if (isRow)
                 {
                     float mainPos = cursor;
-                    if (c.Style.MarginLeftAuto && c.Style.MarginRightAuto)
-                        mainPos = Math.Max(0, (mainSize - c.TotalWidth) / 2);   // 主轴 auto 边距吸收自由空间 → 居中，覆盖 justify-content
+                    if (autoShare > 0)
+                    {
+                        if (c.Style.MarginLeftAuto) mainPos += autoShare;
+                        cursor += autoShare * ((c.Style.MarginLeftAuto ? 1 : 0) + (c.Style.MarginRightAuto ? 1 : 0));
+                    }
                     // row-reverse：主轴起点翻到容器右端（justify-content 的 flex-start 也跟着到右边），
                     // 顺序已由 MeasureFlex 反过，这里只镜像整行的主轴坐标。
                     if (isReverse) mainPos = mainSize - mainPos - c.TotalWidth;
@@ -1932,8 +2069,11 @@ public static class LayoutBuilder
                 else
                 {
                     float mainPos = cursor;
-                    if (c.Style.MarginTopAuto && c.Style.MarginBottomAuto)
-                        mainPos = Math.Max(0, (mainSize - c.TotalHeight) / 2);
+                    if (autoShare > 0)
+                    {
+                        if (c.Style.MarginTopAuto) mainPos += autoShare;
+                        cursor += autoShare * ((c.Style.MarginTopAuto ? 1 : 0) + (c.Style.MarginBottomAuto ? 1 : 0));
+                    }
                     if (isReverse) mainPos = mainSize - mainPos - c.TotalHeight;   // column-reverse 同理
                     PositionRec(c, contentX + crossPos + crossOff, contentY + mainPos, cb);
                 }
@@ -1944,12 +2084,43 @@ public static class LayoutBuilder
             crossPos += lineCross + crossBetween;
         }
 
-        PlaceAbsChildren(box, cb);
+        PlaceAbsChildren(box, cb, contentX, contentY);
     }
 
-    static void PlaceAbsChildren(BlockBox box, CB cb)
+    /// <summary>
+    /// flex 容器的绝对定位子：静态位置按 CSS Flexbox §4 / Position §10.1 ——
+    /// **「把它当成容器里唯一的 flex item」**，所以 justify-content / align-items（含子项 align-self）
+    /// 两轴都要生效。此前一律按 CB 起点角放，pricing 的 <c>.switcher{align-items:center}</c> 里
+    /// 那个只写 <c>right:0</c> 的 <c>a.more</c> 因此整幅上偏 (54−22.4)/2 = 15.8px（top/page 两样例共 26 盒受累）。
+    /// 只在某轴两向偏移都为 auto 时才起作用（PlaceAbsolute 内部裁决）；写了 left/top 等仍按偏移。
+    /// </summary>
+    static void PlaceAbsChildren(BlockBox box, CB cb, float contentX, float contentY)
     {
+        var s = box.Style;
+        bool isRow = s.FlexDirection.StartsWith("row");
         foreach (var c in box.Children)
-            if (c.Style.Position == "absolute") PlaceAbsolute(c, cb);
+        {
+            if (c.Style.Position != "absolute") continue;
+            float mainAvail = isRow ? box.ContentWidth : box.ContentHeight;
+            float crossAvail = isRow ? box.ContentHeight : box.ContentWidth;
+            float mainSize = isRow ? c.TotalWidth : c.TotalHeight;
+            float crossSize = isRow ? c.TotalHeight : c.TotalWidth;
+            // 单 item 时 space-* 与 flex-start 等价（Blink 同解），故只认三种显式对齐
+            float mainOff = s.JustifyContent switch
+            {
+                "center" => (mainAvail - mainSize) / 2,
+                "flex-end" or "end" => mainAvail - mainSize,
+                _ => 0,
+            };
+            float crossOff = GridSelfAlign(c.Style.AlignSelf, s.AlignItems) switch
+            {
+                "center" => (crossAvail - crossSize) / 2,
+                "end" => crossAvail - crossSize,
+                _ => 0,
+            };
+            PlaceAbsolute(c, cb,
+                contentX + (isRow ? mainOff : crossOff),
+                contentY + (isRow ? crossOff : mainOff));
+        }
     }
 }

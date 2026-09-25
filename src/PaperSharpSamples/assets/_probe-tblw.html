@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+/* 自动表格分配律探针：单元格内容是一个精确定宽的 div → 该列 max-content = 声明宽（padding/border 全 0）。
+   每张表都带 data-w/data-cols，浏览器与引擎各量一遍逐列宽，即可反推分配规则。
+   A 组 = 富余分配（Σmax < 表宽）；B 组 = 收缩分配（Σmax > 表宽）。 */
+* { margin:0; padding:0; box-sizing:content-box; }
+body { font:10px/1 Arial, sans-serif; }
+table { border-collapse: collapse; table-layout: auto; }
+td { padding:0; border:0; }
+.i { height:6px; }
+</style></head><body>
+<table id=a1 style="width:1000px"><tr><td><div class=i style="width:100px"></div></td><td><div class=i style="width:200px"></div></td><td><div class=i style="width:300px"></div></td></tr></table>
+<table id=a2 style="width:600px"><tr><td><div class=i style="width:100px"></div></td><td><div class=i style="width:200px"></div></td><td><div class=i style="width:300px"></div></td></tr></table>
+<table id=a3 style="width:1000px"><tr><td><div class=i style="width:100px"></div></td><td><div class=i style="width:100px"></div></td><td><div class=i style="width:800px"></div></td></tr></table>
+<table id=a4 style="width:1000px"><tr><td><div class=i style="width:900px"></div></td><td><div class=i style="width:50px"></div></td><td><div class=i style="width:50px"></div></td></tr></table>
+<table id=a5 style="width:1200px"><tr><td><div class=i style="width:120px"></div></td><td><div class=i style="width:240px"></div></td><td><div class=i style="width:360px"></div></td><td><div class=i style="width:480px"></div></td></tr></table>
+</body></html>

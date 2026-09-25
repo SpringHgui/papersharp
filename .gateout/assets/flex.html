@@ -1,0 +1,60 @@
+<h1 class="title">Flexbox 布局演示</h1>
+
+<!-- 1. row + space-between：左右两端对齐 -->
+<div class="row-between">
+  <span class="label">订单号</span>
+  <span class="value">#2026-0922-001</span>
+</div>
+<div class="row-between">
+  <span class="label">客户</span>
+  <span class="value">三花股份有限公司</span>
+</div>
+
+<!-- 2. row + flex:1 等分三列（表格行） -->
+<h2>等分三列（flex: 1）</h2>
+<div class="grid-row header">
+  <span class="cell">项目</span>
+  <span class="cell">数量</span>
+  <span class="cell">金额</span>
+</div>
+<div class="grid-row">
+  <span class="cell">精密轴承 6204ZZ</span>
+  <span class="cell">500</span>
+  <span class="cell">¥4,100.00</span>
+</div>
+<div class="grid-row">
+  <span class="cell">不锈钢螺栓 M8×30</span>
+  <span class="cell">10000</span>
+  <span class="cell">¥1,500.00</span>
+</div>
+<div class="grid-row">
+  <span class="cell">铝合金型材 40×40</span>
+  <span class="cell">200</span>
+  <span class="cell">¥4,400.00</span>
+</div>
+
+<!-- 3. row + gap + align-items:center + 固定宽 + flex:1 混排 -->
+<h2>固定宽 + 弹性宽混排（gap 12px）</h2>
+<div class="mixed">
+  <div class="badge">A</div>
+  <div class="grow">这一列用 flex:1 撑满剩余空间，文字会自动换行</div>
+  <div class="badge">¥</div>
+</div>
+
+<!-- 4. column + justify-content:space-between 固定高度 -->
+<h2>定高 column + space-between</h2>
+<div class="tall">
+  <div class="t-top">顶部</div>
+  <div class="t-mid">中间</div>
+  <div class="t-bot">底部（space-between 把三块推到顶/中/底）</div>
+</div>
+
+<!-- 5. 嵌套：外层 row，右侧内层 column -->
+<h2>嵌套 flex</h2>
+<div class="nested">
+  <div class="n-left">左侧栏（flex:2）</div>
+  <div class="n-right">
+    <div class="n-item">右·上</div>
+    <div class="n-item">右·下</div>
+  </div>
+</div>
