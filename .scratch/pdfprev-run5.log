@@ -1,0 +1,53 @@
+从 src\PaperSharpBlazorApp\Properties\launchSettings.json 使用启动设置...
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5027
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: G:\Github\papersharp\src\PaperSharpBlazorApp
+warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+      Failed to determine the https port for redirect.
+info: PaperSharpBlazorApp.Services.PlaygroundSamples[0]
+      Playground 样例资产：G:\Github\papersharp\src\PaperSharpBlazorApp\bin\Debug\net10.0\assets（25 个 html）
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: JavaScript interop calls cannot be issued at this time. This is because the circuit has disconnected and is being disposed.
+      Microsoft.JSInterop.JSDisconnectedException: JavaScript interop calls cannot be issued at this time. This is because the circuit has disconnected and is being disposed.
+         at Microsoft.AspNetCore.Components.Server.Circuits.RemoteJSRuntime.BeginInvokeJS(JSInvocationInfo& invocationInfo)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, CancellationToken cancellationToken, Object[] args)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Microsoft.JSInterop.Implementation.JSObjectReference.DisposeAsync()
+         at PaperSharpBlazorApp.Components.Pages.Playground.DisposeAsync() in G:\Github\papersharp\src\PaperSharpBlazorApp\Components\Pages\Playground.razor:line 512
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.<>c__DisplayClass105_0.<<Dispose>g__HandleAsyncExceptions|0>d.MoveNext()
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'YzPk73e4ul-PDePS-2mgExqutDYCckSoVW3dNaZOOWI'.
+      Microsoft.JSInterop.JSDisconnectedException: JavaScript interop calls cannot be issued at this time. This is because the circuit has disconnected and is being disposed.
+         at Microsoft.AspNetCore.Components.Server.Circuits.RemoteJSRuntime.BeginInvokeJS(JSInvocationInfo& invocationInfo)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, CancellationToken cancellationToken, Object[] args)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Microsoft.JSInterop.Implementation.JSObjectReference.DisposeAsync()
+         at PaperSharpBlazorApp.Components.Pages.Playground.DisposeAsync() in G:\Github\papersharp\src\PaperSharpBlazorApp\Components\Pages\Playground.razor:line 512
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.<>c__DisplayClass105_0.<<Dispose>g__HandleAsyncExceptions|0>d.MoveNext()
+warn: Microsoft.AspNetCore.Components.Server.Circuits.RemoteRenderer[100]
+      Unhandled exception rendering component: JavaScript interop calls cannot be issued at this time. This is because the circuit has disconnected and is being disposed.
+      Microsoft.JSInterop.JSDisconnectedException: JavaScript interop calls cannot be issued at this time. This is because the circuit has disconnected and is being disposed.
+         at Microsoft.AspNetCore.Components.Server.Circuits.RemoteJSRuntime.BeginInvokeJS(JSInvocationInfo& invocationInfo)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, CancellationToken cancellationToken, Object[] args)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Microsoft.JSInterop.Implementation.JSObjectReference.DisposeAsync()
+         at PaperSharpBlazorApp.Components.Pages.Playground.DisposeAsync() in G:\Github\papersharp\src\PaperSharpBlazorApp\Components\Pages\Playground.razor:line 512
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.<>c__DisplayClass105_0.<<Dispose>g__HandleAsyncExceptions|0>d.MoveNext()
+fail: Microsoft.AspNetCore.Components.Server.Circuits.CircuitHost[111]
+      Unhandled exception in circuit 'SokywbPqdtgCHle0YmAtflH7S-ogk62IMKoItOAmzJg'.
+      Microsoft.JSInterop.JSDisconnectedException: JavaScript interop calls cannot be issued at this time. This is because the circuit has disconnected and is being disposed.
+         at Microsoft.AspNetCore.Components.Server.Circuits.RemoteJSRuntime.BeginInvokeJS(JSInvocationInfo& invocationInfo)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, CancellationToken cancellationToken, Object[] args)
+         at Microsoft.JSInterop.JSRuntime.InvokeAsync[TValue](Int64 targetInstanceId, String identifier, JSCallType callType, Object[] args)
+         at Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync(IJSRuntime jsRuntime, String identifier, Object[] args)
+         at Microsoft.JSInterop.Implementation.JSObjectReference.DisposeAsync()
+         at PaperSharpBlazorApp.Components.Pages.Playground.DisposeAsync() in G:\Github\papersharp\src\PaperSharpBlazorApp\Components\Pages\Playground.razor:line 512
+         at Microsoft.AspNetCore.Components.RenderTree.Renderer.<>c__DisplayClass105_0.<<Dispose>g__HandleAsyncExceptions|0>d.MoveNext()

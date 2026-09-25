@@ -244,7 +244,8 @@ public static class CssValueParser
         return null;
     }
 
-    /// <summary>行高倍数。<c>normal</c>/未声明 → NaN（调用方按字体度量取 normal 行距，勿在此凑一个经验值）。</summary>
+    /// <summary>行高倍数。<c>normal</c>/未声明/带单位 → NaN（带单位的交给 <see cref="ParseLineHeightLength"/>；
+    /// normal 由调用方按字体度量取行距，勿在此凑一个经验值）。</summary>
     public static float ParseLineHeight(string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value == "normal") return float.NaN;
@@ -256,8 +257,24 @@ public static class CssValueParser
         }
         if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
             return factor > 0 ? factor : float.NaN;
-        // 带单位（px/em）的行高这里按 normal 兜底（demo 不做绝对行高单位换算）
-        return float.NaN;
+        return float.NaN;   // 带单位（px/em/…）：见 ParseLineHeightLength
+    }
+
+    /// <summary>
+    /// 带单位的行高（<c>46px</c> / <c>1.5em</c> / <c>150%</c> 之外的长度与 calc()）折算成像素。
+    /// 数字、百分比、<c>normal</c>、未声明一律 NaN——那三类要乘字号，走 <see cref="ParseLineHeight"/> 的倍数口径。
+    /// em 按**本元素**字号折算（CSS 的 computed-value 口径），故继承给子元素时不再跟着子字号缩放。
+    /// </summary>
+    public static float ParseLineHeightLength(string value, float fontSize, float rootFontSize = 16f)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "normal") return float.NaN;
+        var v = value.AsSpan().Trim();
+        bool isLen = v.EndsWith("px", StringComparison.Ordinal) || v.EndsWith("pt", StringComparison.Ordinal)
+                  || v.EndsWith("em", StringComparison.Ordinal) || v.EndsWith("rem", StringComparison.Ordinal)
+                  || v.IndexOf("calc(", StringComparison.OrdinalIgnoreCase) >= 0;
+        if (!isLen) return float.NaN;
+        float px = ToPixels(value, fontSize, rootFontSize);
+        return px > 0 ? px : float.NaN;
     }
 
     public static CssTextAlign ParseTextAlign(string value)

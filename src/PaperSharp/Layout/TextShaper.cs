@@ -143,7 +143,13 @@ public static class TextShaper
         {
             int cp = char.ConvertToUtf32(text, i);
             i += char.IsHighSurrogate(text[i]) ? 2 : 1;
-            bool wide = cp is > 0 and <= 0xFFFF && TextMeasurer.IsCjkChar((char)cp);
+            // 全宽判定：CJK/全角之外，**legacy 等宽网格**（Chrome generic monospace 落 NSimSun）还要把
+            // UAX#11 的 A 类也算全宽——Ω/±/°/→/Ⅲ/А/π/≥ 在 NSimSun 下浏览器实测都是全宽单元，
+            // 按 IsCjkChar 只给半格会让每个 A 类字符少算一格（14px 的 Ω：7 vs 14）。
+            // 严格限定 legacy：非 legacy（真等宽 face 线性 own advance / 缺字回退）不参与，
+            // 雅黑/Noto/Arial 下的 A 类不让位（逐 face 单字对拍已证两边本就吻合）。
+            bool wide = cp is > 0 and <= 0xFFFF
+                && (TextMeasurer.IsCjkChar((char)cp) || (legacy && EastAsianWidth.IsAmbiguous(cp)));
             if (!legacy && tf.GetGlyph(cp) != 0) { w += own; continue; }
             w += (wide ? half * 2 : half) + fauxBold;
         }

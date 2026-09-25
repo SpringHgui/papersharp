@@ -15,6 +15,8 @@ namespace PaperSharp.Css;
 /// </summary>
 public static class StyleResolver
 {
+    /// <summary>&lt;input&gt; 占位符的默认色：Chrome 无作者 ::placeholder 声明时实测 placeholderText = #757575。</summary>
+    static readonly SKColor PlaceholderColor = new(0x75, 0x75, 0x75);
     // 一份最小 UA 样式表，覆盖 demo 用到的元素默认值。
     // 不加这个的话 <p>、<h1> 全部 margin=0 会糊在一起。
     // 公开：Playground 这类「引擎 vs 浏览器」比对工具要把同一份表注进预览 iframe，
@@ -93,6 +95,8 @@ public static class StyleResolver
         public bool HasPseudoRules;   // CSS 里出现 ::before/::after 才做伪元素（否则零开销，既有样例不回归）
         // 伪元素显式声明的 display（"末token::before/after" → 值）。AngleSharp 对伪元素 UA 默认注入
         // display:block（computed/declared 都是），无法据其判断作者意图，故从原始 CSS 扫显式声明。
+        // 同表还捎带 "末token::placeholder" → color 声明：::placeholder 在 AngleSharp 里根本不是可解析的
+        // 伪元素（实测 ComputeDeclarations(el,"::placeholder") 空），作者的占位符颜色只能这样兜回来。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, List<Keyframe>> Keyframes = new();   // @keyframes 表（渲染传 animationTime 时按时刻取帧）
         public AuthorBoxSpacing? Spacing;       // margin/padding 作者源微级联索引（见 AuthorBoxSpacing）
@@ -139,7 +143,10 @@ public static class StyleResolver
         if (precomputed) ctx.Flat = FlatCascade.TryBuild(userCss);
         // 伪元素开销较大（每元素多两次 computed 层叠），仅当 CSS 里确有 ::before/::after 规则时才启用
         ctx.HasPseudoRules = Regex.IsMatch(userCss ?? "", @"::?(before|after)\b", RegexOptions.IgnoreCase);
-        if (ctx.HasPseudoRules) { ctx.PseudoScope = new(StringComparer.OrdinalIgnoreCase); ScanPseudoDisplay(userCss ?? "", ctx); }
+        if (ctx.HasPseudoRules) ctx.PseudoScope = new(StringComparer.OrdinalIgnoreCase);
+        // 只有 ::placeholder 规则时也值得扫一遍（它只往 PseudoDisplay 里塞颜色，不开伪元素那套开销）
+        if (ctx.HasPseudoRules || Regex.IsMatch(userCss ?? "", @"::placeholder\b", RegexOptions.IgnoreCase))
+            ScanPseudoDisplay(userCss ?? "", ctx);
         // @keyframes 表（仅当 CSS 里确有 @keyframes 时解析；渲染传 animationTime 才按时刻取帧覆盖样式）
         if (Regex.IsMatch(userCss ?? "", @"@keyframes\b", RegexOptions.IgnoreCase))
             ctx.Keyframes = Animation.ParseKeyframes(userCss ?? "");
@@ -346,6 +353,16 @@ public static class StyleResolver
         }
         return (w ?? "medium", st ?? "none", co ?? "currentColor");
     }
+
+    /// <summary><c>border-color</c> 简写的 1~4 值按 CSS 规则落到某条边：side 序 0=top、1=right、2=bottom、3=left。</summary>
+    static string ColorSlot(IReadOnlyList<string> t, int side) => t.Count switch
+    {
+        0 => "",
+        1 => t[0],
+        2 => t[side % 2],
+        3 => t[side == 3 ? 1 : side],
+        _ => t[side],
+    };
 
     /// <summary>是否长度类 token：数字打头（含符号/小数点）、带单位函数（calc()/min()/max()/clamp()）或百分比。</summary>
     static bool IsSizeToken(string t)
@@ -629,7 +646,10 @@ public static class StyleResolver
             {
                 cs.PlaceholderText = ph;
                 cs.TextContent = ph;   // 走块/inline 文本路径绘制
-                cs.Color = new SKColor(0x9a, 0xa0, 0xa8);  // 占位符弱化灰（浏览器 ::placeholder 观感）
+                // 占位符不吃控件自身的 color（浏览器里 input{color:blue} 的占位符仍是系统灰），
+                // 默认色取 Chrome 实测的 placeholderText #757575；作者写了 ::placeholder{color:…} 才覆盖。
+                cs.Color = (LookupPseudoMap(ctx.PseudoDisplay, element, "::placeholder") is { Length: > 0 } phColor
+                            && CssValueParser.ParseColor(phColor) is { } pc) ? pc : PlaceholderColor;
             }
             return cs;
         }
@@ -827,11 +847,26 @@ public static class StyleResolver
         foreach (Match m in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
         {
             var sel = m.Groups[1].Value;
+            var body = m.Groups[2].Value;
+            if (Regex.IsMatch(sel, @"::placeholder\b", RegexOptions.IgnoreCase))
+            {
+                // 占位符颜色：只记 color，且不进 PseudoScope（那是 ::before/::after 生成盒的闸门）。
+                var cm = Regex.Match(body, @"(?:^|[;\s])color\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
+                if (!cm.Success) continue;
+                foreach (var selPart in sel.Split(','))
+                {
+                    var toks = Regex.Split(Regex.Replace(selPart, @"::placeholder", " ", RegexOptions.IgnoreCase).Trim(),
+                                           @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
+                    if (toks.Length == 0) continue;
+                    var tok = Regex.Replace(toks[^1], @"[:\[].*$", "");
+                    if (tok.Length > 0) ctx.PseudoDisplay[tok + "::placeholder"] = cm.Groups[1].Value.Trim();
+                }
+                continue;
+            }
             string suffix;
             if (Regex.IsMatch(sel, @"::?before\b", RegexOptions.IgnoreCase)) suffix = "::before";
             else if (Regex.IsMatch(sel, @"::?after\b", RegexOptions.IgnoreCase)) suffix = "::after";
             else continue;
-            var body = m.Groups[2].Value;
             var dm = Regex.Match(body, @"(?:^|[;\s])display\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
             foreach (var selPart in sel.Split(','))
             {
@@ -874,7 +909,9 @@ public static class StyleResolver
     /// <summary>按元素 class/id/tag 命中伪元素原始 CSS 索引（就近优先 class &gt; id &gt; tag）。</summary>
     static string? LookupPseudoMap(Dictionary<string, string> map, IElement el, string pseudo)
     {
-        var suffix = pseudo.Contains("before", StringComparison.OrdinalIgnoreCase) ? "::before" : "::after";
+        var suffix = pseudo.Contains("before", StringComparison.OrdinalIgnoreCase) ? "::before"
+                   : pseudo.Contains("after", StringComparison.OrdinalIgnoreCase) ? "::after"
+                   : pseudo;   // ::placeholder：键就是原样后缀
         string? Get(string tok) => map.TryGetValue(tok + suffix, out var v) ? v : null;
         var cls = el.GetAttribute("class");
         if (!string.IsNullOrWhiteSpace(cls))
@@ -1000,7 +1037,13 @@ public static class StyleResolver
         // line-height:normal（含从未声明）不是固定倍数，而是**该字体自己的**正常行距：
         // 浏览器量的就是 ascent+descent+lineGap（雅黑 1.318em、serif 回退 1.4875em），
         // 统一按 1.4 兜底会让每一段正文各差几个百分点，逐段累积把整页下部推下去。
-        float lhFactor = CssValueParser.ParseLineHeight(Val("line-height"));
+        // em/rem 行高要读**声明值**：AngleSharp 的 computed 已把它们按初值字号 16px 折算过（探针实测
+        // `font-size:30px; line-height:1.5em` computed 给 24px 而非 45px），基准根本不是本元素字号。
+        var lhText = Val("line-height");
+        var lhDeclared = Spec("line-height");
+        if (lhDeclared.Contains("em", StringComparison.OrdinalIgnoreCase)) lhText = lhDeclared;
+        float lhFactor = CssValueParser.ParseLineHeight(lhText);
+        s.LineHeightAbsPx = float.NaN; // TEMP
         s.LineHeightNumeric = !float.IsNaN(lhFactor);
         s.LineHeightFactor = float.IsNaN(lhFactor)
             ? PaperSharp.Layout.FontManager.NormalLineHeight(s.FontFamily, s.FontWeight)
@@ -1089,9 +1132,28 @@ public static class StyleResolver
         s.BorderWidthRight = UsedBorderWidth(Val("border-right-width"), s.FontSize);
         s.BorderWidthBottom = UsedBorderWidth(Val("border-bottom-width"), s.FontSize);
         s.BorderWidthLeft = UsedBorderWidth(Val("border-left-width"), s.FontSize);
-        s.BorderColor = CssValueParser.ParseColor(Raw("border-color"))
-                     ?? CssValueParser.ParseColor(Raw("border-top-color"))
-                     ?? s.Color;
+        s.BorderStyleTop = CssValueParser.ParseKeyword(Raw("border-top-style"), "solid");
+        s.BorderStyleRight = CssValueParser.ParseKeyword(Raw("border-right-style"), "solid");
+        s.BorderStyleBottom = CssValueParser.ParseKeyword(Raw("border-bottom-style"), "solid");
+        s.BorderStyleLeft = CssValueParser.ParseKeyword(Raw("border-left-style"), "solid");
+        // 边框色逐边取：单边简写（.prefix 的 `border-right: 1px solid #eceef0`）在 AngleSharp 里只落到
+        // border-right-color，整圈读 border-color/border-top-color 会读空 → 退回 currentColor，分隔线被染成文字色。
+        // 只对**有宽度**的边取值：无框元素（页面上的绝大多数）一次属性读都不多花。
+        string? bcShort = null;
+        List<string>? bcToks = null;
+        SKColor SideBorderColor(string prop, int side, float width)
+        {
+            if (width <= 0) return s.Color;
+            if (CssValueParser.ParseColor(Raw(prop)) is { } c) return c;
+            // 长写读不到才是 `border-color: A B C D` 多值简写的场面（AngleSharp 不总展开它）
+            if (string.IsNullOrEmpty(bcShort ??= Raw("border-color"))) return s.Color;
+            bcToks ??= SplitTopLevel(bcShort);
+            return CssValueParser.ParseColor(ColorSlot(bcToks, side)) ?? s.Color;
+        }
+        s.BorderColorTop = SideBorderColor("border-top-color", 0, s.BorderWidthTop);
+        s.BorderColorRight = SideBorderColor("border-right-color", 1, s.BorderWidthRight);
+        s.BorderColorBottom = SideBorderColor("border-bottom-color", 2, s.BorderWidthBottom);
+        s.BorderColorLeft = SideBorderColor("border-left-color", 3, s.BorderWidthLeft);
 
         s.Width = CssValueParser.ParseSize(Val("width"), s.FontSize);
         s.Height = CssValueParser.ParseSize(Val("height"), s.FontSize);

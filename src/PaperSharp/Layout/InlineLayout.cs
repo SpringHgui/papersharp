@@ -302,6 +302,11 @@ public static class InlineLayout
         return BoxOf(a, d, s.LineHeightPx());
     }
 
+    /// <summary>纯文本块**首行基线**相对内容盒顶的距离，绘制侧必须与 <see cref="BaselineToTop"/> 取同一个数
+    /// （ascent + ⌊leading/2⌋）。画成「内容顶 + 字号」时行距越大偏得越多：m3 里 40px 高、行高 2.2 的
+    /// inline-block 文字实测比浏览器高 7px。</summary>
+    internal static float FirstBaselineOffset(ComputedStyle s) => BoxOf(s).Asc;
+
     static (float Asc, float Desc) BoxOf(float asc, float desc, float lineHeight)
     {
         float lead = lineHeight - (asc + desc);

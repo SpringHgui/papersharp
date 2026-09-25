@@ -1,0 +1,13 @@
+从 src\PaperSharpBlazorApp\Properties\launchSettings.json 使用启动设置...
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5027
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: G:\Github\papersharp\src\PaperSharpBlazorApp
+warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+      Failed to determine the https port for redirect.
+info: PaperSharpBlazorApp.Services.PlaygroundSamples[0]
+      Playground 样例资产：G:\Github\papersharp\src\PaperSharpBlazorApp\bin\Debug\net10.0\assets（25 个 html）

@@ -1,0 +1,38 @@
+{
+ "summary": {
+  "ok": 32,
+  "drift": 1,
+  "engineOnly": 0,
+  "browserOnly": 0,
+  "worst": 3.0087899999999763,
+  "mean": 3.0087899999999763
+ },
+ "rows": [
+  {
+   "path": "body[1]/main[1]/header[1]/p[1]/span[1]",
+   "tag": "span",
+   "kind": "drift",
+   "e": {
+    "domPath": "body[1]/main[1]/header[1]/p[1]/span[1]",
+    "tag": "span",
+    "x": 328.39746,
+    "y": 175.59375,
+    "w": 101.4371,
+    "h": 39
+   },
+   "b": {
+    "domPath": "body[1]/main[1]/header[1]/p[1]/span[1]",
+    "tag": "span",
+    "x": 331.40625,
+    "y": 175.59375,
+    "w": 102.046875,
+    "h": 39
+   },
+   "dx": 3.0087899999999763,
+   "dy": 0,
+   "dw": 0.6097749999999991,
+   "dh": 0,
+   "max": 3.0087899999999763
+  }
+ ]
+}

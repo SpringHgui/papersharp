@@ -360,8 +360,11 @@
     const bw = SIDES.map((s) => numv(`border-${s}-width`));
     if (bw.some((v) => v > 0)) {
       SIDES.forEach((s, i) => out.push(`border-${s}-width:${px(bw[i], ctx)}`));
-      const color = normColor(raw("border-top-color"));
-      if (color) out.push(`border-color:${color}`);
+      // 四边可以各自一色（单边分隔线只写 border-right/left-color），只发 border-top-color 会把
+      // 其余三边染成文字色 → 同色才合并成简写，否则逐边下发（无宽度的边发不发都不画）。
+      const bc = SIDES.map((s) => normColor(raw(`border-${s}-color`)));
+      if (bc.every((c) => c && c === bc[0])) out.push(`border-color:${bc[0]}`);
+      else SIDES.forEach((s, i) => { if (bw[i] > 0 && bc[i]) out.push(`border-${s}-color:${bc[i]}`); });
     }
     for (const corner of ["top-left", "top-right", "bottom-right", "bottom-left"]) {
       const r = firstNum(raw(`border-${corner}-radius`));

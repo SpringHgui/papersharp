@@ -185,6 +185,13 @@ public static class LayoutBuilder
             ? MeasureGrid(box, myDefH)
             : MeasureBlock(box, myDefH ?? float.NaN, fc, contentTopY);
         box.ContentHeight = ClampSize(myDefH ?? naturalH, s.MinHeight, s.MaxHeight, containingHeight, bb);
+        // 单行文本控件：浏览器把整行文字在内容盒里垂直居中（<input> 定高时文字贴顶会一眼看穿），
+        // 而不是按普通块那样从内容盒顶部起排。复用 table-cell 的 ValignDY 通道。
+        if (s.Tag == "input" && box.WrappedLines is { Length: > 0 } inLines)
+        {
+            float free = box.ContentHeight - inLines.Length * s.LineHeightPx();
+            if (free > 0) box.ValignDY = free / 2;
+        }
     }
 
     static float ResolveWidth(CssSize w, float availWidth, ComputedStyle s)
@@ -345,13 +352,13 @@ public static class LayoutBuilder
             {
                 if (info.Span == 1)
                 {
-                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell);
-                    float spec = SpecifiedCellWidth(info.Cell, targetGridForPct);
+                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell, collapse);
+                    float spec = SpecifiedCellWidth(info.Cell, targetGridForPct, collapse);
                     if (spec > 0) { colW[info.Col] = Math.Max(colW[info.Col], spec); colMin[info.Col] = colW[info.Col]; colSpec[info.Col] = true; }
                     else
                     {
                         colW[info.Col] = Math.Max(colW[info.Col], intrinsic);
-                        colMin[info.Col] = Math.Max(colMin[info.Col], Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell)));
+                        colMin[info.Col] = Math.Max(colMin[info.Col], Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell, collapse)));
                     }
                 }
             }
@@ -361,8 +368,8 @@ public static class LayoutBuilder
             foreach (var info in infos)
                 if (info.Span > 1)
                 {
-                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell) + spacingX * (info.Span - 1) + 1;
-                    float pctW = SpecifiedCellWidth(info.Cell, targetGridForPct);
+                    float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell, collapse) + spacingX * (info.Span - 1) + 1;
+                    float pctW = SpecifiedCellWidth(info.Cell, targetGridForPct, collapse);
                     float need = Math.Max(intrinsic, pctW);
                     float have = 0; for (int j = info.Col; j < info.Col + info.Span; j++) have += colW[j];
                     float deficit = need - have;
@@ -373,7 +380,7 @@ public static class LayoutBuilder
                         foreach (int j in free) colW[j] += add;
                     }
                     // 下限同样要抬：合并格里的长词也是硬底，否则收缩阶段会把所跨各列压到比它还能折。
-                    float needMin = Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell) + spacingX * (info.Span - 1));
+                    float needMin = Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell, collapse) + spacingX * (info.Span - 1));
                     float haveMin = 0; for (int j = info.Col; j < info.Col + info.Span; j++) haveMin += colMin[j];
                     if (needMin - haveMin > 0)
                     {
@@ -685,7 +692,16 @@ public static class LayoutBuilder
             }
     }
 
-    static float CellHDeco(BlockBox c) => c.Style.PaddingLeft + c.Style.PaddingRight + c.Style.BorderWidthLeft + c.Style.BorderWidthRight;
+    /// <summary>
+    /// 单元格横向装饰。collapse 表里每条网格线由相邻两格**共享**（Chrome 把折叠框线居中放在格线上），
+    /// 所以每格只应计入半条边框；按整条计会让每列宽 +1px，并经自动表格的比例分配摊到全表
+    /// （m1 金额列实测：Chrome 内容 65.97 + 装饰 17 = 82.97，引擎 65.98 + 18 = 83.98，
+    /// 多出的 1.01px 抬高 Σmax → k 从 2.2954 掉到 2.2909 → 该表 51 行 × 7 列共 291 个盒各偏 0.2~2.4px）。
+    /// separate 表每格边框各自独立，仍按整条计。
+    /// </summary>
+    static float CellHDeco(BlockBox c, bool collapse) => c.Style.PaddingLeft + c.Style.PaddingRight
+        + (collapse ? (c.Style.BorderWidthLeft + c.Style.BorderWidthRight) / 2
+                    : c.Style.BorderWidthLeft + c.Style.BorderWidthRight);
     static float CellVDeco(BlockBox c) => c.Style.PaddingTop + c.Style.PaddingBottom + c.Style.BorderWidthTop + c.Style.BorderWidthBottom;
 
     /// <summary>多跨格的差额该摊给谁：所跨列里的 auto 列；整组都是 special 列时只能全摊（没有别的出口）。</summary>
@@ -699,20 +715,20 @@ public static class LayoutBuilder
     }
 
     /// <summary>解析单元格 width:% 为 outer 盒宽（含 deco）；非百分比返回 0。</summary>
-    static float ResolvePctCellWidth(BlockBox cell, float targetGridW)
+    static float ResolvePctCellWidth(BlockBox cell, float targetGridW, bool collapse)
     {
         var w = cell.Style.Width;
         if (!w.IsPercent && w.Kind != CssSizeKind.Calc) return 0;
         float contentW = w.Resolve(targetGridW);
         if (float.IsNaN(contentW) || contentW <= 0) return 0;
-        return contentW + CellHDeco(cell);
+        return contentW + CellHDeco(cell, collapse);
     }
 
     /// <summary>
     /// 单元格的**声明**宽（border-box 口径，即列 outer 宽）：% 与 calc 相对目标网格宽，px/em 直接用；
     /// box-sizing:border-box 时声明值本身已含装饰。auto 或非法值返回 0（交回内在宽决定）。
     /// </summary>
-    static float SpecifiedCellWidth(BlockBox cell, float targetGridW)
+    static float SpecifiedCellWidth(BlockBox cell, float targetGridW, bool collapse)
     {
         var w = cell.Style.Width;
         if (w.IsAuto) return 0;
@@ -726,7 +742,7 @@ public static class LayoutBuilder
         // 多出的 13px 从另外三个 auto 列里扣走（3.7+4.0+5.3），四格齐漂。
         // 绝对值（px/em/calc）仍是 content-box 语义，要叠 deco。
         return cell.Style.BoxSizing == "border-box" || w.Kind == CssSizeKind.Percent
-            ? contentW : contentW + CellHDeco(cell);
+            ? contentW : contentW + CellHDeco(cell, collapse);
     }
 
     static void ZeroCellMargins(BlockBox c)
@@ -1336,22 +1352,37 @@ public static class LayoutBuilder
             var cs = box.Children[i].Style;
             if (cs.Position == "absolute") { MeasureOutOfFlow(box.Children[i], box.ContentWidth); continue; }
 
+            // 跨线数由 ParseGridPlacement 按线号算好（end - start）；这里不能再减一次起始线，
+            // 否则 span 恒多 1：`grid-column:2/7` 在 6 列网格里拿 col=1、span=6，下面的自动放置
+            // 扫描永远凑不出 c==col 且放得下 → MeasureGrid 死循环（fontvs 卡死）。
             int colSpan = Math.Max(1, cs.GridColumnSpan), rowSpan = Math.Max(1, cs.GridRowSpan);
             int col = cs.GridColumnStart > 0 ? cs.GridColumnStart - 1 : -1;
             int row = cs.GridRowStart > 0 ? cs.GridRowStart - 1 : -1;
-            if (cs.GridColumnEnd > cs.GridColumnStart && col >= 0) colSpan = cs.GridColumnEnd - col;
-            if (cs.GridRowEnd > cs.GridRowStart && row >= 0) rowSpan = cs.GridRowEnd - row;
 
             if (col < 0 || row < 0)
             {
-                // 自动放置：行优先扫描第一个空位
+                // 自动放置（CSS §8.5 简化）：定轴锁死、只扫不定的那一轴，隐式轨道交给下面的补轨兜住。
+                // 旧写法把两轴混在一个扫描里，遇到「定轴 + 所跨轨道超出模板」就永远回不到定轴值上——
+                // 那个形状本来只由 span 多算 1 触发，但 `grid-column:5/8` 这类真·超界写法一样会死循环。
                 int r = autoRow, c = autoCol;
-                while (true)
+                if (col >= 0)
                 {
-                    if (c + colSpan > colTracks.Count) { c = 0; r++; }
-                    bool fits = (col < 0 || c == col) && (row < 0 || r == row) && !Intersects(occupied, c, r, colSpan, rowSpan);
-                    if (fits) break;
-                    c++;
+                    c = col;
+                    while (Intersects(occupied, c, r, colSpan, rowSpan)) r++;
+                }
+                else if (row >= 0)
+                {
+                    r = row;
+                    while (Intersects(occupied, c, r, colSpan, rowSpan)) c++;
+                }
+                else
+                {
+                    while (true)
+                    {
+                        if (c + colSpan > colTracks.Count) { c = 0; r++; }
+                        if (!Intersects(occupied, c, r, colSpan, rowSpan)) break;
+                        c++;
+                    }
                 }
                 col = c; row = r;
             }

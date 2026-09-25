@@ -67,6 +67,13 @@ namespace PaperSharpBlazorApp
                 var asset = svc.ReadAsset(relative);
                 return asset == null ? Results.NotFound() : Results.Bytes(asset.Value.Bytes, asset.Value.ContentType);
             });
+
+            // PDF 悬浮窗的 <iframe src>。inline 送达（不设 Content-Disposition），浏览器内置查看器直接翻页缩放。
+            app.MapGet("/api/playground/pdf/{token}", (string token, PlaygroundService svc) =>
+            {
+                var pdf = svc.PeekPdf(token);
+                return pdf == null ? Results.NotFound() : Results.Bytes(pdf, "application/pdf");
+            });
         }
     }
 }

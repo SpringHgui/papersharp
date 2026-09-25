@@ -120,7 +120,19 @@ public sealed class ComputedStyle
     public float MarginTop, MarginRight, MarginBottom, MarginLeft;
     public float PaddingTop, PaddingRight, PaddingBottom, PaddingLeft;
     public float BorderWidthTop, BorderWidthRight, BorderWidthBottom, BorderWidthLeft;
-    public SKColor BorderColor = SKColors.Black;
+    /// <summary>四边各自的边框色。单边简写（`border-right: 1px solid #eceef0`）只落到 border-right-color，
+    /// 四边共用一色时读不到它，只能退回 currentColor——登录框的两条分隔线因此被染成文字色。</summary>
+    public SKColor BorderColorTop = SKColors.Black, BorderColorRight = SKColors.Black,
+                   BorderColorBottom = SKColors.Black, BorderColorLeft = SKColors.Black;
+    /// <summary>圆角描边与 SVG 只能整圈一色：取最宽那条边的颜色（与 BoxPainter 的宽度取最大、DominantDash 同一口径）。</summary>
+    public SKColor BorderColor =>
+        BorderWidthTop >= Math.Max(BorderWidthRight, Math.Max(BorderWidthBottom, BorderWidthLeft)) ? BorderColorTop
+      : BorderWidthRight >= Math.Max(BorderWidthBottom, BorderWidthLeft) ? BorderColorRight
+      : BorderWidthBottom >= BorderWidthLeft ? BorderColorBottom
+      : BorderColorLeft;
+    /// <summary>border-*-style 用值。目前只区分 dashed/dotted（画虚线），其余一律按 solid；
+    /// 默认 solid 是有意的：快照路径（capture.js）不下发 style，缺值不能把实线画没。</summary>
+    public string BorderStyleTop = "solid", BorderStyleRight = "solid", BorderStyleBottom = "solid", BorderStyleLeft = "solid";
 
     // margin / padding 的**声明值**（可能是 %）；布局期用 ResolveBoxSizes 按包含块宽折算进上面的 float。
     // border-width 无百分比（CSS 不接受），故只有 float。
@@ -201,6 +213,10 @@ public sealed class ComputedStyle
     public float LineHeightFactor = 1.4f;
     /// <summary>CSS 是否显式给出数字/百分比行高。false = normal（走字体度量，浏览器对它不做 1/64 量化）。</summary>
     public bool LineHeightNumeric;
+    /// <summary>带单位的行高（<c>line-height: 46px</c> / <c>1.5em</c>）折算成的绝对像素；NaN = 作者没写长度行高。
+    /// 浏览器里这类行高**不乘字号**，直接就是行盒高——按 normal 兜底会让定高盒里的文字整条基线抬高
+    /// (L−normal)/2（m9 的 <c>height:46px; line-height:46px</c> 实测偏 11px，叠图上一眼可见的重影）。</summary>
+    public float LineHeightAbsPx = float.NaN;
 
     /// <summary>
     /// used line-height。Blink 的口径：font-size 先量化到 1/64px（就近），再对「量化后的 fs × 倍数」
@@ -209,6 +225,7 @@ public sealed class ComputedStyle
     /// </summary>
     public float LineHeightPx()
     {
+        if (!float.IsNaN(LineHeightAbsPx)) return LineHeightAbsPx;
         if (!LineHeightNumeric) return FontSize * LineHeightFactor;
         double fs = Math.Round((double)FontSize * 64d, MidpointRounding.AwayFromZero) / 64d;
         return (float)(Math.Floor(fs * LineHeightFactor * 64d + 1e-6d) / 64d);

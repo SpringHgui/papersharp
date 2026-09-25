@@ -106,7 +106,29 @@ export async function loadPreview(iframe, srcdoc, widthPx) {
   const height = Math.max(1, Math.round(doc.documentElement.scrollHeight));
   iframe.style.height = `${height}px`;
   await settle(doc, win);                          // 改高会触发一次回流，量之前再稳一次
+
+  alignPreview(iframe, iframe.closest("[data-mode]")?.dataset?.mode);
+
   return { rects: measure(iframe), height };
+}
+
+/**
+ * 叠加对齐：引擎图按 `left:-BodyX; top:-BodyY` 平移，把**引擎 body 原点**摆到舞台 (0,0)；
+ * iframe 若不跟着平移，浏览器正文就仍留在它自己的 body margin 处，两层整体错开一个 margin。
+ * 实测 m9 bodyX=bodyY=28（body{margin:28px}）→ 叠看重影左移 28px，而差表两边都以 body 归一化，
+ * 22 个盒全报 0 —— 差表看不见这个错，只有叠图看得见。
+ * 只在叠加/半透明模式下平移：并排模式 iframe 有自己的可见边框与留白，挪了会露出空隙。
+ * mode 由调用方显式传入而不是回读 DOM：切换视图模式的按钮只改 Blazor 状态，事件处理里
+ * data-mode 可能还没落到 DOM；且平移若只在 loadPreview 算一次，「并排加载 → 切叠加」就永远
+ * 错开一个 body margin（m5 实测 36px）。
+ */
+export function alignPreview(iframe, mode) {
+  const doc = iframe?.contentDocument;
+  if (!doc?.body) return;
+  const br = doc.body.getBoundingClientRect();
+  iframe.style.transform = mode === "side" || !br.left && !br.top
+    ? ""
+    : `translate(${-Math.round(br.left)}px, ${-Math.round(br.top)}px)`;
 }
 
 /**
@@ -130,4 +152,58 @@ export function linkScroll(...els) {
     return [el, h];
   });
   return { dispose: () => bound.forEach(([el, h]) => el.removeEventListener("scroll", h)) };
+}
+
+/**
+ * PDF 悬浮窗的拖拽：按住标题条就能把窗推到任意位置，与底下的两窗并存。
+ *
+ * 三处要紧的口径：
+ *  - 起手先把 CSS 的 right/bottom 定位换算成 left/top。只写 left 而留着 right，
+ *    两边同时生效会把窗体横向拉满（position:fixed 的默认行为，不是 bug）。
+ *  - 标题条上的控件（纸张档、下载、关闭）不参与拖拽：pointerdown 落在它们身上直接放行。
+ *  - 夹在视口内且标题条至少留 32px 可见，否则一推就再也抓不回来。
+ *
+ * 与 linkScroll 同一套生命周期：返回带 dispose() 的对象，组件负责解绑。
+ */
+export function makeDraggable(handle, panel) {
+  if (!handle || !panel) return { dispose() {} };
+
+  const clamp = (v, lo, hi) => (lo > hi ? lo : Math.min(Math.max(v, lo), hi));
+  let start = null;
+
+  const onDown = (e) => {
+    if (e.button !== 0 || e.target.closest("select,button,a,input")) return;
+    const r = panel.getBoundingClientRect();
+    panel.style.left = `${r.left}px`;
+    panel.style.top = `${r.top}px`;
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+    start = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    handle.classList.add("dragging");
+    try { handle.setPointerCapture(e.pointerId); } catch { /* 指针已抬起：不捕获也能拖，只是移出窗体就断 */ }
+  };
+
+  const onMove = (e) => {
+    if (!start) return;
+    panel.style.left = `${clamp(e.clientX - start.dx, 60 - panel.offsetWidth, innerWidth - 60)}px`;
+    panel.style.top = `${clamp(e.clientY - start.dy, 0, innerHeight - 32)}px`;
+  };
+
+  const onUp = () => {
+    start = null;
+    handle.classList.remove("dragging");
+  };
+
+  handle.addEventListener("pointerdown", onDown);
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", onUp);
+  handle.addEventListener("pointercancel", onUp);
+  return {
+    dispose: () => {
+      handle.removeEventListener("pointerdown", onDown);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    },
+  };
 }

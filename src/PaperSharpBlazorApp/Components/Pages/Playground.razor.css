@@ -74,6 +74,21 @@
 
     .run:disabled { opacity: .5; cursor: default; }
 
+/* 未激活的工具栏开关：与 .run 同尺寸，只是不涂红，免得两个红钮抢「该点哪个」。 */
+.ghost {
+    background: transparent;
+    color: #9aa3ad;
+    border: 1px solid #2a2f36;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+    .ghost:hover { color: #e6e8ea; border-color: #3a4149; }
+
+    .bar .ghost, .bar .run { flex: none; }
+
 .split {
     flex: 1;
     min-height: 0;
@@ -326,3 +341,126 @@ iframe { display: block; border: 0; background: #fff; }
     .status .ok { background: #14291f; color: #6ee7a8; }
 
     .status .warn { background: #2a1517; color: #ff8f8f; }
+
+/* ── PDF 悬浮窗 ───────────────────────────────────────────────────────── */
+
+/* fixed 而非 absolute：脱开 .split 那套网格，浮在两窗与状态栏之上，位置只跟视口有关。
+   overflow:hidden 一是让 resize 生效（overflow:visible 的元素不出现把手），二是把 iframe 裁进圆角。 */
+.pdfwin {
+    position: fixed;
+    right: 18px;
+    bottom: 42px;
+    z-index: 20;
+    width: 430px;
+    height: min(74vh, 800px);
+    min-width: 260px;
+    min-height: 170px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 80px);
+    display: flex;
+    flex-direction: column;
+    resize: both;
+    overflow: hidden;
+    background: #101317;
+    border: 1px solid #2a2f36;
+    border-radius: 8px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .55);
+}
+
+/* 标题条即拖拽把手；条上的控件（纸张档、下载、关闭）按元素排除，见 playground.js makeDraggable。 */
+.pdfwin-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+    padding: 5px 6px 5px 9px;
+    background: #171b20;
+    border-bottom: 1px solid #22262b;
+    cursor: grab;
+    user-select: none;
+}
+
+    .pdfwin-bar.dragging { cursor: grabbing; }
+
+    .pdfwin-bar .grow { flex: 1; min-width: 6px; }
+
+.pdfwin-title {
+    color: #ff4d4d;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    flex: none;
+}
+
+.pdfwin-bar select {
+    flex: none;
+    background: #0f1216;
+    color: #c8ced4;
+    border: 1px solid #2a2f36;
+    border-radius: 5px;
+    padding: 2px 4px;
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.pdfwin-meta {
+    flex: none;
+    font-size: 11px;
+    color: #6f7983;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pdfwin-dl {
+    flex: none;
+    padding: 2px 7px;
+    border: 1px solid #2a2f36;
+    border-radius: 5px;
+    color: #9aa3ad;
+    font-size: 11px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+    .pdfwin-dl:hover { color: #e6e8ea; border-color: #3a4149; }
+
+.pdfwin-x {
+    flex: none;
+    padding: 1px 7px;
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    color: #9aa3ad;
+    font-size: 15px;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+    .pdfwin-x:hover { background: #2a1517; color: #ff8f8f; }
+
+.pdfwin-view {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    border: 0;
+    background: #fff;
+}
+
+/* 空态与错误态共用：把「还在生成」「生成失败」和「查看器在显示上一份」区分开。 */
+.pdfwin-msg {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 14px;
+    text-align: center;
+    color: #6f7983;
+    font-size: 12px;
+}
+
+    .pdfwin-msg b { color: #ff4d4d; }

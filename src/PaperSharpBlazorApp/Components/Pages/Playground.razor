@@ -39,9 +39,9 @@
     </label>
 
     <div class="seg">
-        <button type="button" class="@Seg(ViewMode.SideBySide)" @onclick="() => _view = ViewMode.SideBySide">并排</button>
-        <button type="button" class="@Seg(ViewMode.Overlay)" @onclick="() => _view = ViewMode.Overlay">叠加</button>
-        <button type="button" class="@Seg(ViewMode.Diff)" @onclick="() => _view = ViewMode.Diff">盒级差异</button>
+        <button type="button" class="@Seg(ViewMode.SideBySide)" @onclick="() => SetViewAsync(ViewMode.SideBySide)">并排</button>
+        <button type="button" class="@Seg(ViewMode.Overlay)" @onclick="() => SetViewAsync(ViewMode.Overlay)">叠加</button>
+        <button type="button" class="@Seg(ViewMode.Diff)" @onclick="() => SetViewAsync(ViewMode.Diff)">盒级差异</button>
     </div>
 
     @if (_view != ViewMode.SideBySide)
@@ -60,6 +60,8 @@
 
     <label class="ctl check"><input type="checkbox" @bind="_auto" />自动</label>
     <button type="button" class="run" @onclick="RerenderAsync" disabled="@_busy">@(_busy ? "渲染中…" : "Run")</button>
+    <button type="button" class="@(_pdfOpen ? "run" : "ghost")" @onclick="TogglePdfAsync"
+            title="开一个悬浮窗，跟着左边输入实时出 PDF（同宽档下排版宽与两窗严格相等）">PDF 预览</button>
 </div>
 
 <div class="split" data-mode="@ModeAttr">
@@ -172,6 +174,49 @@
     <span class="hint">iframe 已注入与引擎同一份 UA 表并藏滚动条，两侧排版宽严格相等</span>
 </footer>
 
+@* PDF 悬浮窗：脱流浮在两窗之上，左边改字它就跟着重出。拖标题条挪位置、右下角原生 resize 改大小。 *@
+@if (_pdfOpen)
+{
+    <aside class="pdfwin" @ref="_pdfWin">
+        <div class="pdfwin-bar" @ref="_pdfHandle">
+            <b class="pdfwin-title">PDF</b>
+            <select @bind="_paper" @bind:after="RefreshPdfAsync">
+                <option value="@PdfPaper.SameWidth">同宽（@(_width.ToString("0", Inv))）</option>
+                <option value="@PdfPaper.A4">A4</option>
+                <option value="@PdfPaper.Letter">Letter</option>
+            </select>
+            <span class="pdfwin-meta">
+                @if (_pdfBusy)
+                {
+                    <text>生成中…</text>
+                }
+                else if (_pdf is { } p)
+                {
+                    <text>@(p.PageWidth.ToString("0.#", Inv))×@(p.PageHeight.ToString("0.#", Inv))pt · 排版宽 @(p.ContentWidth.ToString("0.#", Inv)) · @((p.Bytes / 1024.0).ToString("0.#", Inv)) KB · @(p.ElapsedMs.ToString("0", Inv)) ms</text>
+                }
+            </span>
+            <span class="grow"></span>
+            @if (_pdf is { } dl)
+            {
+                <a class="pdfwin-dl" href="@PdfUrl(dl)" download="preview.pdf">下载</a>
+            }
+            <button type="button" class="pdfwin-x" @onclick="ClosePdfAsync" title="关闭">×</button>
+        </div>
+        @if (_pdfError.Length > 0)
+        {
+            <div class="pdfwin-msg"><b>PDF 生成失败</b><span>@_pdfError</span></div>
+        }
+        else if (_pdf is { } view)
+        {
+            <iframe class="pdfwin-view" src="@PdfUrl(view)" title="PaperSharp 导出的 PDF"></iframe>
+        }
+        else
+        {
+            <div class="pdfwin-msg"><span>@(_pdfBusy ? "生成中…" : "尚无结果")</span></div>
+        }
+    </aside>
+}
+
 @code {
     enum ViewMode { SideBySide, Overlay, Diff }
 
@@ -210,6 +255,14 @@
     IReadOnlyList<DomRect> _browserRects = Array.Empty<DomRect>();
     string _error = "";
 
+    bool _pdfOpen, _pdfBusy;
+    PdfPaper _paper = PdfPaper.SameWidth;
+    PlaygroundPdf? _pdf;
+    string _pdfError = "";
+
+    /// <summary>PDF 认领结果用的指纹：连打时会有好几趟管线在跑，只有最新那份值得换掉 iframe。</summary>
+    int _pdfSeq;
+
     bool _busy, _dirty;
     int _seq;
     /// <summary>浏览器那一半（iframe 装载 + settle + 回传矩形）的耗时。跟引擎那一半分开显示，
@@ -221,8 +274,8 @@
     string InputKey() => $"{_width}|{_scale}|{_html}|{_css}";
     ViewMode _view = ViewMode.SideBySide;
 
-    IJSObjectReference? _module, _scrollLink;
-    ElementReference _iframe, _enginePane, _browserPane;
+    IJSObjectReference? _module, _scrollLink, _pdfDrag;
+    ElementReference _iframe, _enginePane, _browserPane, _pdfWin, _pdfHandle;
 
     string ModeAttr => _view switch
     {
@@ -233,15 +286,34 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./playground.js");
-        // 两个窗格绝对同步滚动：同一个 scrollTop 才叫「同一块内容」；按比例同步会在两边高度不同时
-        // 把不同区域摆到一起，而高度差本身就是这里要看的东西。
-        _scrollLink = await _module.InvokeAsync<IJSObjectReference>("linkScroll", _enginePane, _browserPane);
-        await RerenderAsync();
+        if (firstRender)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./playground.js");
+            // 两个窗格绝对同步滚动：同一个 scrollTop 才叫「同一块内容」；按比例同步会在两边高度不同时
+            // 把不同区域摆到一起，而高度差本身就是这里要看的东西。
+            _scrollLink = await _module.InvokeAsync<IJSObjectReference>("linkScroll", _enginePane, _browserPane);
+            await RerenderAsync();
+            return;
+        }
+
+        // 悬浮窗的拖拽要 ElementReference，只能等它落到 DOM 之后再挂；关掉再开是新节点，
+        // 旧监听随原节点一起回收，所以关闭时把句柄置空、这里就会重挂一次。
+        if (_pdfOpen && _pdfDrag is null && _module is not null)
+            _pdfDrag = await _module.InvokeAsync<IJSObjectReference>("makeDraggable", _pdfHandle, _pdfWin);
     }
 
     string Seg(ViewMode v) => _view == v ? "on" : "";
+
+    /// <summary>切视图模式：iframe 的平移量按模式算（见 playground.js alignPreview），
+    /// 而 loadPreview 只在渲染时跑一次——不在此处补一次对齐，「并排载入 → 切叠加」两层就
+    /// 永远错开一个 body margin（m5 实测 36px）。模式串显式传给 JS，不靠回读 DOM。</summary>
+    async Task SetViewAsync(ViewMode v)
+    {
+        if (_view == v) return;
+        _view = v;
+        if (_module is { } js && _render is not null)
+            await js.InvokeVoidAsync("alignPreview", _iframe, ModeAttr);
+    }
 
     async Task OnInputAsync()
     {
@@ -260,6 +332,63 @@
         _css = css;
         await RerenderAsync();
     }
+
+    /// <summary>关闭必须走同一条路：拖拽监听挂在窗体节点上，窗体摘掉后句柄不置空，
+    /// 重开就是新节点却再也不会重挂（OnAfterRenderAsync 只认 _pdfDrag 是否为空）。</summary>
+    Task TogglePdfAsync()
+    {
+        if (_pdfOpen) return ClosePdfAsync();
+        _pdfOpen = true;
+        // 不等：窗口先出来显示「生成中」，别让整个页面卡在一趟管线上。
+        _ = RefreshPdfAsync();
+        return Task.CompletedTask;
+    }
+
+    async Task ClosePdfAsync()
+    {
+        _pdfOpen = false;
+        _pdf = null;
+        _pdfBusy = false;
+        _pdfError = "";
+        if (_pdfDrag is { } drag)
+        {
+            _pdfDrag = null;          // 关窗即解绑：节点已经被摘掉，留着句柄只会重挂不上
+            try { await drag.InvokeVoidAsync("dispose"); } catch { /* 电路已断，监听随节点回收 */ }
+        }
+    }
+
+    /// <summary>
+    /// 与长图同一份输入再生成一次 PDF，刻意挂在主渲染链路之外：PDF 管线要写字体子集，
+    /// 等进主链路就是让每次打字慢一倍。seq 认领结果——期间用户又改了字，这一份已经过期，
+    /// 生成完也不换 iframe（新那趟的 seq 更大）。
+    /// </summary>
+    async Task RefreshPdfAsync()
+    {
+        if (!_pdfOpen) return;
+        var seq = ++_pdfSeq;
+        var (html, css, width, paper) = (_html, _css, _width, _paper);
+        _pdfBusy = true;
+        _pdfError = "";
+        try
+        {
+            var pdf = await Svc.RenderPdfAsync(html, css, width, paper, CancellationToken.None);
+            if (seq != _pdfSeq || !_pdfOpen) return;
+            _pdf = pdf;
+            _pdfBusy = false;
+            StateHasChanged();        // iframe 的 src 换新 token，内置查看器才会重取这一份
+        }
+        catch (Exception ex)
+        {
+            if (seq != _pdfSeq) return;
+            _pdfError = ex.Message;   // 上一份好图留着会误导，宁可明确报错
+            _pdf = null;
+            _pdfBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>换页缩放都交给内置查看器；token 变了就是新文档，不必再加查询串防缓存。</summary>
+    static string PdfUrl(PlaygroundPdf p) => $"/api/playground/pdf/{p.Token}#zoom=page-width";
 
     /// <summary>容差只改判定、不改布局——拿已缓存的浏览器矩形重算一遍即可，别白渲染一次。</summary>
     Task ReDiffAsync()
@@ -304,6 +433,9 @@
             _diff = null;
             StateHasChanged();                    // 让新的 <img src> 先落到 DOM，浏览器侧再量
 
+            // PDF 挂在浏览器量测这段时间里并行跑：那半边走 JS 与 SignalR，不吃引擎这颗核。
+            if (_pdfOpen) _ = RefreshPdfAsync();
+
             if (_module is null) return;
             var srcdoc = PlaygroundService.BuildPreviewDoc(_html, _css,
                 Samples.AssetsDir is { Length: > 0 } ? PlaygroundService.AssetUrlBase : null);
@@ -320,9 +452,20 @@
         }
     }
 
+    // 负偏移只为「叠加」服务：把引擎 body 原点搬到舞台 (0,0) 才能与同样平移过的 iframe 重合。
+    // 并排模式下不平 body（两栏各自从 body 原点开画才可比，照旧平移会让引擎整页比浏览器高
+    // BodyX/BodyY，实测 m9 body margin 28px → 并排时标题差 28px），但要平掉 @page 页边距：
+    // 浏览器屏幕渲染没有 @page 边距，引擎 PNG 的内容却从页边距内侧开始画，
+    // 不平就整页右移/下移一圈页边距（实测 m1/m2 margin 20mm 15mm → 并排错开 42.5/56.7px）。
     string ShotStyle(PlaygroundRender r) =>
-        $"width:{Px(r.CssWidth)};left:{Px(-r.BodyX)};top:{Px(-r.BodyY)};" +
-        (_view == ViewMode.SideBySide ? "" : $"opacity:{(_opacityPercent / 100.0).ToString("0.##", Inv)};");
+        $"width:{Px(r.CssWidth)};"
+        + (_view == ViewMode.SideBySide ? $"left:{Px(-r.PageMarginLeft)};top:{Px(-r.PageMarginTop)};"
+                                        : $"left:{Px(-r.BodyX)};top:{Px(-r.BodyY)};") +
+        (_view == ViewMode.SideBySide ? "" : $"opacity:{(_opacityPercent / 100.0).ToString("0.##", Inv)};") +
+        // 引擎图比浏览器排版宽出一圈 @page 边距：叠加/差异时按内容盒裁掉那圈留白，
+        // 否则半透明叠图右/下缘会多出灰白边，看着像没对齐（并排模式整页展示，不裁）。
+        (_view == ViewMode.SideBySide ? "" :
+            $"clip-path:inset({Px(r.PageMarginTop)} {Px(r.PageMarginRight)} {Px(r.PageMarginBottom)} {Px(r.PageMarginLeft)});");
 
     static string MarkStyle(DomRect r) => $"left:{Px(r.X)};top:{Px(r.Y)};width:{Px(r.W)};height:{Px(r.H)}";
 
@@ -366,8 +509,13 @@
         try
         {
             if (_scrollLink is not null) await _scrollLink.InvokeVoidAsync("dispose");
+            if (_pdfDrag is not null) await _pdfDrag.InvokeVoidAsync("dispose");
         }
         catch { /* 电路已断，监听随页面一起回收 */ }
-        if (_module is not null) await _module.DisposeAsync();
+        try
+        {
+            if (_module is not null) await _module.DisposeAsync();   // 断线时这里也会抛：不接住就是电路级 unhandled 日志
+        }
+        catch { /* 同上 */ }
     }
 }

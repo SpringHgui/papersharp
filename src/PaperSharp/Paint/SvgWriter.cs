@@ -161,8 +161,16 @@ public static class SvgWriter
             // 边框
             float bt = Math.Max(s.BorderWidthTop, Math.Max(s.BorderWidthRight, Math.Max(s.BorderWidthBottom, s.BorderWidthLeft)));
             if (bt > 0)
+            {
+                string dash = BoxPainter.DominantDash(s) switch
+                {
+                    "dashed" => $" stroke-dasharray=\"{F4(3 * bt)} {F4(2 * bt)}\"",
+                    "dotted" => $" stroke-dasharray=\"0.01 {F4(bt)}\" stroke-linecap=\"round\"",
+                    _ => "",
+                };
                 _body.Append(Shape(s, x + bt / 2, y + bt / 2, bw - bt, bh - bt, Math.Max(0, rx - bt / 2),
-                    $"fill=\"none\" stroke=\"{Color(s.BorderColor)}\" stroke-opacity=\"{F4(s.BorderColor.Alpha / 255f)}\" stroke-width=\"{F(bt)}\""));
+                    $"fill=\"none\" stroke=\"{Color(s.BorderColor)}\" stroke-opacity=\"{F4(s.BorderColor.Alpha / 255f)}\" stroke-width=\"{F(bt)}\"{dash}"));
+            }
 
             float contentX = x + s.BorderWidthLeft + s.PaddingLeft;
             float contentY = y + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
@@ -343,7 +351,7 @@ public static class SvgWriter
             var typeface = box.Typeface;
             using var paint = new SKPaint { TextSize = s.FontSize, Typeface = typeface };
             float lineHeight = s.LineHeightPx();
-            float baseline = top + s.FontSize;
+            float baseline = top + InlineLayout.FirstBaselineOffset(s);
             float width = box.ContentWidth;
             for (int i = 0; i < box.WrappedLines!.Length; i++)
             {

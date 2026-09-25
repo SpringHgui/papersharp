@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 using PaperSharp;
 using PaperSharp.Css;
 using PaperSharpBlazorApp.Services;
@@ -131,5 +134,46 @@ public class PlaygroundTests
         var doc = PlaygroundService.BuildPreviewDoc("<p>hi</p>", "");
         Assert.Contains("::-webkit-scrollbar", doc);
         Assert.Contains("scrollbar-width:none", doc);
+    }
+
+    // ── PDF 悬浮窗 ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 同宽档的全部意义在于「PDF 里的折行 = 两窗里的折行」：页面宽按长图那一次的画布宽钉死，
+    /// 但只能覆盖 size——用户自己 @page 里的 margin 与页面高还得留着，否则悬浮窗看着对，
+    /// 拿出去导真 PDF 又不是一回事。
+    /// </summary>
+    [Fact]
+    public void Same_width_paper_overrides_only_the_page_size()
+    {
+        var css = PlaygroundService.BuildPdfCss("@page{size:a2;margin:20mm 15mm}", 1284f, PdfPaper.SameWidth);
+        var spec = AtPageParser.Parse(css, 595.28f, 841.89f);
+        var mV = AtPageParser.ToPoints("20mm");
+        var mH = AtPageParser.ToPoints("15mm");
+
+        Assert.Equal(1284f, spec.PageW);                    // a2 被同宽档换掉
+        Assert.Equal(841.89f, spec.PageH);                  // 高仍按 A4：分页位置才可比
+        Assert.Equal(mV, spec.MarginTop);                   // margin 与页面高都得留着
+        Assert.Equal(mV, spec.MarginBottom);
+        Assert.Equal(mH, spec.MarginLeft);
+        Assert.Equal(1284f - mH - mH, spec.ContentW);        // 与长图口径同一个排版宽
+    }
+
+    [Theory]
+    [InlineData(PdfPaper.A4)]
+    [InlineData(PdfPaper.Letter)]
+    public void Fixed_papers_leave_the_css_alone(PdfPaper paper)
+        => Assert.Equal("@page{margin:1in}", PlaygroundService.BuildPdfCss("@page{margin:1in}", 1284f, paper));
+
+    /// <summary>注入的 @page 必须真的落到页面几何上，而不只是解析器认——MediaBox 是成品 PDF 的口径。</summary>
+    [Fact]
+    public void Same_width_pdf_actually_lands_on_the_requested_page_width()
+    {
+        var css = PlaygroundService.BuildPdfCss("", 1284f, PdfPaper.SameWidth);
+        var pdf = Renderer.RenderPdf("<div style=\"width:100%;height:10px;background:red\"></div>", css);
+
+        var m = Regex.Match(Encoding.ASCII.GetString(pdf), @"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)");
+        Assert.True(m.Success, "PDF 里没找到 MediaBox");
+        Assert.Equal(1284, (int)float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture));
     }
 }

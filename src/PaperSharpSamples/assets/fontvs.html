@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FontVS · 字体对比</title>
+<style>
+  :root {
+    --bg: #1c1a16;
+    --line: #49463f;
+    --ink: #f2efe9;
+    --ink-2: #bab7af;
+    --ink-3: #8a867e;
+    --ink-4: #6f6b64;
+    --cyan: #13ffe1;
+    --cyan-ink: #10231f;
+    --teal: #00483e;
+    --blue: #0075ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  /* ------------------------------ 顶栏 ------------------------------ */
+  .nav { border-bottom: 1px solid var(--line); }
+  .nav-in {
+    width: 842px;
+    margin: 0 auto;
+    height: 84px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; }
+  .brand-mark {
+    width: 30px; height: 32px;
+    background: var(--teal);
+    border-radius: 5px;
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 24px;
+    line-height: 32px;
+    text-align: center;
+  }
+  .brand-name {
+    margin-left: 10px;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 30px;
+    color: var(--ink);
+  }
+  .nav-menu { display: flex; align-items: center; gap: 34px; }
+  .nav-link { font-size: 16px; color: var(--ink); }
+  .btn {
+    background: var(--cyan);
+    color: var(--cyan-ink);
+    font-size: 16px;
+    line-height: 21px;
+    padding: 12px 21px;
+    border-radius: 6px;
+  }
+
+  /* ---------------------------- 筛选区 ------------------------------ */
+  .filters { padding: 83px 64px 43px; }
+  .frow { display: flex; align-items: flex-start; gap: 40px; }
+  .flabel { font-size: 16px; line-height: 20px; color: var(--ink-2); }
+  .flabel .pill {
+    display: inline-block;
+    margin-left: 5px;
+    padding: 1px 6px;
+    background: var(--teal);
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 18px;
+    color: #fffdf9;
+    vertical-align: 1px;
+  }
+  .fitems { display: flex; align-items: flex-end; margin-top: 8px; font-size: 18px; line-height: 34px; color: var(--ink-4); }
+  .fitems .sep { padding: 0 8px; color: var(--ink-4); }
+  .fitems .on { color: var(--ink); border-bottom: 1px solid var(--ink); }
+
+  .pick {
+    width: 271px;
+    margin-top: 8px;
+    border-bottom: 1px solid var(--ink-2);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 18px; line-height: 34px; color: var(--ink);
+  }
+  .entry {
+    width: 339px;
+    margin-top: 8px;
+    border-bottom: 1px solid var(--ink-2);
+    font-size: 18px; line-height: 34px; color: var(--ink);
+  }
+
+  /* 字重滑杆 */
+  .weight { width: 338px; margin-top: 43px; }
+  .wticks { display: flex; justify-content: space-between; font-size: 16px; color: var(--ink-2); }
+  .track { position: relative; width: 338px; height: 8px; margin-top: 22px; background: #efefef; border-radius: 4px; }
+  .fill { position: absolute; left: 0; top: 0; width: 136px; height: 8px; background: var(--blue); border-radius: 4px; }
+  .thumb { position: absolute; left: 122px; top: -5px; width: 18px; height: 18px; background: var(--blue); border-radius: 9px; }
+
+  /* ---------------------------- 字体网格 ---------------------------- */
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+  .cell {
+    height: 193px;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    text-align: center;
+  }
+  .meta { display: flex; align-items: center; justify-content: center; gap: 6px; padding-top: 20px; font-size: 14px; color: var(--ink-3); }
+  .sample { margin-top: 40px; font-size: 48px; line-height: 48px; color: var(--ink); }
+
+  .cell.drop { padding-top: 40px; }
+  .cell.drop .btn { display: inline-block; }
+  .cell.drop .hint { margin-top: 20px; font-size: 15px; color: var(--ink-3); }
+
+  .endnote {
+    grid-column: 2 / 7;
+    background: var(--line);
+    padding: 38px 40px;
+    text-align: left;
+  }
+  .endnote h2 { font-size: 26px; font-weight: 400; color: var(--ink); }
+  .endnote p { margin-top: 14px; font-size: 15px; line-height: 24px; color: #d8d4cb; }
+
+  .f-dengxian { font-family: "DengXian", sans-serif; }
+  .f-fangsong { font-family: "FangSong", serif; }
+  .f-kaiti { font-family: "KaiTi", serif; }
+  .f-jhenghei { font-family: "Microsoft JhengHei", sans-serif; }
+  .f-jhengheiui { font-family: "Microsoft JhengHei UI", sans-serif; }
+  .f-yahei { font-family: "Microsoft YaHei", sans-serif; }
+  .f-yaheiui { font-family: "Microsoft YaHei UI", sans-serif; }
+  .f-notoss { font-family: "Noto Sans SC", sans-serif; }
+  .f-notosr { font-family: "Noto Serif SC", serif; }
+  .f-nsimsun { font-family: "NSimSun", monospace; }
+  .f-simhei { font-family: "SimHei", sans-serif; }
+  .f-simsun { font-family: "SimSun", serif; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-in">
+    <div class="brand">
+      <div class="brand-mark">ff</div>
+      <div class="brand-name">Font VS</div>
+    </div>
+    <div class="nav-menu">
+      <div class="nav-link">字体对比</div>
+      <div class="nav-link">字体解析</div>
+      <div class="nav-link">定价</div>
+      <div class="btn">开始使用</div>
+    </div>
+  </div>
+</header>
+
+<section class="filters">
+  <div class="frow">
+    <div>
+      <div class="flabel">来源</div>
+      <div class="fitems">
+        <div>所有字体</div><div class="sep">/</div><div class="on">已安装</div><div class="sep">/</div><div>已导入</div><div class="sep">/</div><div>Google Fonts</div>
+      </div>
+    </div>
+    <div>
+      <div class="flabel">类别</div>
+      <div class="fitems">
+        <div class="on">全部</div><div class="sep">/</div><div>无衬线&amp;黑体</div><div class="sep">/</div><div>衬线&amp;宋体</div><div class="sep">/</div><div>标题</div><div class="sep">/</div><div>等宽</div><div class="sep">/</div><div>手写体</div><div class="sep">/</div><div>未知</div>
+      </div>
+    </div>
+    <div>
+      <div class="flabel">筛选</div>
+      <div class="fitems">
+        <div>斜体</div><div class="sep">/</div><div>可变</div>
+      </div>
+    </div>
+    <div>
+      <div class="flabel">语言支持<span class="pill">限时免费</span></div>
+      <div class="pick">
+        <div>繁体中文 +1</div>
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="#f2efe9" stroke-width="1.6">
+          <path d="M5 8l5 5 5-5"/>
+        </svg>
+      </div>
+    </div>
+    <div>
+      <div class="flabel">预览文本</div>
+      <div class="entry">测试字体</div>
+    </div>
+  </div>
+
+  <div class="weight">
+    <div class="wticks"><div>最细</div><div>最粗</div></div>
+    <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+  </div>
+</section>
+
+<main class="grid">
+  <div class="cell drop">
+    <div class="btn">选择字体文件</div>
+    <div class="hint">您可以将字体文件拖放到这里</div>
+  </div>
+
+  <div class="cell"><div class="meta">DengXian<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-dengxian">测试字体</div></div>
+  <div class="cell"><div class="meta">FangSong<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-fangsong">测试字体</div></div>
+  <div class="cell"><div class="meta">KaiTi<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-kaiti">测试字体</div></div>
+  <div class="cell"><div class="meta">Microsoft JhengHei<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-jhenghei">测试字体</div></div>
+  <div class="cell"><div class="meta">Microsoft JhengHei UI<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-jhengheiui">测试字体</div></div>
+
+  <div class="cell"><div class="meta">Microsoft YaHei<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-yahei">测试字体</div></div>
+  <div class="cell"><div class="meta">Microsoft YaHei UI<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-yaheiui">测试字体</div></div>
+  <div class="cell"><div class="meta">Noto Sans SC<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-notoss">测试字体</div></div>
+  <div class="cell"><div class="meta">Noto Serif SC<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-notosr">测试字体</div></div>
+  <div class="cell"><div class="meta">NSimSun<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-nsimsun">测试字体</div></div>
+  <div class="cell"><div class="meta">SimHei<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-simhei">测试字体</div></div>
+
+  <div class="cell"><div class="meta">SimSun<svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8a867e" stroke-width="1.8"><path d="M3 4.5h18v12H3z"/><path d="M9 20.5h6"/><path d="M12 16.5v4"/></svg></div><div class="sample f-simsun">测试字体</div></div>
+  <div class="endnote">
+    <h2>FontVS</h2>
+    <p>已到达字体列表末尾。</p>
+    <p>感谢您使用 FontVS。</p>
+  </div>
+</main>
+
+</body>
+</html>

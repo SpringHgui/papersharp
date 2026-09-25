@@ -38,7 +38,8 @@ public static class TextPainter
         SKShader? fillShader = null, SKColor? fillOverride = null)
     {
         var s = f.Style;
-        byte alpha = (byte)Math.Round(Clamp01(s.Opacity) * 255);
+        float op = Clamp01(s.Opacity);
+        byte alpha = (byte)Math.Round(op * 255);
 
         // inline 背景：覆盖文字行高区间（用 frag 字号 + 一点降部），仅纯色
         if (!s.BackgroundColor.Equals(SKColor.Empty))
@@ -47,7 +48,7 @@ public static class TextPainter
             float bgH = Math.Max(f.FontSize, s.LineHeightPx());
             using var bp = new SKPaint
             {
-                Color = s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * (float)alpha)),
+                Color = s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * op)),
                 Style = SKPaintStyle.Fill,
                 IsAntialias = true,
             };
@@ -92,7 +93,7 @@ public static class TextPainter
         if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         float ls = s.LetterSpacing;
         float lineHeight = s.LineHeightPx();
-        float baseline = top + s.FontSize;
+        float baseline = top + InlineLayout.FirstBaselineOffset(s);
 
         for (int k = 0; k < count; k++)
         {

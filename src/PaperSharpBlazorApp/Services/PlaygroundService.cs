@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using PaperSharp;
 using PaperSharp.Css;
@@ -17,6 +18,12 @@ public sealed class PlaygroundService
     /// </summary>
     const int MaxShots = 32;
 
+    /// <summary>PDF 一份几十到几百 KB，且悬浮窗只看最新那份，上限比 PNG 更小。</summary>
+    const int MaxPdfs = 8;
+
+    /// <summary>同宽档的页面高仍取 A4：分页切在哪一行是预览要看的东西，高度不该跟着窗格宽一起变。</summary>
+    const float A4HeightPt = 841.89f;
+
     /// <summary>
     /// 预览 iframe 专用：把滚动条宽度压成 0。
     /// 引擎排版宽 = 传入的 width，浏览器视口宽 = iframe 宽 − 滚动条宽，不藏滚动条就凭空差 15px，
@@ -33,7 +40,16 @@ public sealed class PlaygroundService
     readonly ILogger<PlaygroundService> _log;
     readonly Dictionary<string, Shot> _shots = new();
     readonly Queue<string> _order = new();   // 与 _shots 同锁访问，FIFO 淘汰
+    readonly Dictionary<string, byte[]> _pdfs = new();
+    readonly Queue<string> _pdfOrder = new();
     readonly object _gate = new();
+
+    /// <summary>
+    /// PDF 与长图共用同一份输入，但刻意不同一趟跑：PDF 管线要写字体子集，秒级且吃满 CPU，
+    /// 排进主渲染链路会让「打字→出图」慢一倍。所以它挂在链路外自己跑，只保证同一时刻
+    /// 最多一份在生成——否则连打十个字符就排十趟管线，全在抢同一批核，最后那张反而最晚出来。
+    /// </summary>
+    readonly SemaphoreSlim _pdfGate = new(1, 1);
 
     public PlaygroundService(PlaygroundSamples samples, ILogger<PlaygroundService> log)
     {
@@ -57,6 +73,7 @@ public sealed class PlaygroundService
         return new PlaygroundRender(token, r.PixelWidth, r.PixelHeight,
             r.PixelWidth / r.Scale, r.PixelHeight / r.Scale,
             r.ContentWidth, r.BodyX, r.BodyY,
+            r.MarginLeft, r.MarginTop, r.MarginRight, r.MarginBottom,
             r.Boxes.Count, sw.Elapsed.TotalMilliseconds, r.Bytes.Length);
     }
 
@@ -90,6 +107,59 @@ public sealed class PlaygroundService
     {
         lock (_gate) return _shots.TryGetValue(token, out var shot) ? shot.Png : null;
     }
+
+    public byte[]? PeekPdf(string token)
+    {
+        lock (_gate) return _pdfs.TryGetValue(token, out var b) ? b : null;
+    }
+
+    /// <summary>
+    /// 生成一份 PDF 供悬浮窗实时预览。CPU 密集，故丢线程池并串行走 <see cref="_pdfGate"/>。
+    /// 页面尺寸按 <see cref="AtPageParser"/> 现算一遍再返回——显示的是真跑出来的那个尺寸，
+    /// 不是下拉框的字面值（用户自己的 @page 可能把它改掉）。
+    /// </summary>
+    public async Task<PlaygroundPdf> RenderPdfAsync(string html, string extraCss, float width, PdfPaper paper, CancellationToken ct)
+    {
+        var css = BuildPdfCss(extraCss, width, paper);
+        var (defW, defH) = paper == PdfPaper.Letter ? (612f, 792f) : (595.28f, A4HeightPt);
+        var spec = AtPageParser.Parse(css, defW, defH);
+
+        await _pdfGate.WaitAsync(ct);
+        Stopwatch sw;
+        byte[] bytes;
+        try
+        {
+            sw = Stopwatch.StartNew();
+            bytes = await Task.Run(
+                () => Renderer.RenderPdf(html, css, paper == PdfPaper.Letter ? PageSize.Letter : PageSize.A4,
+                    baseDir: _samples.AssetsDir), ct);
+            sw.Stop();
+        }
+        finally { _pdfGate.Release(); }
+
+        var token = Guid.NewGuid().ToString("N");
+        lock (_gate)
+        {
+            _pdfs[token] = bytes;
+            _pdfOrder.Enqueue(token);
+            while (_pdfOrder.Count > 0 && _pdfs.Count > MaxPdfs)
+                if (_pdfOrder.TryDequeue(out var old)) _pdfs.Remove(old);
+        }
+        _log.LogDebug("pdf {Token}：{W}×{H}pt · {Kb} KB · {Ms} ms",
+            token[..8], spec.PageW, spec.PageH, bytes.Length / 1024.0, sw.Elapsed.TotalMilliseconds);
+        return new PlaygroundPdf(token, spec.PageW, spec.PageH, spec.ContentW, sw.Elapsed.TotalMilliseconds, bytes.Length);
+    }
+
+    /// <summary>
+    /// 同宽档：把页面宽钉成长图那一次的画布宽，两边内容宽才严格相等（1 CSS px = 1 布局点 = 1 PDF 点），
+    /// 悬浮窗里的折行才能逐行对上左侧两窗。追加在末尾——AtPageParser 按出现顺序逐条应用，
+    /// 后来者只覆盖 size，用户自己 @page 里的 margin 与页眉页脚原样保留。
+    /// </summary>
+    public static string BuildPdfCss(string extraCss, float width, PdfPaper paper)
+        => paper == PdfPaper.SameWidth
+            ? extraCss + "\n@page{size:" + width.ToString("0.##", CultureInfo.InvariantCulture)
+                        + "px " + A4HeightPt.ToString("0.##", CultureInfo.InvariantCulture) + "px}"
+            : extraCss;
 
     /// <summary>预览 iframe 解析相对资源用的基址（与引擎的 baseDir 指向同一目录）。</summary>
     public const string AssetUrlBase = "/api/playground/asset/";

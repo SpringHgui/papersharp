@@ -29,7 +29,27 @@ public sealed record PlaygroundRender(
     /// <summary>body 边框盒在 PNG 里的原点；叠加时把 PNG 反向挪这么多，两侧内容原点才重合。</summary>
     float BodyX,
     float BodyY,
+    /// <summary>@page 页边距。浏览器屏幕渲染没有 @page 边距：并排模式按左上平移对位，
+    /// 叠加模式按四边裁掉 PNG 里那圈留白，两侧内容区才严丝合缝。</summary>
+    float PageMarginLeft,
+    float PageMarginTop,
+    float PageMarginRight,
+    float PageMarginBottom,
     int BoxCount,
+    double ElapsedMs,
+    long Bytes);
+
+/// <summary>悬浮窗里可选的纸张档。SameWidth = 页面宽跟随长图的画布宽。</summary>
+public enum PdfPaper { SameWidth, A4, Letter }
+
+/// <summary>一次 PDF 生成的产物：字节按 token 暂存供 iframe 取，其余字段给悬浮窗标题条显示。</summary>
+public sealed record PlaygroundPdf(
+    string Token,
+    /// <summary>实际生效的页面尺寸（点）——与 <c>Renderer.RenderPdf</c> 解析出的同一个 spec，不是选项字面值。</summary>
+    float PageWidth,
+    float PageHeight,
+    /// <summary>排版宽（= 页宽 − 左右页边距）。同宽档下它必须等于长图的 ContentWidth。</summary>
+    float ContentWidth,
     double ElapsedMs,
     long Bytes);
 
