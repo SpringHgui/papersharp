@@ -170,9 +170,32 @@ public static class TextShaper
             var res = shaper.Shape(text, paint);
             return res?.Width ?? paint.MeasureText(text);
         }
-        var fallback = ResolveTypeface(text, tf);
-        using var p2 = new SKPaint { Typeface = fallback, TextSize = size };
-        return p2.MeasureText(text) + KernTable.Of(text, fallback, size) + ls * Math.Max(0, GraphemeCount(text) - 1);
+        // 按「哪个字面覆盖它」切段分别量：整串锁一个回退面会把混合行里的拉丁段也交给 CJK 字体，
+        // advance 差 0.1~0.5em（"abc 中文" @9px 多 1.4px → flex 项内在宽、右/中对齐的 textW 一起偏），
+        // 而绘制端 DrawSpaced 本就是逐字素换面的——量得比画出来的宽。
+        float w = 0; int units = 0;
+        foreach (var (seg, face) in FaceRuns(text, tf))
+        {
+            using var p = new SKPaint { Typeface = face, TextSize = size };
+            w += p.MeasureText(seg) + KernTable.Of(seg, face, size);
+            units += GraphemeCount(seg);
+        }
+        return w + ls * Math.Max(0, units - 1);
+    }
+
+    /// <summary>切成「同一字面」的连续段（以字素为界，与绘制端逐字素回退同口径）。</summary>
+    static IEnumerable<(string Seg, SKTypeface Face)> FaceRuns(string text, SKTypeface tf)
+    {
+        var sb = new StringBuilder();
+        SKTypeface cur = tf;
+        foreach (var g in Graphemes(text))
+        {
+            var gt = ResolveTypeface(g, tf);
+            if (sb.Length > 0 && !ReferenceEquals(gt, cur)) { yield return (sb.ToString(), cur); sb.Clear(); }
+            cur = gt;
+            sb.Append(g);
+        }
+        if (sb.Length > 0) yield return (sb.ToString(), cur);
     }
 
     /// <summary>Shaped 整段绘制（连写形式正确）。返回是否消费了该文本。</summary>
