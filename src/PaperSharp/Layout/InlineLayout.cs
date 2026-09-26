@@ -452,6 +452,8 @@ public static class InlineLayout
         float maxAsc = 0, maxDesc = 0, w = 0;
         foreach (var f in ln.Frags)
         {
+            // 外侧 marker（list-style-position: outside）不撑行盒：见 ComputedStyle.IsListMarker。
+            if (f.Style.IsListMarker) { w += f.Width; continue; }
             var (a, d) = BoxOf(f);
             if (a > maxAsc) maxAsc = a;
             maxDesc = Math.Max(maxDesc, d);

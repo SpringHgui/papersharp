@@ -304,7 +304,7 @@ public static class BoxPainter
         return "solid";
     }
 
-    /// <summary>行内盒背景：只有底色没有边框/阴影，但圆角与盒级装饰同口径（squircle 也跟随）。</summary>
+    /// <summary>行内盒背景：只有底色没有阴影，但圆角与盒级装饰同口径（squircle 也跟随）。</summary>
     public static void PaintInlineBackground(SKCanvas canvas, SKRect r, ComputedStyle s, SKColor color)
     {
         if (r.Width <= 0 || r.Height <= 0) return;
@@ -316,6 +316,26 @@ public static class BoxPainter
             IsAntialias = true,
         };
         DrawRR(canvas, r, CornerRadii(r, s), rounded, rounded && s.CornerShape == "squircle", p);
+    }
+
+    /// <summary>
+    /// 行内盒边框。CSS 规范把 inline 的上下边框列为"效果未定义"，Chrome 照画（代码芯片那一圈 1px 边），
+    /// 故与块盒共用同一套斜接/圆角几何。<paramref name="capLeft"/>/<paramref name="capRight"/> 实现
+    /// <c>box-decoration-break: slice</c>：跨行的行内盒只在整盒的首/末段画竖边，断口处不补。
+    /// </summary>
+    public static void PaintInlineBorder(SKCanvas canvas, SKRect r, ComputedStyle s, float opacity,
+        bool capLeft, bool capRight)
+    {
+        if (s.BorderWidthTop <= 0 && s.BorderWidthBottom <= 0 && s.BorderWidthLeft <= 0 && s.BorderWidthRight <= 0) return;
+        if (capLeft && capRight)
+        {
+            PaintBorder(canvas, r, s, CornerRadii(r, s), HasRadius(s), s.CornerShape == "squircle", opacity);
+            return;
+        }
+        var cut = s.CloneShallow();
+        if (!capLeft) cut.BorderWidthLeft = 0;
+        if (!capRight) cut.BorderWidthRight = 0;
+        PaintBorder(canvas, r, cut, CornerRadii(r, cut), HasRadius(cut), cut.CornerShape == "squircle", opacity);
     }
 
     static void DrawRR(SKCanvas canvas, SKRect r, SKPoint[] radii, bool rounded, bool sq, SKPaint p)

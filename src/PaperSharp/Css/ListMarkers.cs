@@ -97,6 +97,7 @@ public static class ListMarkers
     {
         var s = host.CloneShallow();
         s.Display = "inline";
+        s.IsListMarker = !host.ListStyleInside;   // inside 的 marker 真在行内，照常撑行盒
         s.TextContent = text;
         s.Children = new();
         s.InlinePieces = new();

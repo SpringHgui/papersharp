@@ -226,7 +226,11 @@ public static class Renderer
                 // vertical-align 挪后的那条基线走（<sup> 抬 6.33px 时盒一起抬），而 AlignDY 此前只有
                 // 绘制端（TextPainter/SvgWriter）在读 → 字挪了、盒没挪。实测 m3 的 sup/sub 因此各差
                 // 5.9/4.7px，且作者在 CSS 里显式写 vertical-align:super 也照样不动（判别探针 _probe-va）。
-                Add(f.Style, lineLeft + f.X, baseline + f.AlignDY - f.Ascent, f.Width, f.Ascent + f.Descent);
+                // 元素自己的上下 border+padding 同样要算进盒高：Chrome 给带 1px 边的 code 芯片报 13，
+                // 只报文字内容区 11 就少掉那圈边（绘制口径见 TextPainter.DrawRun）。
+                var st = f.Style;
+                float vt = st.BorderWidthTop + st.PaddingTop, vb = st.BorderWidthBottom + st.PaddingBottom;
+                Add(st, lineLeft + f.X, baseline + f.AlignDY - f.Ascent - vt, f.Width, f.Ascent + f.Descent + vt + vb);
             }
             y += ln.Height;
         }

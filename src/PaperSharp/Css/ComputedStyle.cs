@@ -284,6 +284,10 @@ public sealed class ComputedStyle
     public string ListStyleSpecified = "";
     /// <summary>list-style-image 的 url 原文（已剥掉 <c>url()</c> 与引号）；null = 没有图片符号。</summary>
     public string? ListStyleImage;
+    /// <summary>本样式是 <c>list-style-position: outside</c> 的 marker 盒（ListMarkers 造的克隆）。
+    /// Chrome 里外侧 marker 撑不起行盒：探针 8px 正文 + 12px 图片符号，li 仍 11px 高，而按普通行内
+    /// 替换盒算会把行顶到 14px 并把整列往下推。绘制位置照旧贴着基线，只是不参与行盒高度统计。</summary>
+    public bool IsListMarker;
     /// <summary>::marker 规则对本项 marker 的覆盖（Chrome 只放行 color 与字体族属性）。</summary>
     public MarkerOverride? Marker;
 

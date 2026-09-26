@@ -23,19 +23,47 @@ public static class TextPainter
         float y = contentTop;
         for (int i = 0; i < firstLine && i < lines.Count; i++) y += lines[i].Height;
         int end = Math.Min(lines.Count, firstLine + lineCount);
+        // 行内边框按 box-decoration-break: slice 走：跨行的行内盒只在整盒的首/末片段画竖边。
+        var caps = InlineBorderCaps(lines, firstLine, end);
         for (int i = firstLine; i < end; i++)
         {
             var ln = lines[i];
             float lineLeft = contentLeft + ln.Left;
             float baseline = y + ln.Baseline;
             foreach (var f in ln.Frags)
-                if (f.Text != null) DrawRun(canvas, f, lineLeft + f.X, baseline + f.AlignDY, fillShader, fillOverride);
+            {
+                if (f.Text == null) continue;
+                bool capL = true, capR = true;
+                if (caps != null && caps.TryGetValue(f.Style, out var span))
+                {
+                    capL = ReferenceEquals(span.First, f);
+                    capR = ReferenceEquals(span.Last, f);
+                }
+                DrawRun(canvas, f, lineLeft + f.X, baseline + f.AlignDY, fillShader, fillOverride, capL, capR);
+            }
             y += ln.Height;
         }
     }
 
+    static Dictionary<ComputedStyle, (InlineFrag First, InlineFrag Last)>? InlineBorderCaps(
+        List<LineBox> lines, int firstLine, int end)
+    {
+        Dictionary<ComputedStyle, (InlineFrag First, InlineFrag Last)>? caps = null;
+        for (int i = firstLine; i < end; i++)
+            foreach (var f in lines[i].Frags)
+            {
+                var st = f.Style;
+                if (f.Text == null || f.HostText || st.BorderWidthTop <= 0 && st.BorderWidthBottom <= 0
+                                               && st.BorderWidthLeft <= 0 && st.BorderWidthRight <= 0) continue;
+                caps ??= new(ReferenceEqualityComparer.Instance);
+                if (caps.TryGetValue(st, out var cur)) caps[st] = (cur.First, f);
+                else caps[st] = (f, f);
+            }
+        return caps;
+    }
+
     static void DrawRun(SKCanvas canvas, InlineFrag f, float x, float baseline,
-        SKShader? fillShader = null, SKColor? fillOverride = null)
+        SKShader? fillShader = null, SKColor? fillOverride = null, bool capLeft = true, bool capRight = true)
     {
         var s = f.Style;
         float op = Clamp01(s.Opacity);
@@ -47,13 +75,14 @@ public static class TextPainter
         // （baseline 已由调用方折进 vertical-align 的下移），纵向补元素自己的 padding+border（横向 Width 已含）。
         // 块自身的文字（HostText）一律跳过：它的 Style 就是块样式，铺出来的"行内背景"实为
         // 块底色按块 padding 外扩，会把上一行文字的下半截盖掉（m4 卡片标题被裁的根因）。
-        if (!f.HostText && !s.BackgroundColor.Equals(SKColor.Empty))
+        if (!f.HostText)
         {
             float vTop = s.BorderWidthTop + s.PaddingTop, vBot = s.BorderWidthBottom + s.PaddingBottom;
-            float top = baseline - f.Ascent - vTop;
-            float bgH = f.Ascent + f.Descent + vTop + vBot;
-            BoxPainter.PaintInlineBackground(canvas, new SKRect(x, top, x + f.Width, top + bgH), s,
-                s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * op)));
+            var box = new SKRect(x, baseline - f.Ascent - vTop, x + f.Width, baseline + f.Descent + vBot);
+            if (!s.BackgroundColor.Equals(SKColor.Empty))
+                BoxPainter.PaintInlineBackground(canvas, box, s,
+                    s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * op)));
+            BoxPainter.PaintInlineBorder(canvas, box, s, op, capLeft, capRight);
         }
 
         var typeface = FontManager.Get(s.FontFamily, s.FontWeight);
