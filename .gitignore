@@ -26,3 +26,31 @@ src/PaperSharp.Wasm/smoke.svg
 /extension/papersharp/wasm/
 /extension/fonts/
 /extension/test/out/
+
+# 本地一次性落盘：dotnet build -o 的门禁输出、sweep/对拍明细、探针中间结果
+.gateout/
+.scratch/
+**/.scratch/
+TestResults/
+
+# 仓库根目录被工具写出的结果（下划线前缀 = 一次性脚本/转储；*.json/*.err = boxdiff 与 triage 落盘；png = 对拍截图）
+/_*
+/pb.sh
+/sw.sh
+/bench_*.txt
+/*.json
+/*.err
+/blend-*.png
+/*-m9.png
+
+# 探针工具与它们的输出（boxdiff/boxstats/sweep 等常用工具不带下划线，照常入库）
+tools/_*
+
+# 样例工程里的一次性内容：assets 下 _ 前缀的是判别探针页、拼装碎片、字体字符集转储；bench/pg 是 profiling 原始记录
+src/PaperSharpSamples/assets/**/_*
+src/PaperSharpSamples/bench_*.txt
+src/PaperSharpSamples/pg*.csv
+src/PaperSharpSamples/wt_pg*.csv
+
+# VS / MSBuild 本地用户设置
+*.user

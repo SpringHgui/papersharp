@@ -1,9 +1,0 @@
-[flexdbg] <BODY> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <DIV> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <DIV> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <DIV> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <SPAN> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <DIV> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <DIV> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <DIV> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE
-[flexdbg] <SPAN> raw(flex)='' spec(flex)='' raw(shrink)='' spec(shrink)='' | 简写解析出 shrink=1 → 终值 1 | parsed=FALSE

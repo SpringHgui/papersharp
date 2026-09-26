@@ -1,8 +1,0 @@
-Unhandled exception. System.IO.DirectoryNotFoundException: G:\Github\papersharp\src\PaperSharpBlazorApp\.scratch\bin-pdfprev\Debug\net10.0\src\PaperSharpBlazorApp\
-   at Microsoft.Extensions.FileProviders.PhysicalFileProvider..ctor(String root, ExclusionFilters filters)
-   at Microsoft.Extensions.Hosting.HostBuilder.CreateHostingEnvironment(IConfiguration hostConfiguration)
-   at Microsoft.Extensions.Hosting.HostApplicationBuilder.Initialize(HostApplicationBuilderSettings settings, HostBuilderContext& hostBuilderContext, IHostEnvironment& environment, LoggingBuilder& logging, MetricsBuilder& metrics)
-   at Microsoft.Extensions.Hosting.HostApplicationBuilder..ctor(HostApplicationBuilderSettings settings)
-   at Microsoft.AspNetCore.Builder.WebApplicationBuilder..ctor(WebApplicationOptions options, Action`1 configureDefaults)
-   at Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder(String[] args)
-   at PaperSharpBlazorApp.Program.Main(String[] args) in G:\Github\papersharp\src\PaperSharpBlazorApp\Program.cs:line 12
