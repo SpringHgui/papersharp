@@ -107,6 +107,8 @@ public static class LayoutBuilder
         anon.OffsetTop = anon.OffsetRight = anon.OffsetBottom = anon.OffsetLeft = default;
         anon.BorderWidthTop = anon.BorderWidthRight = anon.BorderWidthBottom = anon.BorderWidthLeft = 0;
         anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
+        anon.BorderRadiusTopLeftY = anon.BorderRadiusTopRightY = anon.BorderRadiusBottomRightY = anon.BorderRadiusBottomLeftY = 0;
+        anon.BorderRadiusPercent = null;
         anon.BackgroundColor = SKColor.Empty;
         anon.Background = null;
         anon.Shadows = null;

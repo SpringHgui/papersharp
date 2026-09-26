@@ -101,6 +101,10 @@ public static class Painter
         if (s.Tag == "input" && s.InputType is "checkbox" or "radio")
             PaintNativeControl(canvas, s, borderRect);
 
+        int imgClip = box.Image != null || box.SvgPicture != null
+            ? BoxPainter.ClipReplacedContent(canvas, borderRect,
+                new SKRect(contentX, contentY, contentX + box.ContentWidth, contentY + box.ContentHeight), s)
+            : -1;
         if (box.Image != null)
         {
             var dst = new SKRect(contentX, contentY, contentX + box.ContentWidth, contentY + box.ContentHeight);
@@ -121,6 +125,7 @@ public static class Painter
             canvas.DrawPicture(box.SvgPicture, sp);
             canvas.Restore();
         }
+        if (imgClip >= 0) canvas.RestoreToCount(imgClip);
 
         if (box.WrappedLines != null)
             TextPainter.DrawLines(canvas, s, box.Typeface, box.WrappedLines, 0, box.WrappedLines.Length,

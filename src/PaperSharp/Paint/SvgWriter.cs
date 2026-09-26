@@ -61,7 +61,7 @@ public static class SvgWriter
         int _id;
         readonly Dictionary<GradientSpec, string> _gradIds = new();
         readonly Dictionary<uint, string> _imgUris = new();
-        readonly Dictionary<(string, string, string, string, string), string> _ovIds = new();
+        readonly Dictionary<(string, string, string, string, string, string), string> _ovIds = new();
 
         public Writer(StringBuilder defs, StringBuilder body) { _defs = defs; _body = body; }
 
@@ -136,16 +136,16 @@ public static class SvgWriter
             if (wrapped) _body.Append($"<g{g}>");
 
             // 背景
-            float rx = UniformRadius(s);
+            var (rx, ry) = UniformRadius(new SKRect(x, y, x + bw, y + bh), s);
             if (s.Background != null)
             {
                 string id = GradientId(s.Background, new SKRect(x, y, x + bw, y + bh));
-                _body.Append(Shape(s, x, y, bw, bh, rx, $"fill=\"url(#{id})\""));
+                _body.Append(Shape(x, y, bw, bh, rx, ry, $"fill=\"url(#{id})\""));
             }
             else if (!s.BackgroundColor.Equals(SKColor.Empty) && s.BackgroundColor.Alpha > 0)
             {
                 var bc = s.BackgroundColor;
-                _body.Append(Shape(s, x, y, bw, bh, rx,
+                _body.Append(Shape(x, y, bw, bh, rx, ry,
                     $"fill=\"{Color(bc)}\" fill-opacity=\"{F4(bc.Alpha / 255f)}\""));
             }
 
@@ -156,7 +156,7 @@ public static class SvgWriter
                 foreach (var sh in s.Shadows)
                 {
                     if (sh.Inset) continue;
-                    _body.Append($"<rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(bw)}\" height=\"{F(bh)}\" rx=\"{F4(rx)}\" " +
+                    _body.Append($"<rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(bw)}\" height=\"{F(bh)}\" rx=\"{F4(rx)}\" ry=\"{F4(ry)}\" " +
                         $"fill=\"none\" style=\"filter:drop-shadow({F(sh.OffsetX)}px {F(sh.OffsetY)}px {F(sh.Blur / 2f)}px {F(sh.Spread)}px {Color(sh.Color)})\"/>");
                 }
             }
@@ -167,11 +167,11 @@ public static class SvgWriter
             {
                 string dash = BoxPainter.DominantDash(s) switch
                 {
-                    "dashed" => $" stroke-dasharray=\"{F4(3 * bt)} {F4(2 * bt)}\"",
-                    "dotted" => $" stroke-dasharray=\"0.01 {F4(bt)}\" stroke-linecap=\"round\"",
+                    "dashed" => $" stroke-dasharray=\"{F4(2 * bt)} {F4(bt)}\"",
+                    "dotted" => $" stroke-dasharray=\"0.01 {F4(2 * bt)}\" stroke-linecap=\"round\"",
                     _ => "",
                 };
-                _body.Append(Shape(s, x + bt / 2, y + bt / 2, bw - bt, bh - bt, Math.Max(0, rx - bt / 2),
+                _body.Append(Shape(x + bt / 2, y + bt / 2, bw - bt, bh - bt, Math.Max(0, rx - bt / 2), Math.Max(0, ry - bt / 2),
                     $"fill=\"none\" stroke=\"{Color(s.BorderColor)}\" stroke-opacity=\"{F4(s.BorderColor.Alpha / 255f)}\" stroke-width=\"{F(bt)}\"{dash}"));
             }
 
@@ -193,23 +193,27 @@ public static class SvgWriter
         /// <summary>overflow 裁剪盒 → &lt;clipPath&gt;。同矩形+同圆角复用一条 def（一整页往往只有几个裁剪祖先）。</summary>
         string OverflowClipId(SKRect r, ComputedStyle owner)
         {
-            float rad = UniformRadius(owner);
-            var key = (F(r.Left), F(r.Top), F(r.Width), F(r.Height), F(rad));
+            var (rx, ry) = UniformRadius(r, owner);
+            var key = (F(r.Left), F(r.Top), F(r.Width), F(r.Height), F(rx), F(ry));
             if (_ovIds.TryGetValue(key, out var hit)) return hit;
             string id = NextId("ov");
             _defs.Append($"<clipPath id=\"{id}\"><rect x=\"{F(r.Left)}\" y=\"{F(r.Top)}\" width=\"{F(r.Width)}\" height=\"{F(r.Height)}\"" +
-                (rad > 0.05f ? $" rx=\"{F(rad)}\" ry=\"{F(rad)}\"" : "") + "/></clipPath>");
+                (rx > 0.05f || ry > 0.05f ? $" rx=\"{F(rx)}\" ry=\"{F(ry)}\"" : "") + "/></clipPath>");
             _ovIds[key] = id;
             return id;
         }
 
-        /// <summary>rect 或圆角不统一时的 path 近似（用 rect + 平均 rx 已足够，这里统一 rect）。</summary>
-        static string Shape(ComputedStyle s, float x, float y, float w, float h, float rx, string fillAttrs) =>
+        /// <summary>rect 或圆角不统一时的 path 近似（用 rect + 平均 rx/ry 已足够，这里统一 rect）。</summary>
+        static string Shape(float x, float y, float w, float h, float rx, float ry, string fillAttrs) =>
             $"<rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(Math.Max(0, w))}\" height=\"{F(Math.Max(0, h))}\"" +
-            (rx > 0.05f ? $" rx=\"{F4(rx)}\"" : "") + $" {fillAttrs}/>";
+            ((rx > 0.05f || ry > 0.05f) ? $" rx=\"{F4(rx)}\" ry=\"{F4(ry)}\"" : "") + $" {fillAttrs}/>";
 
-        static float UniformRadius(ComputedStyle s) =>
-            (s.BorderRadiusTopLeft + s.BorderRadiusTopRight + s.BorderRadiusBottomRight + s.BorderRadiusBottomLeft) / 4f;
+        /// <summary>SVG 的 rect 只有一对 rx/ry，取四角两轴的均值做近似（百分比按本盒宽高折算后再平均）。</summary>
+        static (float rx, float ry) UniformRadius(SKRect r, ComputedStyle s)
+        {
+            var q = BoxPainter.CornerRadii(r, s);
+            return ((q[0].X + q[1].X + q[2].X + q[3].X) / 4f, (q[0].Y + q[1].Y + q[2].Y + q[3].Y) / 4f);
+        }
 
         string EffectStyle(ComputedStyle s)
         {

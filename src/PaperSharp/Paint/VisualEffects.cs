@@ -80,20 +80,14 @@ public static class VisualEffects
     public static int ClipOverflow(SKCanvas canvas, SKRect box, ComputedStyle owner)
     {
         int save = canvas.Save();
-        float tl = owner.BorderRadiusTopLeft, tr = owner.BorderRadiusTopRight,
-              br = owner.BorderRadiusBottomRight, bl = owner.BorderRadiusBottomLeft;
-        // CSS 规则：相邻两半径之和超过边长时，四角按同一比例缩小到刚好放下
-        float f = 1f;
-        if (tl + tr > 0) f = Math.Min(f, box.Width / (tl + tr));
-        if (bl + br > 0) f = Math.Min(f, box.Width / (bl + br));
-        if (tl + bl > 0) f = Math.Min(f, box.Height / (tl + bl));
-        if (tr + br > 0) f = Math.Min(f, box.Height / (tr + br));
-        if (f < 1f) { tl *= f; tr *= f; br *= f; bl *= f; }
-        if (tl > 0.01f || tr > 0.01f || br > 0.01f || bl > 0.01f)
+        // 逐角 x/y 两轴（椭圆角）；百分比按裁剪盒自身宽高折算（无 border 时与边框盒同值）。
+        // 相邻半径放不下时由 SKRoundRect 自己等比收缩，正是 CSS 规则。
+        var radii = BoxPainter.CornerRadii(box, owner);
+        if (radii.Any(p => p.X > 0.01f || p.Y > 0.01f))
         {
             using var path = new SKPath();
             var rr = new SKRoundRect();
-            rr.SetRectRadii(box, new[] { new SKPoint(tl, tl), new SKPoint(tr, tr), new SKPoint(br, br), new SKPoint(bl, bl) });
+            rr.SetRectRadii(box, radii);
             path.AddRoundRect(rr);
             canvas.ClipPath(path);
         }
@@ -147,13 +141,13 @@ public static class VisualEffects
         float sx = m.ScaleX > 0 ? m.ScaleX : 1f;
         canvas.Save();
         canvas.SetMatrix(SKMatrix.Identity);
-        float tl = s.BorderRadiusTopLeft * sx, tr = s.BorderRadiusTopRight * sx,
-              br = s.BorderRadiusBottomRight * sx, bl = s.BorderRadiusBottomLeft * sx;
-        if (tl > 0 || tr > 0 || br > 0 || bl > 0)
+        var radii = BoxPainter.CornerRadii(cssRect, s);
+        for (int i = 0; i < 4; i++) radii[i] = new SKPoint(radii[i].X * sx, radii[i].Y * sx);
+        if (radii.Any(p => p.X > 0 || p.Y > 0))
         {
             using var path = new SKPath();
             var rr = new SKRoundRect();
-            rr.SetRectRadii(dev, new[] { new SKPoint(tl, tl), new SKPoint(tr, tr), new SKPoint(br, br), new SKPoint(bl, bl) });
+            rr.SetRectRadii(dev, radii);
             path.AddRoundRect(rr);
             canvas.ClipPath(path);
         }

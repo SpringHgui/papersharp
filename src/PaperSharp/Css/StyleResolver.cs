@@ -71,7 +71,7 @@ public static class StyleResolver
     // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
     // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
     // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
-    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
+    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "border-radius", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
         // 盒对齐（Box Alignment）新写法的属性：AngleSharp 只认 flexbox 时代的关键字集，
         // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
         // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
@@ -865,6 +865,8 @@ public static class StyleResolver
         anon.PaddingTop = anon.PaddingRight = anon.PaddingBottom = anon.PaddingLeft = 0;
         anon.BorderWidthTop = anon.BorderWidthRight = anon.BorderWidthBottom = anon.BorderWidthLeft = 0;
         anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
+        anon.BorderRadiusTopLeftY = anon.BorderRadiusTopRightY = anon.BorderRadiusBottomRightY = anon.BorderRadiusBottomLeftY = 0;
+        anon.BorderRadiusPercent = null;
         anon.BackgroundColor = SKColor.Empty;
         anon.Background = null;
         anon.Shadows = null;
@@ -1415,10 +1417,33 @@ public static class StyleResolver
 
         // 视觉
         s.Opacity = CssValueParser.ParseOpacity(Raw("opacity"));
-        s.BorderRadiusTopLeft = FirstRadius(Raw("border-top-left-radius"), s.FontSize);
-        s.BorderRadiusTopRight = FirstRadius(Raw("border-top-right-radius"), s.FontSize);
-        s.BorderRadiusBottomRight = FirstRadius(Raw("border-bottom-right-radius"), s.FontSize);
-        s.BorderRadiusBottomLeft = FirstRadius(Raw("border-bottom-left-radius"), s.FontSize);
+        // border-radius 每角两轴（绝对 + 百分比）。百分比留到绘制期按边框盒宽高折算，此刻还没有盒尺寸。
+        // AngleSharp 的 computed 会把百分比按**视口**尺寸折成定值 px（实测 120px 宽的盒上 50% 出 397px），
+        // 故一律以作者原样串为准、computed 兜底；长写法与简写都读，后读到简写时整体覆盖。
+        var radAbs = new float[8];
+        var radPct = new float[8];
+        string[] radiusProps =
+        {
+            "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
+        };
+        for (int c = 0; c < 4; c++)
+        {
+            var authored = FirstNonEmpty(Inline(radiusProps[c]), Lookup(radiusProps[c], element, "", ctx));
+            var (ax, ay, px, py) = ReadRadius(authored.Length > 0 ? authored : Raw(radiusProps[c]), s.FontSize);
+            radAbs[c * 2] = ax; radAbs[c * 2 + 1] = ay;
+            radPct[c * 2] = px; radPct[c * 2 + 1] = py;
+        }
+        var radiusShorthand = FirstNonEmpty(Inline("border-radius"), Lookup("border-radius", element, "", ctx));
+        if (ParseRadii(radiusShorthand, s.FontSize) is { } ra)
+        {
+            Array.Copy(ra.abs, radAbs, 8);
+            Array.Copy(ra.pct, radPct, 8);
+        }
+        s.BorderRadiusTopLeft = radAbs[0]; s.BorderRadiusTopRight = radAbs[2];
+        s.BorderRadiusBottomRight = radAbs[4]; s.BorderRadiusBottomLeft = radAbs[6];
+        s.BorderRadiusTopLeftY = radAbs[1]; s.BorderRadiusTopRightY = radAbs[3];
+        s.BorderRadiusBottomRightY = radAbs[5]; s.BorderRadiusBottomLeftY = radAbs[7];
+        if (radPct.Any(p => p > 0)) s.BorderRadiusPercent = radPct;
         // AngleSharp 会把 `0 0 0 2px` 重序列化成 `0 0 2px`（blur 与 spread 串位，实测三重阴影那格的
         // 2px 外环被当成 2px 模糊），声明值视图同样中招。故一律取作者原样串：内联 style 属性 >
         // 原始 CSS 兜底表 > 声明值。em 也按本元素字号折算。
@@ -1547,12 +1572,51 @@ public static class StyleResolver
         return px <= 0 ? 0 : Math.Max(1, MathF.Floor(px));
     }
 
-    static float FirstRadius(string v, float fontSize)
+    /// <summary>border-radius **长写法**（单角）：`x轴 [y轴]`，两轴各为长度或百分比（缺省 y 同 x）。</summary>
+    static (float ax, float ay, float px, float py) ReadRadius(string v, float fontSize)
     {
-        var tok = FirstToken(v);
-        var px = CssValueParser.ToPixels(tok, fontSize);
-        return px > 0 ? px : 0;
+        var toks = RadiusTokens(v);
+        if (toks.Length == 0) return (0, 0, 0, 0);
+        var (ax, px) = RadiusAxis(toks[0], fontSize);
+        if (toks.Length < 2) return (ax, ax, px, px);
+        var (ay, py) = RadiusAxis(toks[1], fontSize);
+        return (ax, ay, px, py);
     }
+
+    /// <summary>border-radius **简写**：`x列表 [/ y列表]`，每个列表 1~4 值按角落规则展开。
+    /// 返回八元组，顺序 TLx,TLy,TRx,TRy,BRx,BRy,BLx,BLy（百分比为小数）；串为空或非法则 null。</summary>
+    static (float[] abs, float[] pct)? ParseRadii(string decl, float fontSize)
+    {
+        foreach (var kw in new[] { "inherit", "initial", "unset", "revert" })
+            if (decl.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                return null;      // 关键字值展不开，交回 computed 视图
+        var slash = decl.IndexOf('/');
+        var xt = RadiusTokens(slash < 0 ? decl : decl[..slash]);
+        var yt = slash < 0 ? xt : RadiusTokens(decl[(slash + 1)..]);
+        if (xt.Length == 0 || xt.Length > 4 || yt.Length == 0 || yt.Length > 4) return null;
+        var abs = new float[8];
+        var pct = new float[8];
+        for (int corner = 0; corner < 4; corner++)
+        {
+            // 角落展开：1→四角同值；2→TL/BR 与 TR/BL 交替；3→TL/TR/BR 顺次、BL 同 TR；4→顺次
+            var (ax, px) = RadiusAxis(xt[Src(corner, xt.Length)], fontSize);
+            var (ay, py) = RadiusAxis(yt[Src(corner, yt.Length)], fontSize);
+            abs[corner * 2] = ax; pct[corner * 2] = px;
+            abs[corner * 2 + 1] = ay; pct[corner * 2 + 1] = py;
+        }
+        return (abs, pct);
+
+        static int Src(int corner, int len) =>
+            len switch { 1 => 0, 2 => corner % 2, 3 => corner == 3 ? 1 : corner, _ => corner };
+    }
+
+    static (float abs, float pct) RadiusAxis(string tok, float fontSize) =>
+        tok.EndsWith("%", StringComparison.Ordinal)
+            ? (0, Math.Max(0, CssValueParser.ToPixels(tok[..^1], fontSize)) / 100f)
+            : (Math.Max(0, CssValueParser.ToPixels(tok, fontSize)), 0);
+
+    static string[] RadiusTokens(string v) =>
+        v.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
     /// <summary>字号：支持 %（相对父字号）、em/rem（父字号基准）、px/pt；无效则继承父字号。</summary>
     static float ParseFontSize(string v, float parentFontSize)

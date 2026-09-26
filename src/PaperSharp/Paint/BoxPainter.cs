@@ -14,9 +14,8 @@ public static class BoxPainter
         float opacity = s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity;
         if (opacity <= 0.001f) return;
 
-        bool rounded = s.BorderRadiusTopLeft > 0 || s.BorderRadiusTopRight > 0
-                    || s.BorderRadiusBottomRight > 0 || s.BorderRadiusBottomLeft > 0;
-        var radii = ClampRadii(r, s);
+        bool rounded = HasRadius(s);
+        var radii = CornerRadii(r, s);
         bool sq = rounded && s.CornerShape == "squircle";
 
         // 外阴影在背景之下、内阴影在背景之上（CSS 的层叠次序），多层时第一条画在最上层 → 全部倒序铺
@@ -46,8 +45,9 @@ public static class BoxPainter
                                 r.Right - s.BorderWidthRight, r.Bottom - s.BorderWidthBottom);
             float bw = Math.Max(Math.Max(s.BorderWidthTop, s.BorderWidthRight), Math.Max(s.BorderWidthBottom, s.BorderWidthLeft));
             var pradii = ScaleRadii(radii, bw);
+            bool inRound = rounded && AnyRadius(pradii);
             for (int i = ins.Count - 1; i >= 0; i--)
-                if (ins[i].Inset) PaintInsetShadow(canvas, pr, ins[i], pradii, rounded && pradii.Any(p => p.X > 0), sq, opacity);
+                if (ins[i].Inset) PaintInsetShadow(canvas, pr, ins[i], pradii, inRound, inRound && sq, opacity);
         }
 
         // 边框
@@ -92,6 +92,55 @@ public static class BoxPainter
         if (rounded) path.AddRoundRect(MakeRR(r, radii));
         else path.AddRect(r);
         return path;
+    }
+
+    /// <summary>四角半径（TL/TR/BR/BL，每角 x/y 两轴）：border-radius 的百分比按本盒边框盒的宽高在此折算。
+    /// 相邻半径之和超过边长时由 SKRoundRect / squircle 自己等比收缩（CSS 规则）。</summary>
+    public static SKPoint[] CornerRadii(SKRect r, ComputedStyle s)
+    {
+        float[]? p = s.BorderRadiusPercent;
+        var abs = new[]
+        {
+            new SKPoint(s.BorderRadiusTopLeft, s.BorderRadiusTopLeftY),
+            new SKPoint(s.BorderRadiusTopRight, s.BorderRadiusTopRightY),
+            new SKPoint(s.BorderRadiusBottomRight, s.BorderRadiusBottomRightY),
+            new SKPoint(s.BorderRadiusBottomLeft, s.BorderRadiusBottomLeftY),
+        };
+        if (p == null) return abs;
+        float w = Math.Max(0, r.Width), h = Math.Max(0, r.Height);
+        for (int i = 0; i < 4; i++)
+        {
+            float px = p[i * 2], py = p[i * 2 + 1];
+            if (px > 0) abs[i].X += px * w;
+            if (py > 0) abs[i].Y += py * h;
+        }
+        return abs;
+    }
+
+    /// <summary>盒上是否写过任何 border-radius（含只在百分比里的角）。</summary>
+    public static bool HasRadius(ComputedStyle s) => s.BorderRadiusPercent != null
+        || s.BorderRadiusTopLeft > 0 || s.BorderRadiusTopRight > 0 || s.BorderRadiusBottomRight > 0 || s.BorderRadiusBottomLeft > 0
+        || s.BorderRadiusTopLeftY > 0 || s.BorderRadiusTopRightY > 0 || s.BorderRadiusBottomRightY > 0 || s.BorderRadiusBottomLeftY > 0;
+
+    /// <summary>图片/SVG 这类替换内容要裁进**内容盒的圆角**：CSS 口径是角半径逐轴减去它外面的边框与内边距
+    /// （下限 0），所以 12px 圆角 + 3px 边框的图，可见圆角是 9px。返回 canvas.Save() 的层号，调用方 Restore。</summary>
+    public static int ClipReplacedContent(SKCanvas canvas, SKRect r, SKRect dst, ComputedStyle s)
+    {
+        int save = canvas.Save();
+        if (!HasRadius(s)) return save;
+        var rad = CornerRadii(r, s);
+        float hl = s.BorderWidthLeft + s.PaddingLeft, hr = s.BorderWidthRight + s.PaddingRight;
+        float vt = s.BorderWidthTop + s.PaddingTop, vb = s.BorderWidthBottom + s.PaddingBottom;
+        static SKPoint Shrink(SKPoint p, float hx, float vy)
+            => new(Math.Max(0, p.X - hx), Math.Max(0, p.Y - vy));
+        var c = new[]
+        {
+            Shrink(rad[0], hl, vt), Shrink(rad[1], hr, vt), Shrink(rad[2], hr, vb), Shrink(rad[3], hl, vb),
+        };
+        if (c.All(p => p.X <= 0 && p.Y <= 0)) return save;
+        using var outline = BoxOutline(dst, c, true, s.CornerShape == "squircle");
+        canvas.ClipPath(outline, antialias: true);
+        return save;
     }
 
     static void PaintShadow(SKCanvas canvas, SKRect r, ComputedStyle s, BoxShadow sh, SKPoint[] radii, bool rounded, bool sq, float opacity)
@@ -259,15 +308,14 @@ public static class BoxPainter
     public static void PaintInlineBackground(SKCanvas canvas, SKRect r, ComputedStyle s, SKColor color)
     {
         if (r.Width <= 0 || r.Height <= 0) return;
-        bool rounded = s.BorderRadiusTopLeft > 0 || s.BorderRadiusTopRight > 0
-                    || s.BorderRadiusBottomRight > 0 || s.BorderRadiusBottomLeft > 0;
+        bool rounded = HasRadius(s);
         using var p = new SKPaint
         {
             Color = color,
             Style = SKPaintStyle.Fill,
             IsAntialias = true,
         };
-        DrawRR(canvas, r, ClampRadii(r, s), rounded, rounded && s.CornerShape == "squircle", p);
+        DrawRR(canvas, r, CornerRadii(r, s), rounded, rounded && s.CornerShape == "squircle", p);
     }
 
     static void DrawRR(SKCanvas canvas, SKRect r, SKPoint[] radii, bool rounded, bool sq, SKPaint p)
@@ -348,19 +396,8 @@ public static class BoxPainter
         return rr;
     }
 
-    /// <summary>取四角半径并夹到不超过盒子短边的一半。</summary>
-    static SKPoint[] ClampRadii(SKRect r, ComputedStyle s)
-    {
-        float max = Math.Min(r.Width, r.Height) / 2f;
-        float F(float v) => v > max ? max : v;
-        return new[]
-        {
-            new SKPoint(F(s.BorderRadiusTopLeft), F(s.BorderRadiusTopLeft)),
-            new SKPoint(F(s.BorderRadiusTopRight), F(s.BorderRadiusTopRight)),
-            new SKPoint(F(s.BorderRadiusBottomRight), F(s.BorderRadiusBottomRight)),
-            new SKPoint(F(s.BorderRadiusBottomLeft), F(s.BorderRadiusBottomLeft)),
-        };
-    }
+    /// <summary>inset 阴影的环形状：只要任一角有半径就走圆角（椭圆角的 y 分量也算）。</summary>
+    static bool AnyRadius(SKPoint[] radii) => radii.Any(p => p.X > 0 || p.Y > 0);
 
     static SKPoint[] ScaleRadii(SKPoint[] radii, float shrink)
     {

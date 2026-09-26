@@ -51,24 +51,30 @@ public static class PagePainter
 
             float cx = it.X + s.BorderWidthLeft + s.PaddingLeft;
             float cy = it.Y + s.BorderWidthTop + s.PaddingTop;
-            if (it.Box.Image != null)
+            if (it.Box.Image != null || it.Box.SvgPicture != null)
             {
-                var dst = new SKRect(cx, cy, cx + it.Box.ContentWidth, cy + it.Box.ContentHeight);
-                byte a = (byte)Math.Round((s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity) * 255);
-                using var ip = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High, Color = new SKColor(255, 255, 255, a) };
-                canvas.DrawImage(it.Box.Image, dst, ip);
-            }
-            else if (it.Box.SvgPicture != null)
-            {
-                var dst = new SKRect(cx, cy, cx + it.Box.ContentWidth, cy + it.Box.ContentHeight);
-                canvas.Save();
-                canvas.Translate(dst.Left, dst.Top);
-                float pw = it.Box.SvgPicture.CullRect.Width, ph = it.Box.SvgPicture.CullRect.Height;
-                if (pw > 0 && ph > 0) canvas.Scale(dst.Width / pw, dst.Height / ph);
-                byte a = (byte)Math.Round((s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity) * 255);
-                using var sp = new SKPaint { IsAntialias = true, Color = new SKColor(255, 255, 255, a) };
-                canvas.DrawPicture(it.Box.SvgPicture, sp);
-                canvas.Restore();
+                int clipSave = BoxPainter.ClipReplacedContent(canvas, r,
+                    new SKRect(cx, cy, cx + it.Box.ContentWidth, cy + it.Box.ContentHeight), s);
+                if (it.Box.Image != null)
+                {
+                    var dst = new SKRect(cx, cy, cx + it.Box.ContentWidth, cy + it.Box.ContentHeight);
+                    byte a = (byte)Math.Round((s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity) * 255);
+                    using var ip = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High, Color = new SKColor(255, 255, 255, a) };
+                    canvas.DrawImage(it.Box.Image, dst, ip);
+                }
+                else
+                {
+                    var dst = new SKRect(cx, cy, cx + it.Box.ContentWidth, cy + it.Box.ContentHeight);
+                    canvas.Save();
+                    canvas.Translate(dst.Left, dst.Top);
+                    float pw = it.Box.SvgPicture!.CullRect.Width, ph = it.Box.SvgPicture.CullRect.Height;
+                    if (pw > 0 && ph > 0) canvas.Scale(dst.Width / pw, dst.Height / ph);
+                    byte a = (byte)Math.Round((s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity) * 255);
+                    using var sp = new SKPaint { IsAntialias = true, Color = new SKColor(255, 255, 255, a) };
+                    canvas.DrawPicture(it.Box.SvgPicture, sp);
+                    canvas.Restore();
+                }
+                canvas.RestoreToCount(clipSave);
             }
         }
 

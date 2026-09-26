@@ -196,6 +196,13 @@ public sealed class ComputedStyle
     /// <summary>box-shadow 的每一层（作者书写序，第一条画在最上层）。inset 层画在盒内。</summary>
     public List<BoxShadow>? Shadows;
     public float BorderRadiusTopLeft, BorderRadiusTopRight, BorderRadiusBottomRight, BorderRadiusBottomLeft;
+    /// <summary>border-radius 每角的 **y 轴**半径（绝对部分，px）。x 轴用上面四个字段；两轴不等即椭圆角
+    /// ——CSS 的 `border-radius:50%` 作用在长方盒上就是椭圆，只存一个值会退化成胶囊。</summary>
+    public float BorderRadiusTopLeftY, BorderRadiusTopRightY, BorderRadiusBottomRightY, BorderRadiusBottomLeftY;
+    /// <summary>border-radius 的百分比分量，顺序 TLx,TLy,TRx,TRy,BRx,BRy,BLx,BLy（小数）。
+    /// 百分比按**边框盒**的宽/高折算，而样式阶段还没有盒尺寸，故留到绘制期由 BoxPainter.CornerRadii 落地。
+    /// null = 一条百分比都没写过。</summary>
+    public float[]? BorderRadiusPercent;
     public float Opacity = 1f;
 
     // 视觉增强（M3）
