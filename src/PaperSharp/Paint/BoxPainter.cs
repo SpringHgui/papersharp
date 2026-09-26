@@ -19,8 +19,12 @@ public static class BoxPainter
         var radii = ClampRadii(r, s);
         bool sq = rounded && s.CornerShape == "squircle";
 
-        if (s.Shadows != null)
-            foreach (var sh in s.Shadows) PaintShadow(canvas, r, s, sh, radii, rounded, sq, opacity);
+        // 外阴影在背景之下、内阴影在背景之上（CSS 的层叠次序），多层时第一条画在最上层 → 全部倒序铺
+        if (s.Shadows is { Count: > 0 } layers)
+        {
+            for (int i = layers.Count - 1; i >= 0; i--)
+                if (!layers[i].Inset) PaintShadow(canvas, r, s, layers[i], radii, rounded, sq, opacity);
+        }
 
         // 背景（background-clip:text 时不铺满盒矩形——改由文字承载，见 Painter）
         bool hasBg = !backgroundClippedToText && (!s.BackgroundColor.Equals(SKColor.Empty) || s.Background != null);
@@ -34,8 +38,60 @@ public static class BoxPainter
             shader?.Dispose();
         }
 
+        // 内阴影：铺在背景之上、边框之下
+        if (s.Shadows is { Count: > 0 } ins)
+        {
+            // CSS：inset 阴影的形状与裁切都走 **padding box**（外阴影才贴着 border box）。
+            var pr = new SKRect(r.Left + s.BorderWidthLeft, r.Top + s.BorderWidthTop,
+                                r.Right - s.BorderWidthRight, r.Bottom - s.BorderWidthBottom);
+            float bw = Math.Max(Math.Max(s.BorderWidthTop, s.BorderWidthRight), Math.Max(s.BorderWidthBottom, s.BorderWidthLeft));
+            var pradii = ScaleRadii(radii, bw);
+            for (int i = ins.Count - 1; i >= 0; i--)
+                if (ins[i].Inset) PaintInsetShadow(canvas, pr, ins[i], pradii, rounded && pradii.Any(p => p.X > 0), sq, opacity);
+        }
+
         // 边框
         PaintBorder(canvas, r, s, radii, rounded, sq, opacity);
+    }
+
+    /// <summary>inset box-shadow：把"盒形之外"的一圈涂成阴影色，再裁进盒内 —— 等价于内边缘往里的投影。</summary>
+    static void PaintInsetShadow(SKCanvas canvas, SKRect r, BoxShadow sh, SKPoint[] radii, bool rounded, bool sq, float opacity)
+    {
+        float sigma = sh.Blur / 2f;
+        var hole = new SKRect(r.Left + sh.OffsetX + sh.Spread, r.Top + sh.OffsetY + sh.Spread,
+                              r.Right + sh.OffsetX - sh.Spread, r.Bottom + sh.OffsetY - sh.Spread);
+
+        // 环形不用布尔运算：一条路径里先描外框再描内孔，EvenOdd 填充天然得到"外框减内孔"。
+        // 外框要远大于盒子，模糊后的外边缘才不会漏进可见区（可见区只有内边缘那一圈）。
+        float pad = Math.Max(r.Width, r.Height);
+        using var ring = new SKPath { FillType = SKPathFillType.EvenOdd };
+        ring.AddRect(new SKRect(r.Left - pad, r.Top - pad, r.Right + pad, r.Bottom + pad));
+        if (sq) ring.AddPath(MakeSquirclePath(hole, radii));
+        else if (rounded) ring.AddRoundRect(MakeRR(hole, radii));
+        else ring.AddRect(hole);
+
+        using var clip = BoxOutline(r, radii, rounded, sq);
+        using var p = new SKPaint
+        {
+            Color = sh.Color.WithAlpha((byte)Math.Round(sh.Color.Alpha * opacity)),
+            Style = SKPaintStyle.Fill,
+            IsAntialias = true,
+        };
+        if (sigma > 0.3f) p.ImageFilter = SKImageFilter.CreateBlur(sigma, sigma);
+        int save = canvas.Save();
+        canvas.ClipPath(clip, antialias: true);
+        canvas.DrawPath(ring, p);
+        canvas.RestoreToCount(save);
+    }
+
+    /// <summary>盒形轮廓（圆角 / squircle / 直角矩形）。</summary>
+    static SKPath BoxOutline(SKRect r, SKPoint[] radii, bool rounded, bool sq)
+    {
+        if (sq) return MakeSquirclePath(r, radii);
+        var path = new SKPath();
+        if (rounded) path.AddRoundRect(MakeRR(r, radii));
+        else path.AddRect(r);
+        return path;
     }
 
     static void PaintShadow(SKCanvas canvas, SKRect r, ComputedStyle s, BoxShadow sh, SKPoint[] radii, bool rounded, bool sq, float opacity)
@@ -60,36 +116,42 @@ public static class BoxPainter
 
         if (!rounded)
         {
+            // CSS 边框是**斜接梯形**：每条边一个四边形，外缘占满整条边，内缘按相邻两边收缩，
+            // 四角 45° 相接。只有这套几何才解释得通两件事：① 0×0 盒 + 三条透明边 = CSS 三角形；
+            // ② groove/ridge/inset/outset 的明暗分界沿斜接线走（重叠矩形画法两头都做不到）。
             using var p = new SKPaint { Style = SKPaintStyle.Fill, IsAntialias = true };
-            Side(true, r.Top, r.Bottom, r.Left, r.Right, t, s.BorderStyleTop, s.BorderColorTop);
-            Side(true, r.Bottom - b, r.Bottom, r.Left, r.Right, b, s.BorderStyleBottom, s.BorderColorBottom);
-            Side(false, r.Top, r.Bottom, r.Left, r.Left + l, l, s.BorderStyleLeft, s.BorderColorLeft);
-            Side(false, r.Top, r.Bottom, r.Right - rt, r.Right, rt, s.BorderStyleRight, s.BorderColorRight);
-            return;
-
-            // 条带左上角恒为 (a0, band0)：横边沿 x 铺满 [a0,a1]、厚 w；竖边沿 y 铺满 [band0,band1]、厚 w。
-            // 虚线描条带中线（横边 y=band0+w/2，竖边 x=a0+w/2）。
-            void Side(bool horizontal, float band0, float band1, float a0, float a1, float w, string style, SKColor raw)
+            for (int side = 0; side < 4; side++)
             {
-                if (w <= 0) return;
+                float w = side switch { 0 => t, 1 => rt, 2 => b, _ => l };
+                string style = side switch { 0 => s.BorderStyleTop, 1 => s.BorderStyleRight, 2 => s.BorderStyleBottom, _ => s.BorderStyleLeft };
+                SKColor raw = side switch { 0 => s.BorderColorTop, 1 => s.BorderColorRight, 2 => s.BorderColorBottom, _ => s.BorderColorLeft };
+                if (w <= 0 || style is "none" or "hidden") continue;
                 var col = raw.WithAlpha((byte)Math.Round(raw.Alpha * opacity));
-                var eff = DashEffect(style, w);
-                if (eff == null)
+                var e = EdgePts(side, r, t, rt, b, l);
+                if (style is "dashed" or "dotted")
                 {
-                    p.Color = col;
-                    if (horizontal) canvas.DrawRect(a0, band0, a1 - a0, w, p);
-                    else canvas.DrawRect(a0, band0, w, band1 - band0, p);
-                    return;
+                    // 虚线沿梯形中线走（斜接后中线两端自然内缩）
+                    var m0 = Mid(e, 0);
+                    var m1 = Mid(e, 1);
+                    float len = MathF.Sqrt((m1.X - m0.X) * (m1.X - m0.X) + (m1.Y - m0.Y) * (m1.Y - m0.Y));
+                    var (on, off) = DashPattern(style, w, len);
+                    using var sp = new SKPaint
+                    {
+                        Color = col, Style = SKPaintStyle.Stroke, StrokeWidth = w,
+                        IsAntialias = true, PathEffect = SKPathEffect.CreateDash(new[] { on, off }, 0),
+                        StrokeCap = style == "dotted" ? SKStrokeCap.Round : SKStrokeCap.Butt,
+                    };
+                    canvas.DrawLine(m0, m1, sp);
+                    continue;
                 }
-                using var sp = new SKPaint
+                foreach (var (f0, f1, c) in Stripes(style, col, lit: side is 0 or 3))
                 {
-                    Color = col, Style = SKPaintStyle.Stroke, StrokeWidth = w,
-                    IsAntialias = true, PathEffect = eff,
-                    StrokeCap = style == "dotted" ? SKStrokeCap.Round : SKStrokeCap.Butt,
-                };
-                if (horizontal) canvas.DrawLine(a0, band0 + w / 2, a1, band0 + w / 2, sp);
-                else canvas.DrawLine(a0 + w / 2, band0, a0 + w / 2, band1, sp);
+                    using var path = BandPath(e, f0, f1);
+                    p.Color = c;
+                    canvas.DrawPath(path, p);
+                }
             }
+            return;
         }
 
         // 圆角边框：描一条内缩的圆角矩形（四边取最大宽度做近似）。整圈只有一条描边，
@@ -111,11 +173,79 @@ public static class BoxPainter
         canvas.DrawRoundRect(rr, stroke);
     }
 
-    /// <summary>dashed/dotted 的虚线段（浏览器近似：dash≈3×宽、gap≈2×宽；点距≈宽），其余样式返回 null=实线。</summary>
+    /// <summary>一条边的斜接四边形：外缘两点 o0/o1 + 对应的内缘两点 i0/i1（沿盒顺时针：上→右→下→左）。</summary>
+    static (SKPoint o0, SKPoint o1, SKPoint i0, SKPoint i1) EdgePts(int side, SKRect r, float t, float rt, float b, float l)
+        => side switch
+        {
+            0 => (new(r.Left, r.Top), new(r.Right, r.Top), new(r.Left + l, r.Top + t), new(r.Right - rt, r.Top + t)),
+            1 => (new(r.Right, r.Top), new(r.Right, r.Bottom), new(r.Right - rt, r.Top + t), new(r.Right - rt, r.Bottom - b)),
+            2 => (new(r.Right, r.Bottom), new(r.Left, r.Bottom), new(r.Right - rt, r.Bottom - b), new(r.Left + l, r.Bottom - b)),
+            _ => (new(r.Left, r.Bottom), new(r.Left, r.Top), new(r.Left + l, r.Bottom - b), new(r.Left + l, r.Top + t)),
+        };
+
+    static SKPoint Lerp(SKPoint a, SKPoint c, float f) => new(a.X + (c.X - a.X) * f, a.Y + (c.Y - a.Y) * f);
+
+    /// <summary>该边带宽分数区间 [f0,f1) 的子梯形（f=0 外缘、1 内缘）。</summary>
+    static SKPath BandPath((SKPoint o0, SKPoint o1, SKPoint i0, SKPoint i1) e, float f0, float f1)
+    {
+        var p = new SKPath();
+        p.MoveTo(Lerp(e.o0, e.i0, f0));
+        p.LineTo(Lerp(e.o1, e.i1, f0));
+        p.LineTo(Lerp(e.o1, e.i1, f1));
+        p.LineTo(Lerp(e.o0, e.i0, f1));
+        p.Close();
+        return p;
+    }
+
+    /// <summary>梯形中线在某一端的端点（虚线沿它走）。</summary>
+    static SKPoint Mid((SKPoint o0, SKPoint o1, SKPoint i0, SKPoint i1) e, int end)
+        => end == 0 ? Lerp(e.o0, e.i0, 0.5f) : Lerp(e.o1, e.i1, 0.5f);
+
+    /// <summary>把一条边拆成若干条子带 + 各自的填色。<paramref name="lit"/> = 本边朝光源（上/左）。</summary>
+    static IEnumerable<(float f0, float f1, SKColor col)> Stripes(string style, SKColor col, bool lit)
+    {
+        var dark = Shade(col, light: false);
+        var light = Shade(col, light: true);
+        return style switch
+        {
+            "double" => new[] { (0f, 1f / 3f, col), (2f / 3f, 1f, col) },
+            "groove" => new[] { (0f, .5f, lit ? dark : light), (.5f, 1f, lit ? light : dark) },
+            "ridge" => new[] { (0f, .5f, lit ? light : dark), (.5f, 1f, lit ? dark : light) },
+            "inset" => new[] { (0f, 1f, lit ? dark : light) },
+            "outset" => new[] { (0f, 1f, lit ? light : dark) },
+            _ => new[] { (0f, 1f, col) },
+        };
+    }
+
+    /// <summary>groove/ridge/inset/outset 的明暗色。Chrome 口径实测（2026-09-26 探针）：保持色相与饱和，
+    /// 把明度（HSV 的 V，等价于最大通道）整体 ±84/255 —— 即按 (max±84)/max 等比缩放三通道，亮色撞到 255 就截断。</summary>
+    static SKColor Shade(SKColor c, bool light)
+    {
+        int max = Math.Max(c.Red, Math.Max(c.Green, c.Blue));
+        if (max == 0) return c;
+        int target = light ? Math.Min(255, max + 84) : Math.Max(0, max - 84);
+        float k = target / (float)max;
+        return new SKColor((byte)Math.Round(c.Red * k), (byte)Math.Round(c.Green * k), (byte)Math.Round(c.Blue * k), c.Alpha);
+    }
+
+    /// <summary>dashed / dotted 的虚线段。Chrome 口径实测（2026-09-26 探针，2px/4px/8px 三档）：
+    /// dashed 段长 2×宽、dotted 圆点直径=宽；理想周期 3×宽 / 2×宽。</summary>
     static SKPathEffect? DashEffect(string style, float w)
-        => style == "dashed" ? SKPathEffect.CreateDash(new[] { 3 * w, 2 * w }, 0)
-         : style == "dotted" ? SKPathEffect.CreateDash(new[] { 0.01f, w }, 0)
+        => style == "dashed" ? SKPathEffect.CreateDash(new[] { 2 * w, w }, 0)
+         : style == "dotted" ? SKPathEffect.CreateDash(new[] { 0.01f, 2 * w }, 0)
          : null;
+
+    /// <summary>直边虚线：Chrome 还会把 dashed 的周期按边长整数化——段长固定，取 ceil(内沿长/理想周期) 段
+    /// 铺满整条边，空隙吸收余数（8px dashed 因此比理想周期短 1/3，不整数化就明显偏疏）。
+    /// dotted 实测恒为 2×宽的中心距，不做整数化。</summary>
+    static (float on, float off) DashPattern(string style, float w, float midLen)
+    {
+        if (style == "dotted") return (0.01f, 2 * w);
+        float on = 2 * w;
+        float len = midLen - w;   // 内沿长度：Chrome 用它算段数
+        int n = len > 3 * w ? (int)Math.Ceiling(len / (3 * w)) : 1;
+        return (on, Math.Max(0.01f, len / n - on));
+    }
 
     /// <summary>圆角盒四边只能共用一条描边路径：混合样式时 dashed 优先，其次 dotted。</summary>
     public static string DominantDash(ComputedStyle s)

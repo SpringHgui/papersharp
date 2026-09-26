@@ -71,7 +71,7 @@ public static class StyleResolver
     // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
     // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
     // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
-    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
+    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
         // 盒对齐（Box Alignment）新写法的属性：AngleSharp 只认 flexbox 时代的关键字集，
         // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
         // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
@@ -1419,10 +1419,10 @@ public static class StyleResolver
         s.BorderRadiusTopRight = FirstRadius(Raw("border-top-right-radius"), s.FontSize);
         s.BorderRadiusBottomRight = FirstRadius(Raw("border-bottom-right-radius"), s.FontSize);
         s.BorderRadiusBottomLeft = FirstRadius(Raw("border-bottom-left-radius"), s.FontSize);
-        // 优先声明值：AngleSharp 的 computed 会把 `0 0 0 2px` 重序列化成 `0 0 2px`（blur 与 spread 串位，
-        // 实测三重阴影那格的外环 2px 被当成 2px 模糊）。声明值本就是作者原样，em 也按本元素字号折算。
-        var shadowDecl = Spec("box-shadow");
-        if (shadowDecl.Length == 0) shadowDecl = Decl("box-shadow");
+        // AngleSharp 会把 `0 0 0 2px` 重序列化成 `0 0 2px`（blur 与 spread 串位，实测三重阴影那格的
+        // 2px 外环被当成 2px 模糊），声明值视图同样中招。故一律取作者原样串：内联 style 属性 >
+        // 原始 CSS 兜底表 > 声明值。em 也按本元素字号折算。
+        var shadowDecl = FirstNonEmpty(Inline("box-shadow"), Lookup("box-shadow", element, "", ctx), Spec("box-shadow"));
         s.Shadows = CssValueParser.ParseShadowLayers(shadowDecl, s.FontSize);
         // background-image/background 一律不读 computed：值里只要含 repeating-* 渐变，
         // AngleSharp 的 CssPeriodicValue.CssText 必抛 NRE（其解析也不完整，渐变串本就走 Spec/Lookup 自解析）。
