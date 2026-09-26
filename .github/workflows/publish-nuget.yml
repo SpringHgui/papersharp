@@ -26,6 +26,7 @@ jobs:
         run: dotnet test tests/PaperSharp.Tests/PaperSharp.Tests.csproj -c Release --filter "FullyQualifiedName!~BoxGoldenTests&FullyQualifiedName!~PngGoldenTests&FullyQualifiedName!~PdfRasterTests"
 
       - name: Pack
+        shell: bash # Windows 默认 shell 是 pwsh，${VAR#v} 会展开为空
         run: dotnet pack src/PaperSharp/PaperSharp.csproj -c Release -p:Version=${GITHUB_REF_NAME#v} -o ./nupkg
 
       - name: NuGet login (OIDC → 1 小时临时 API Key)
@@ -35,4 +36,5 @@ jobs:
           user: Gui.H
 
       - name: Push to nuget.org
+        shell: bash
         run: dotnet nuget push "nupkg/*.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
