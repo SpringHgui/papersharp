@@ -282,6 +282,10 @@ public sealed class ComputedStyle
     /// <summary>本元素自己（或经继承落到本元素上的）list-style-type 声明原文。子元素用它辨别
     /// "这条声明是我写的还是从父亲抄来的"——AngleSharp 的声明值里两者长得一样。</summary>
     public string ListStyleSpecified = "";
+    /// <summary>list-style-image 的 url 原文（已剥掉 <c>url()</c> 与引号）；null = 没有图片符号。</summary>
+    public string? ListStyleImage;
+    /// <summary>::marker 规则对本项 marker 的覆盖（Chrome 只放行 color 与字体族属性）。</summary>
+    public MarkerOverride? Marker;
 
     // 分页控制（打印媒体 / @page 上下文）
     public string BreakInside = "auto";      // auto | avoid
@@ -301,6 +305,18 @@ public sealed class ComputedStyle
 }
 
 public enum CssTextAlign { Left, Center, Right, Justify }
+
+/// <summary>::marker 规则里对 marker 的覆盖。Chrome 只放行 color 与字体族属性
+/// （font-*、letter-spacing、text-decoration、text-transform），其余写了也不生效。</summary>
+public sealed class MarkerOverride
+{
+    public SKColor? Color;
+    public string? FontFamily;
+    public float? FontSize;                  // 已折成 px
+    public int? FontWeight;
+    public float? LetterSpacing;             // px
+    public string? TextTransform;
+}
 
 /// <summary>从 HTML 头部抽出的文档元数据（PDF 元数据用），随根 ComputedStyle 返回，不做全局态。</summary>
 public sealed record DocumentInfo(string? Title, string? Author, string? Description, string? Keywords);

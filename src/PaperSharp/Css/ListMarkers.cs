@@ -43,19 +43,26 @@ public static class ListMarkers
         }
     }
 
-    /// <summary>给一个 list-item 盒发 marker：li 自己写的 list-style-type 优先，否则用列表容器的。</summary>
+    /// <summary>给一个 list-item 盒发 marker：li 自己写的 list-style-type 优先，否则用列表容器的。
+    /// 写了 <c>list-style-image</c> 时符号是图片（图取不到才按 type 兜底），字形/序号则可被 <c>::marker</c> 改色改字重。</summary>
     static void Emit(ComputedStyle item, int index, ref bool any)
     {
         string type = item.ListStyleType;   // StyleResolver 已把"自己的声明 > 继承列表容器 > 标签默认"排好
-        if (type == "none") return;
-        string glyph = Glyph(type);
-        string text = glyph.Length == 0 ? CounterStyle.Format(index, type) + "." : glyph;
-        if (text.Length == 0) return;
+        var img = ImageLoader.Load(item.ListStyleImage);
+        if (img == null && type == "none") return;
+        string glyph = img != null ? "" : Glyph(type);
+        string text = img != null ? "" : (glyph.Length == 0 ? CounterStyle.Format(index, type) + "." : glyph);
+        if (img == null && text.Length == 0) return;
 
+        // 图片 marker 与正文的间隙恒 ~3px（探针 fs=8/12/16/24 下图片右缘到正文都是 3px，不随字号走）；
+        // 文字 marker 的 3+0.3em 里含了「字形 advance 比墨迹宽出来的那截侧空」，两者不是一条规则。
+        float gap = img != null ? 3f : MarkerGap(item);
         var gen = new PseudoGen
         {
-            Style = MarkerStyle(item, text),
-            Runs = new List<ContentRun> { new ContentRun { Kind = ContentRunKind.Literal, Text = text } },
+            Style = MarkerStyle(item, img != null ? null : text, gap),
+            Runs = new List<ContentRun> { img != null
+                ? new ContentRun { Kind = ContentRunKind.Image, Url = item.ListStyleImage }
+                : new ContentRun { Kind = ContentRunKind.Literal, Text = text } },
         };
         if (item.Before == null) item.Before = gen;
         else item.Before.Runs.Insert(0, gen.Runs[0]);   // 浏览器里 marker 排在 ::before 内容之前
@@ -64,7 +71,7 @@ public static class ListMarkers
         // 用负的 text-indent 让出这块悬挂区——首行起点左移 (markerW+gap)，首行可用宽相应 +（markerW+gap），
         // 而 marker 自己的盒宽含 gap（见 MarkerStyle 的 padding-right），于是正文正好落回内容盒左缘，
         // 折行结果与浏览器一致。用 -= 而不是 =：作者自己写的 text-indent 要与之叠加。
-        if (!item.ListStyleInside) item.TextIndent -= MarkerAdvance(item, text);
+        if (!item.ListStyleInside) item.TextIndent -= (img?.Width ?? 0) + MarkerAdvance(item, text, gap);
         any = true;
     }
 
@@ -77,15 +84,16 @@ public static class ListMarkers
         _ => "",
     };
 
-    /// <summary>marker 占用（含间隙）的横向尺寸：文本宽 + 0.5em 间隙。</summary>
-    static float MarkerAdvance(ComputedStyle s, string text)
+    /// <summary>marker 文本占用（含间隙）的横向尺寸。</summary>
+    static float MarkerAdvance(ComputedStyle s, string text, float gap)
     {
         using var font = new SKFont(FontManager.Get(s.FontFamily, s.FontWeight), s.FontSize);
-        return TextMeasurer.LineWidth(text, font, s.LetterSpacing) + MarkerGap(s);
+        return TextMeasurer.LineWidth(text, font, s.LetterSpacing) + gap;
     }
 
-    /// <summary>marker 盒的样式：继承宿主（字体/字色/行高），但盒级装饰一律清掉——marker 只是行内文字。</summary>
-    static ComputedStyle MarkerStyle(ComputedStyle host, string text)
+    /// <summary>marker 盒的样式：继承宿主（字体/字色/行高），但盒级装饰一律清掉——marker 只是行内文字。
+    /// <c>::marker</c> 规则里那几条允许的属性（color / font-* / letter-spacing / text-transform）最后覆盖上去。</summary>
+    static ComputedStyle MarkerStyle(ComputedStyle host, string? text, float gap)
     {
         var s = host.CloneShallow();
         s.Display = "inline";
@@ -102,8 +110,17 @@ public static class ListMarkers
         // marker 是行内片段，其横向外扩 = 自己的 padding：宿主 li 的 padding 绝不能跟过来（会在正文前多出一截），
         // 而右半边正是 marker→正文的空隙（InlineLayout.HDeco 据此算原子宽，正文才落在内容盒左缘）。
         s.PaddingLeftCss = s.PaddingBottomCss = s.PaddingTopCss = CssSize.Abs(0);
-        s.PaddingRightCss = CssSize.Abs(MarkerGap(host));
+        s.PaddingRightCss = CssSize.Abs(gap);
         s.HasGeneratedInline = false;
+        if (host.Marker is { } ov)
+        {
+            if (ov.Color is { } c) s.Color = c;
+            if (ov.FontFamily is { Length: > 0 } fam) s.FontFamily = fam;
+            if (ov.FontSize is { } fs) s.FontSize = fs;
+            if (ov.FontWeight is { } fw) s.FontWeight = fw;
+            if (ov.LetterSpacing is { } lsp) s.LetterSpacing = lsp;
+            if (ov.TextTransform is { Length: > 0 } tt) s.TextTransform = tt;
+        }
         return s;
     }
 }

@@ -113,6 +113,11 @@ public static class StyleResolver
         // 同表还捎带 "末token::placeholder" → color 声明：::placeholder 在 AngleSharp 里根本不是可解析的
         // 伪元素（实测 ComputeDeclarations(el,"::placeholder") 空），作者的占位符颜色只能这样兜回来。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>::marker 规则的原始索引（AngleSharp 不认这个伪元素，整条规则在解析期就被丢掉）。
+        /// <paramref name="Last"/> = 末段简单选择器 token（tag/.class/#id），<paramref name="Ancestor"/>
+        /// = 紧邻其上的那一段（<c>.mk li::marker</c> 的 <c>.mk</c>）——只按末段建键会把一条
+        /// <c>li::marker</c> 漏给页面上所有列表，故带上祖先约束。</summary>
+        public List<(string Last, string? Ancestor, Dictionary<string, string> Props)>? MarkerRules;
         public Dictionary<string, List<Keyframe>> Keyframes = new();   // @keyframes 表（渲染传 animationTime 时按时刻取帧）
         public AuthorBoxSpacing? Spacing;       // margin/padding 作者源微级联索引（见 AuthorBoxSpacing）
         public float ViewportWidth = 1024;  // 供 Spacing 的 @media 条件判定
@@ -160,7 +165,7 @@ public static class StyleResolver
         ctx.HasPseudoRules = Regex.IsMatch(userCss ?? "", @"::?(before|after)\b", RegexOptions.IgnoreCase);
         if (ctx.HasPseudoRules) ctx.PseudoScope = new(StringComparer.OrdinalIgnoreCase);
         // 只有 ::placeholder 规则时也值得扫一遍（它只往 PseudoDisplay 里塞颜色，不开伪元素那套开销）
-        if (ctx.HasPseudoRules || Regex.IsMatch(userCss ?? "", @"::placeholder\b", RegexOptions.IgnoreCase))
+        if (ctx.HasPseudoRules || Regex.IsMatch(userCss ?? "", @"::placeholder\b|::?marker\b", RegexOptions.IgnoreCase))
             ScanPseudoDisplay(userCss ?? "", ctx);
         // @keyframes 表（仅当 CSS 里确有 @keyframes 时解析；渲染传 animationTime 才按时刻取帧覆盖样式）
         if (Regex.IsMatch(userCss ?? "", @"@keyframes\b", RegexOptions.IgnoreCase))
@@ -952,6 +957,28 @@ public static class StyleResolver
                 continue;
             }
             string suffix;
+            if (Regex.IsMatch(sel, @"::?marker\b", RegexOptions.IgnoreCase))
+            {
+                // ::marker 只放行 color 与字体族属性（Chrome 就是这样：写 background/margin 一律无效）。
+                var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var prop in new[] { "color", "font-family", "font-size", "font-weight", "letter-spacing", "text-transform" })
+                {
+                    var pm = Regex.Match(body, @"(?:^|[;\s])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
+                    if (pm.Success) props[prop] = pm.Groups[1].Value.Trim();
+                }
+                if (props.Count == 0) continue;
+                foreach (var selPart in sel.Split(','))
+                {
+                    var toks = Regex.Split(Regex.Replace(selPart, @"::?marker", " ", RegexOptions.IgnoreCase).Trim(),
+                                           @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
+                    if (toks.Length == 0) continue;
+                    var last = Regex.Replace(toks[^1], @"[:\[].*$", "");   // 去伪类/属性选择器段
+                    if (last.Length == 0) continue;
+                    string? anc = toks.Length > 1 ? Regex.Replace(toks[^2], @"[:\[].*$", "") : null;
+                    (ctx.MarkerRules ??= new()).Add((last.ToLowerInvariant(), anc?.ToLowerInvariant(), props));
+                }
+                continue;
+            }
             if (Regex.IsMatch(sel, @"::?before\b", RegexOptions.IgnoreCase)) suffix = "::before";
             else if (Regex.IsMatch(sel, @"::?after\b", RegexOptions.IgnoreCase)) suffix = "::after";
             else continue;
@@ -1008,6 +1035,72 @@ public static class StyleResolver
         var id = el.GetAttribute("id");
         if (!string.IsNullOrWhiteSpace(id)) { var v = Get("#" + id); if (v != null) return v; }
         return Get(el.TagName.ToLowerInvariant());
+    }
+
+    /// <summary>::marker 规则里的 url(...)：剥掉 url() 与引号；没有 → null。</summary>
+    static string? ListStyleUrl(string? decl)
+    {
+        if (string.IsNullOrWhiteSpace(decl)) return null;
+        var m = Regex.Match(decl, @"url\(\s*""?([^"")]+)""?\s*\)", RegexOptions.IgnoreCase);
+        return m.Success ? m.Groups[1].Value.Trim() : null;
+    }
+
+    /// <summary>末段简单选择器 token（<c>li</c> / <c>.mk</c> / <c>#id</c> / <c>*</c>）是否命中元素。
+    /// 复合段（<c>ul.mk</c>）要求标签与类同时成立。</summary>
+    static bool SelectorTokenMatches(string tok, IElement el)
+    {
+        if (tok.Length == 0) return false;
+        if (tok == "*") return true;
+        var m = Regex.Match(tok, @"^([a-zA-Z][\w-]*)?((?:[.#][\w-]+)*)$");
+        if (!m.Success) return false;
+        var tag = m.Groups[1].Value;
+        if (tag.Length > 0 && !string.Equals(el.TagName, tag, StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (Match p in Regex.Matches(m.Groups[2].Value, @"([.#])([\w-]+)"))
+        {
+            string name = p.Groups[2].Value;
+            if (p.Groups[1].Value == ".")
+            {
+                var cls = el.GetAttribute("class") ?? "";
+                if (!cls.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                        .Any(c => string.Equals(c, name, StringComparison.OrdinalIgnoreCase))) return false;
+            }
+            else if (!string.Equals(el.GetAttribute("id"), name, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
+    }
+
+    static bool HasAncestorMatching(string tok, IElement el)
+    {
+        for (var p = el.ParentElement; p is not null && p.TagName != "HTML"; p = p.ParentElement)
+            if (SelectorTokenMatches(tok, p)) return true;
+        return false;
+    }
+
+    /// <summary>按 ::marker 原始索引给本元素裁决 marker 覆盖：多条规则按文档序叠加，后写的属性覆盖先写的。</summary>
+    static MarkerOverride? MatchMarkerRule(IElement element, ComputedStyle s, DocContext ctx)
+    {
+        MarkerOverride? o = null;
+        foreach (var (last, anc, props) in ctx.MarkerRules!)
+        {
+            if (!SelectorTokenMatches(last, element)) continue;
+            if (anc != null && anc.Length > 0 && !HasAncestorMatching(anc, element)) continue;
+            o ??= new MarkerOverride();
+            foreach (var (prop, raw) in props)
+            {
+                var v = ExpandVars(raw, element, ctx).Trim();
+                switch (prop)
+                {
+                    case "color": if (CssValueParser.ParseColor(v) is { } c) o.Color = c; break;
+                    case "font-family": o.FontFamily = v; break;
+                    // em/% 按**继承来的**字号（= 宿主 li 的）折算，不是 marker 自己改后的字号
+                    case "font-size": o.FontSize = CssValueParser.ToPixels(v, s.FontSize); break;
+                    case "font-weight": o.FontWeight = CssValueParser.ParseFontWeight(v, s.FontWeight); break;
+                    case "letter-spacing": o.LetterSpacing = v.Equals("normal", StringComparison.OrdinalIgnoreCase) ? 0 : CssValueParser.ToPixels(v, s.FontSize); break;
+                    case "text-transform": o.TextTransform = v.ToLowerInvariant(); break;
+                }
+            }
+        }
+        return o;
     }
 
     internal static string ApplyTransform(string text, string mode)
@@ -1436,6 +1529,14 @@ public static class StyleResolver
         s.ListStyleInside = declaredPos.Length > 0 ? declaredPos.Contains("inside", StringComparison.OrdinalIgnoreCase)
                       : Raw("list-style-position") is { Length: > 0 } pc ? pc.Contains("inside", StringComparison.OrdinalIgnoreCase)
                       : parent?.ListStyleInside ?? false;
+        // list-style-image 同为继承属性；显式 none（长写或 list-style 简写里的 none）要清掉，不再抄父亲。
+        string imgDecl = FirstNonEmpty(ListStyleUrl(SpecOnly("list-style-image")) ?? "", ListStyleUrl(declShorthand) ?? "");
+        string imgSpec = FirstNonEmpty(SpecOnly("list-style-image"), declShorthand);
+        s.ListStyleImage = imgDecl.Length > 0 ? imgDecl
+                         : imgSpec.Contains("none", StringComparison.OrdinalIgnoreCase) ? null
+                         : parent?.ListStyleImage;
+        // ::marker：AngleSharp 不认这个伪元素（整条规则在解析期丢掉），只能靠原始 CSS 自扫的索引裁决。
+        if (ctx.MarkerRules is { Count: > 0 }) s.Marker = MatchMarkerRule(element, s, ctx);
 
         // 分页控制
         s.BreakInside = CssValueParser.ParseKeyword(Raw("break-inside"), "auto");
