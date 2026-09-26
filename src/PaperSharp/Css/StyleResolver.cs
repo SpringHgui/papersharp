@@ -74,7 +74,7 @@ public static class StyleResolver
     // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
     // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
     // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
-    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "border-radius", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
+    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
         // 盒对齐（Box Alignment）新写法的属性：AngleSharp 只认 flexbox 时代的关键字集，
         // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
         // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
@@ -1429,18 +1429,23 @@ public static class StyleResolver
         {
             "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
         };
-        for (int c = 0; c < 4; c++)
-        {
-            var authored = FirstNonEmpty(Inline(radiusProps[c]), Lookup(radiusProps[c], element, "", ctx));
-            var (ax, ay, px, py) = ReadRadius(authored.Length > 0 ? authored : Raw(radiusProps[c]), s.FontSize);
-            radAbs[c * 2] = ax; radAbs[c * 2 + 1] = ay;
-            radPct[c * 2] = px; radPct[c * 2 + 1] = py;
-        }
+        // 简写先铺、长写后覆盖：AngleSharp 的声明表里同条规则内后写的简写会抹掉先写的长写，
+        // 所以两者同时取得到作者串的情形只可能是「长写写在后面」——按 CSS 正是长写胜。
         var radiusShorthand = FirstNonEmpty(Inline("border-radius"), Lookup("border-radius", element, "", ctx));
-        if (ParseRadii(radiusShorthand, s.FontSize) is { } ra)
+        var radiusShorthandParsed = ParseRadii(radiusShorthand, s.FontSize);
+        bool hasRadiusShorthand = radiusShorthandParsed is not null;
+        if (radiusShorthandParsed is { } ra)
         {
             Array.Copy(ra.abs, radAbs, 8);
             Array.Copy(ra.pct, radPct, 8);
+        }
+        for (int c = 0; c < 4; c++)
+        {
+            var authored = FirstNonEmpty(Inline(radiusProps[c]), Lookup(radiusProps[c], element, "", ctx));
+            if (authored.Length == 0 && hasRadiusShorthand) continue;   // 该角没写长写，沿用简写铺的值
+            var (ax, ay, px, py) = ReadRadius(authored.Length > 0 ? authored : Raw(radiusProps[c]), s.FontSize);
+            radAbs[c * 2] = ax; radAbs[c * 2 + 1] = ay;
+            radPct[c * 2] = px; radPct[c * 2 + 1] = py;
         }
         s.BorderRadiusTopLeft = radAbs[0]; s.BorderRadiusTopRight = radAbs[2];
         s.BorderRadiusBottomRight = radAbs[4]; s.BorderRadiusBottomLeft = radAbs[6];

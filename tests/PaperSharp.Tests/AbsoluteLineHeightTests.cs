@@ -51,8 +51,26 @@ public class AbsoluteLineHeightTests
     [Fact]
     public void Normal_line_height_still_comes_from_font_metrics()
     {
+        // Chrome 的 normal 行盒 = round(ascent·fs) + round(descent·fs)（逐度量取整、不含 lineGap）。
+        // 15px sans-serif 本机 headless Chrome 量得 21；老的「比值×字号」给 21.72，每行 +0.7px 就是整页漂移。
         var s = At("<div>x</div>", "div{font-size:15px;line-height:normal}", "div[1]");
         Assert.True(float.IsNaN(s.LineHeightAbsPx));
-        Assert.Equal(15f * s.LineHeightFactor, s.LineHeightPx(), 3);
+        Assert.False(s.LineHeightNumeric);
+        Assert.Equal(21f, s.LineHeightPx(), 3);
+        Assert.NotEqual(15f * s.LineHeightFactor, s.LineHeightPx(), 3);
+    }
+
+    [Theory]
+    [InlineData(16, 21)]     // 雅黑：Chrome 实测 21（老的 1.4 兜底给 22.39）
+    [InlineData(13, 17)]
+    [InlineData(10, 14)]
+    [InlineData(20, 26)]
+    [InlineData(8, 10)]
+    [InlineData(10.5f, 14)]
+    public void Normal_line_height_matches_chrome_per_font_size(float size, float expected)
+    {
+        // UA 表里绝不能再写 line-height：它以数字继承给全部元素，normal 这条路就永远走不到。
+        var s = At("<div>x</div>", $"div{{font-size:{size}px;font-family:\"Microsoft YaHei\"}}", "div[1]");
+        Assert.Equal(expected, s.LineHeightPx(), 3);
     }
 }
