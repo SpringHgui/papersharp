@@ -79,7 +79,7 @@ public static class TextMeasurer
         {
             var para = paras[pi];
             if (para.Length == 0) { TakeLine(""); continue; }
-            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, TakeLine, Query, pi == 0 ? indent : 0f);
+            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, s.OverflowWrap, TakeLine, Query, pi == 0 ? indent : 0f);
         }
         if (lines.Count == 0) TakeLine("");
         return Finish(lines, leftList, fc, out lefts);
@@ -140,7 +140,7 @@ public static class TextMeasurer
     }
 
     static void WrapParagraph(string para, float maxWidth, SKFont font, float ls, string wordBreak,
-        Action<string> take, Func<(float left, float right)> query, float firstIndent)
+        string overflowWrap, Action<string> take, Func<(float left, float right)> query, float firstIndent)
     {
         var current = new StringBuilder();
         float currentWidth = 0;
@@ -153,8 +153,12 @@ public static class TextMeasurer
             lineMax = Math.Max(1, maxWidth - inL - inR);
         }
 
-        foreach (var token in Tokenize(para, wordBreak))
+        var toks = Tokenize(para, wordBreak);
+        // overflow-wrap 只在词宽过整行时生效：Chrome 先照常用词边界把词挪到新行，新行仍放不下才断词。
+        bool maySplit = overflowWrap is "break-word" or "anywhere";
+        for (int i = 0; i < toks.Count; i++)
         {
+            string token = toks[i];
             float tokenWidth = TokenWidth(token, font, ls);
             // 只有当前行已有非空白内容时才换行；单独的空格允许溢出，避免留白行
             if (currentWidth + tokenWidth > lineMax && current.Length > 0 && !string.IsNullOrWhiteSpace(current.ToString()))
@@ -164,13 +168,42 @@ public static class TextMeasurer
                 currentWidth = 0;
                 if (token == " ") continue; // 换行处的空格吞掉
             }
+            if (maySplit && token != " " && tokenWidth > lineMax)
+            {
+                string rest = token;
+                while (TokenWidth(rest, font, ls) > lineMax)
+                {
+                    int cut = LongestFit(rest, lineMax, font, ls);
+                    if (cut <= 0) break;
+                    EmitLine(rest.Substring(0, cut));
+                    rest = rest.Substring(cut);
+                }
+                if (rest.Length == 0) continue;
+                token = rest;
+                tokenWidth = TokenWidth(token, font, ls);
+            }
             current.Append(token);
             currentWidth += tokenWidth;
         }
         if (current.Length > 0) EmitLine(current.ToString().TrimEnd());
     }
 
-    static IEnumerable<string> Tokenize(string s, string wordBreak)
+    /// <summary>词内断行点：能放进 <paramref name="width"/> 的最长前缀长度（按字素簇，不吃 surrogate 半边）。
+    /// 一个字素都放不下时仍返回第一个字素——Chrome 也至少塞一个字符进去，同时保证折行一定前进。</summary>
+    static int LongestFit(string word, float width, SKFont font, float ls)
+    {
+        int len = 0, best = 0;
+        foreach (var g in TextShaper.Graphemes(word))
+        {
+            int n = len + g.Length;
+            if (best > 0 && TokenWidth(word.Substring(0, n), font, ls) > width) break;
+            len = n;
+            best = n;
+        }
+        return best;
+    }
+
+    static List<string> Tokenize(string s, string wordBreak)
     {
         var tokens = new List<string>();
         var sb = new StringBuilder();

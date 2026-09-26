@@ -82,7 +82,10 @@ public static class StyleResolver
         // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
         // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
         // （_gsel 实测：align-self:start 高度 120 而非 21.6，justify-self:start 宽 200 而非 12.1）。
-        "align-self", "justify-self", "align-items", "justify-items", "place-self", "place-items", "align-content", "justify-content" };
+        "align-self", "justify-self", "align-items", "justify-items", "place-self", "place-items", "align-content", "justify-content",
+        // overflow-wrap 的属性名 AngleSharp 认得，但值表停在 normal|break-word|break-all：写了
+        // `anywhere` 的整条声明在解析期就被丢掉（computed/declared 皆空），断词行为整个消失。
+        "overflow-wrap" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -792,7 +795,10 @@ public static class StyleResolver
         // list-item 也算（AngleSharp 的 UA 表给 li 的就是它）：漏掉的话 li 里的 <span> 走不到
         // InlinePieces，块路径只收直接文本 → 整段彩色 span 凭空消失。
         bool blockish = cs.Display is "block" or "table-cell" or "list-item";
-        cs.IsInlineFC = blockish && !hasBlockChild && (hasInlineEl || hasBr || (hasImgChild && cs.TextContent != null));
+        // justify 只有走行盒这条路才做得出：拉伸的是行内空隙，纯文本块的 WrappedLines 是整串一行，
+        // 绘制端拿不到「每个空格加多少」的位置信息。故带 justify 的块一律建 IFC（无行内片段也建）。
+        bool wantsJustify = cs.TextAlignment == CssTextAlign.Justify || cs.TextAlignLast == "justify";
+        cs.IsInlineFC = blockish && !hasBlockChild && (hasInlineEl || hasBr || wantsJustify || (hasImgChild && cs.TextContent != null));
 
         // 块里与块级兄弟混排的行内级内容（inline 元素、img/svg）：CSS 会把它裹进匿名块再立行盒。
         // 不裹的话它就是父块的一个普通块级子盒 —— 整行拉满、按块级定位（m1 的
@@ -1151,9 +1157,12 @@ public static class StyleResolver
         {
             "center" => CssTextAlign.Center,
             "right" or "end" => CssTextAlign.Right,
+            "justify" => CssTextAlign.Justify,
             "left" or "start" => s.Direction == "rtl" ? CssTextAlign.Right : CssTextAlign.Left,
             _ => s.Direction == "rtl" ? CssTextAlign.Right : CssTextAlign.Left,
         };
+        string tal = Raw("text-align-last").Trim().ToLowerInvariant();
+        s.TextAlignLast = tal is "left" or "start" or "right" or "end" or "center" or "justify" ? tal : "auto";
 
         // margin / padding：按 longhand 读声明值（保留 %），布局期按包含块宽解析。
         // CSS 里 margin/padding 的百分比一律相对包含块的**行内尺寸（宽）**，横竖同基准。
@@ -1384,6 +1393,17 @@ public static class StyleResolver
         s.TextTransform = CssValueParser.ParseKeyword(Raw("text-transform"), "none");
         s.TextOverflow = CssValueParser.ParseKeyword(Lookup("text-overflow", element, Raw("text-overflow"), ctx), "clip");
         s.WordBreak = CssValueParser.ParseKeyword(Raw("word-break"), "normal");
+        // overflow-wrap 的旧名 word-wrap 仍常见于老样式表，读不到 overflow-wrap 时退回去看它。
+        // 过 Lookup：AngleSharp 的值表只到 normal|break-word|break-all，`anywhere` 整条声明在解析期
+        // 就被判非法丢弃（computed 与 declared 皆空），只能由原始 CSS 兜底表捞回来。
+        var ow = Lookup("overflow-wrap", element, Raw("overflow-wrap"), ctx);
+        if (string.IsNullOrWhiteSpace(ow)) ow = Raw("word-wrap");
+        s.OverflowWrap = ow.Trim().ToLowerInvariant() switch
+        {
+            "break-word" => "break-word",
+            "anywhere" => "anywhere",
+            _ => "normal",
+        };
 
         // text-indent / text-shadow：AngleSharp 没注册这两条属性时 computed 与 declared 都是空串，
         // 只能在读不到之后回头看元素**自己的** style 属性。不进 UnsupportedProps 兜底表：那张表按 tag/class

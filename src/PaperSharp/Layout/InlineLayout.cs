@@ -32,13 +32,15 @@ public sealed class InlineFrag
 }
 
 /// <summary>一行：若干 frag + 行高/基线/宽度。Left 为对齐后的 x 偏移（相对内容盒）。
-/// Inset/Avail：环绕浮动时该行的左缩进与可用宽（无浮动时 0/-1 表示全宽）。</summary>
+/// Inset/Avail：环绕浮动时该行的左缩进与可用宽（无浮动时 0/-1 表示全宽）。
+/// ForcedBreak：这一行是被 &lt;br&gt;/源码换行断开的，不是排满自动折的——CSS 视同段末行，不拉伸。</summary>
 public sealed class LineBox
 {
     public List<InlineFrag> Frags = new();
     public float Width, Height, Baseline, Left;
     public float Inset;
     public float Avail = -1;
+    public bool ForcedBreak;
 }
 /// <summary>
 /// inline 格式化上下文：把块内的有序片段摊平成原子序列，再按宽度折成行盒。
@@ -96,7 +98,85 @@ public static class InlineLayout
             var rebal = BreakRaw(atoms, hi, null, topY, strut);
             if (rebal.Count <= lines.Count) lines = rebal;
         }
+        ApplyJustify(lines, atoms, maxWidth, strut);
         return lines;
+    }
+
+    /// <summary>
+    /// text-align:justify / text-align-last:justify：把每行剩余空间平分给行内空隙。
+    /// 段末行（以及被 &lt;br&gt;/源码换行断开的行）不拉伸，除非 text-align-last:justify。
+    /// </summary>
+    static void ApplyJustify(List<LineBox> lines, List<InlineAtom> atoms, float maxWidth, ComputedStyle? strut)
+    {
+        var aln = strut ?? (atoms.Count > 0 ? atoms[0].Style : null);
+        if (aln == null || lines.Count == 0) return;
+        bool any = aln.TextAlignment == CssTextAlign.Justify || aln.TextAlignLast == "justify";
+        if (!any) return;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            bool isLast = i == lines.Count - 1 || lines[i].ForcedBreak;
+            if (isLast ? aln.TextAlignLast != "justify" : aln.TextAlignment != CssTextAlign.Justify) continue;
+            float avail = lines[i].Avail > 0 ? lines[i].Avail : maxWidth;
+            JustifyLine(lines[i], avail);
+        }
+    }
+
+    /// <summary>
+    /// 拉伸一行：先按 <see cref="Tokenize"/> 把每个 frag 的文本拆回 token（词 / 单空格 / 单 CJK 字），
+    /// 再给每个「扩展机会」平分剩余空间——空格本身是一个机会，CJK 字两侧的词界同样算机会
+    /// （Chrome 对中文段落 justify 就是逐字拉开的，只按空格分会让整段中文一行都拉不动）。
+    /// 每个 token 变成一个子 frag，Width 含它自己那份间隙，故栅格/SVG/PDF 各绘制端照旧按 f.X 落字，
+    /// 行内背景与下划线也仍连成一片（Chrome 正是如此：空隙被拉宽但底色不断）。
+    /// </summary>
+    static void JustifyLine(LineBox ln, float avail)
+    {
+        if (ln.Frags.Count == 0) return;
+        float extra = avail - ln.Width;
+        if (extra <= 0.5f) return;
+
+        var units = new List<(InlineFrag F, string Tok, float W, bool Space, bool Cjk, bool First, bool Last)>();
+        foreach (var f in ln.Frags)
+        {
+            if (f.Text == null) { units.Add((f, f.Text!, f.Width, false, false, true, true)); continue; }
+            int n = 0;
+            foreach (var tok in Tokenize(f.Text, f.Style.WhiteSpace, f.Style.WordBreak))
+            {
+                bool first = n == 0; n++;
+                units.Add((f, tok, TextWidth(tok, f.Style), tok == " ",
+                    tok.Length == 1 && TextMeasurer.IsCjkChar(tok[0]), first, false));
+            }
+            if (n > 0) { var (F, T, W, S, C, Fi, _) = units[^1]; units[^1] = (F, T, W, S, C, Fi, true); }
+        }
+
+        int spots = 0;
+        var gapBefore = new bool[units.Count];
+        for (int i = 0; i < units.Count; i++)
+        {
+            if (units[i].Space) { spots++; continue; }
+            if (i == 0) continue;                       // 行首不留间隙
+            if (units[i].Cjk || units[i - 1].Cjk) { gapBefore[i] = true; spots++; }
+        }
+        if (spots == 0) return;
+        float add = extra / spots;
+
+        var outFrags = new List<InlineFrag>(units.Count);
+        float x = 0;
+        for (int i = 0; i < units.Count; i++)
+        {
+            var (f, tok, w, space, _, first, last) = units[i];
+            float pl = first ? f.PadLeft : 0f, pr = last ? f.PadRight : 0f;
+            if (f.Box != null) { pl = 0; pr = 0; w = f.Width; tok = f.Text; }
+            else w += (space ? add : 0f) + (gapBefore[i] ? add : 0f);
+            outFrags.Add(new InlineFrag
+            {
+                Style = f.Style, Text = tok, Box = f.Box, FontSize = f.FontSize,
+                Ascent = f.Ascent, Descent = f.Descent, HostText = f.HostText, AlignDY = f.AlignDY,
+                PadLeft = pl, PadRight = pr, Width = pl + w + pr, X = x,
+            });
+            x += pl + w + pr;
+        }
+        ln.Frags = outFrags;
+        ln.Width = x;
     }
 
     /// <summary>
@@ -107,8 +187,31 @@ public static class InlineLayout
     public static float MinContentWidth(List<InlineAtom> atoms)
     {
         float w = 0;
-        foreach (var ln in BreakRaw(atoms, 0, null, 0, null)) w = Math.Max(w, ln.Width);
+        // minContent=true：量最小内容宽时不许按 overflow-wrap 断词（break-word 的定义就是
+        // 「只在不得不断时才断」，它不该让容器以为一个长词可以缩到一字符宽）；anywhere 才允许。
+        foreach (var ln in BreakRaw(atoms, 0, null, 0, null, minContent: true)) w = Math.Max(w, ln.Width);
         return w;
+    }
+
+    /// <summary>overflow-wrap 是否允许在词内断开（white-space 得先允许折行）。</summary>
+    static bool CanBreakInside(ComputedStyle s, bool minContent) =>
+        s.OverflowWrap is "break-word" or "anywhere"
+        && (s.OverflowWrap == "anywhere" || !minContent)
+        && s.WhiteSpace is "normal" or "pre-wrap" or "pre-line" or "break-spaces";
+
+    /// <summary>词内断行点：能放进 <paramref name="width"/> 的最长前缀长度（按字素簇，不拆散 surrogate 对）。
+    /// 连一个字素都放不下时仍返回第一个字素——Chrome 也至少塞一个字符，同时保证折行一定前进。</summary>
+    static int LongestFit(string word, float width, ComputedStyle s)
+    {
+        int len = 0, best = 0;
+        foreach (var g in TextShaper.Graphemes(word))
+        {
+            int n = len + g.Length;
+            if (best > 0 && TextWidth(word.Substring(0, n), s) > width) break;
+            len = n;
+            best = n;
+        }
+        return best;
     }
 
     /// <summary>纯文本块（没有 Atoms、走 TextContent 老路径）的 min-content：最宽的可断行段。</summary>
@@ -120,7 +223,7 @@ public static class InlineLayout
         return w;
     }
 
-    static List<LineBox> BreakRaw(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY, ComputedStyle? strut)
+    static List<LineBox> BreakRaw(List<InlineAtom> atoms, float maxWidth, FloatContext? fc, float topY, ComputedStyle? strut, bool minContent = false)
     {
         var lines = new List<LineBox>();
         float yCursor = topY;
@@ -157,11 +260,31 @@ public static class InlineLayout
             curW += f.Width;
         }
 
+        /// <summary>把一个文本 token 落到当前行：与同一样式的尾 frag 合并（同一元素在同一行上是一个片段，
+        /// padding 只在两端各算一次），否则另起新 frag。</summary>
+        void Place(InlineAtom at, string tok, float tw, float padL, float padR, bool sameRun)
+        {
+            var last = cur.Frags.Count > 0 ? cur.Frags[^1] : null;
+            if (sameRun && last != null)
+            {
+                float grow = tw + padR - last.PadRight;
+                last.Text += tok; last.Width += grow; curW += grow; last.PadRight = padR;
+                return;
+            }
+            var st = at.Style;
+            var (asc, desc) = FontManager.TextExtents(st.FontFamily, st.FontWeight, st.FontSize);
+            AddFrag(new InlineFrag
+            {
+                Style = st, Text = tok, Width = padL + tw + padR, PadLeft = padL, PadRight = padR,
+                FontSize = st.FontSize, Ascent = asc, Descent = desc, HostText = at.HostText,
+            });
+        }
+
         foreach (var a in atoms)
         {
             if (a.IsBreak)
             {
-                if (cur.Frags.Count > 0) Roll(a.Style);
+                if (cur.Frags.Count > 0) { cur.ForcedBreak = true; Roll(a.Style); }
                 else { var e = NewLine(a.Style); FinalizeLine(e, strut ?? a.Style); lines.Add(e); yCursor += e.Height; } // <br> 于行首 → 空行
                 continue;
             }
@@ -174,41 +297,47 @@ public static class InlineLayout
                 continue;
             }
             // 文本：按 token 折行
-            foreach (var tok in Tokenize(a.Text!, a.Style.WhiteSpace, a.Style.WordBreak))
+            var toks = Tokenize(a.Text!, a.Style.WhiteSpace, a.Style.WordBreak);
+            bool maySplit = CanBreakInside(a.Style, minContent);
+            bool midWord = false;   // 上一个是被 overflow-wrap 切断的词的前半（本段不是 inline 盒的开头）
+            for (int qi = 0; qi < toks.Count; qi++)
             {
+                var tok = toks[qi];
                 if (tok == "\n") // preserve 模式下的强制换行
                 {
-                    Roll(a.Style); continue;
+                    cur.ForcedBreak = true;
+                    Roll(a.Style); midWord = false; continue;
                 }
-                if (tok == " " && cur.Frags.Count == 0) continue; // 行首空格吞掉
+                if (tok == " " && cur.Frags.Count == 0) { midWord = false; continue; } // 行首空格吞掉
                 float tw = TextWidth(tok, a.Style);
                 bool isSpace = tok == " ";
                 var (pl0, pr0) = a.HDeco(maxWidth);
                 bool sameRun = IsRunTail(cur, a.Style);
-                float pl = sameRun ? 0 : pl0;
+                bool cont = midWord; midWord = false;
+                float pl = sameRun || cont ? 0 : pl0;
                 if (curW + pl + tw + pr0 > avail && cur.Frags.Count > 0 && !(isSpace && string.IsNullOrWhiteSpace(LastText(cur))))
                 {
                     TrimTrailingSpace(cur, ref curW);
                     Roll(a.Style);
                     if (isSpace) continue; // 行首空格吞掉
-                    sameRun = false; pl = pl0;
+                    sameRun = false;
+                    if (!cont) pl = pl0;
                 }
-                // 合并到同一样式的尾 frag：同一元素在同一行上是一个片段，padding 只在两端各算一次
-                var last = cur.Frags.Count > 0 ? cur.Frags[^1] : null;
-                if (sameRun && last != null)
+                // overflow-wrap：词宽过整行，正常词边界救不了它——从行首按可用宽切一刀，余下重新排队
+                // （下一轮它仍放不下 → 走上面的 Roll 换行，再切，直到余部放得下）。
+                if (maySplit && !isSpace && pl + tw + pr0 > avail)
                 {
-                    float grow = tw + pr0 - last.PadRight;
-                    last.Text += tok; last.Width += grow; curW += grow; last.PadRight = pr0;
-                }
-                else
-                {
-                    var (asc, desc) = FontManager.TextExtents(a.Style.FontFamily, a.Style.FontWeight, a.Style.FontSize);
-                    AddFrag(new InlineFrag
+                    int cut = LongestFit(tok, avail - curW - pl, a.Style);
+                    if (cut > 0 && cut < tok.Length)
                     {
-                        Style = a.Style, Text = tok, Width = pl + tw + pr0, PadLeft = pl, PadRight = pr0,
-                        FontSize = a.Style.FontSize, Ascent = asc, Descent = desc, HostText = a.HostText,
-                    });
+                        string head = tok.Substring(0, cut);
+                        Place(a, head, TextWidth(head, a.Style), pl, 0, sameRun);
+                        toks[qi] = tok.Substring(cut);
+                        midWord = true;
+                        continue;
+                    }
                 }
+                Place(a, tok, tw, pl, pr0, sameRun);
             }
         }
         if (cur.Frags.Count > 0) { TrimTrailingSpace(cur, ref curW); FinalizeLine(cur, strut ?? (atoms.Count > 0 ? atoms[0].Style : null)); lines.Add(cur); }
@@ -459,7 +588,7 @@ public static class InlineLayout
 
     /// <summary>把一段文本切成 token（词 / 单空格 / 单 CJK 字），受 white-space / word-break 影响。
     /// 非 preserve 下把连续空白（含换行/制表）折叠成单个 " " token；preserve 下 \n 作为强制换行 token。</summary>
-    static IEnumerable<string> Tokenize(string s, string whiteSpace, string wordBreak)
+    static List<string> Tokenize(string s, string whiteSpace, string wordBreak)
     {
         bool preserve = whiteSpace == "pre" || whiteSpace == "pre-wrap" || whiteSpace == "pre-line";
         var tokens = new List<string>();

@@ -254,6 +254,9 @@ public sealed class ComputedStyle
     float _normalLhFs = float.NaN;
     float _normalLhPx;
     public CssTextAlign TextAlignment = CssTextAlign.Left;
+    /// <summary>text-align-last：块内**最后一行**（含 <c>&lt;br&gt;</c> 断出的行）的对齐方式。
+    /// 只有 justify 需要单独实现——其余取值与 TextAlignment 的常规行对齐同一条路。</summary>
+    public string TextAlignLast = "auto";   // auto | left | right | center | justify
     /// <summary>text-indent 折成 px：只作用于块的首行，可为负（列表 marker 的悬挂缩进就靠它）。
     /// 浏览器口径是首行**起点**平移 indent、首行**可用宽**随之变 <c>width - indent</c>（负值⇒首行更宽），
     /// 所以它必须同时进折行与绘制，只补绘制位移会让首行少排一个字。</summary>
@@ -266,6 +269,9 @@ public sealed class ComputedStyle
     public string TextTransform = "none";    // none | uppercase | lowercase | capitalize
     public string TextOverflow = "clip";     // clip | ellipsis
     public string WordBreak = "normal";      // normal | break-all | keep-all
+    /// <summary>overflow-wrap（旧名 word-wrap）：normal | break-word | anywhere。
+    /// break-word 与 anywhere 的断词行为一样，区别只在最小内容宽该不该把长词算成一整块。</summary>
+    public string OverflowWrap = "normal";    // normal | break-word | anywhere
     public string Direction = "ltr";         // ltr | rtl（CSS direction：驱动 bidi 重排与默认对齐）
 
     // 列表标记（list-style-* 简写/长写 + <ol type>/<ol start> 的 presentational hint）
@@ -294,7 +300,7 @@ public sealed class ComputedStyle
     public string AnimationFill = "none";    // none | forwards | backwards | both
 }
 
-public enum CssTextAlign { Left, Center, Right }
+public enum CssTextAlign { Left, Center, Right, Justify }
 
 /// <summary>从 HTML 头部抽出的文档元数据（PDF 元数据用），随根 ComputedStyle 返回，不做全局态。</summary>
 public sealed record DocumentInfo(string? Title, string? Author, string? Description, string? Keywords);
