@@ -335,16 +335,29 @@ public static class CssValueParser
         return first.Trim('\'', '"');
     }
 
+    /// <summary>font-weight。`bolder`/`lighter` 是**相对**父字重的：固定成 800 时 `<b>` 在
+    /// Segoe UI 这类只有 400/700 两档的字族上会掉进合成粗体（"bold"@10.5 恒宽 1px 差）。
+    /// 换算表按本机无头 Chrome 实测（spec/_probe-fw.html，父字重 100..900 逐一问 computed value）。</summary>
     public static int ParseFontWeight(string value, int fallback = 400)
     {
         if (int.TryParse(value, out var w)) return w;
         if (value is null) return fallback;
         var v = value.AsSpan().Trim();
         if (v.Equals("bold", StringComparison.OrdinalIgnoreCase)) return 700;
-        if (v.Equals("bolder", StringComparison.OrdinalIgnoreCase)) return 800;
-        if (v.Equals("lighter", StringComparison.OrdinalIgnoreCase)) return 300;
+        if (v.Equals("bolder", StringComparison.OrdinalIgnoreCase)) return RelativeWeight(fallback, bolder: true);
+        if (v.Equals("lighter", StringComparison.OrdinalIgnoreCase)) return RelativeWeight(fallback, bolder: false);
         if (v.Equals("normal", StringComparison.OrdinalIgnoreCase)) return 400;
         return fallback;
+    }
+
+    // 下标 = 父字重归档（100→1 … 900→9，≤50 归 0 档）
+    static readonly int[] BolderByParent = [400, 400, 400, 400, 700, 700, 900, 900, 900, 900];
+    static readonly int[] LighterByParent = [100, 100, 100, 100, 100, 100, 400, 400, 700, 700];
+
+    static int RelativeWeight(int parent, bool bolder)
+    {
+        int slot = Math.Clamp((parent + 50) / 100, 0, 9);
+        return (bolder ? BolderByParent : LighterByParent)[slot];
     }
 
     /// <summary>flex-grow / flex-shrink：无单位数字，非法时回退默认。</summary>

@@ -153,7 +153,7 @@ public static class TextShaper
             if (!legacy && tf.GetGlyph(cp) != 0) { w += own; continue; }
             w += (wide ? half * 2 : half) + fauxBold;
         }
-        return w + ls * Math.Max(0, GraphemeCount(text) - 1);
+        return w + ls * GraphemeCount(text);
     }
 
     /// <summary>统一宽度：shaped run 用 HarfBuzz advance（字距对连写 run 不加 ls，见类注释）；否则走老公式。</summary>
@@ -180,7 +180,7 @@ public static class TextShaper
             w += p.MeasureText(seg) + KernTable.Of(seg, face, size);
             units += GraphemeCount(seg);
         }
-        return w + ls * Math.Max(0, units - 1);
+        return w + ls * units;
     }
 
     /// <summary>切成「同一字面」的连续段（以字素为界，与绘制端逐字素回退同口径）。</summary>

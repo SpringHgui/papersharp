@@ -258,7 +258,9 @@ public static class TextMeasurer
         || (c >= 0xAC00 && c <= 0xD7AF) // 韩文
         || (c >= 0xF900 && c <= 0xFAFF); // CJK 兼容表意文字
 
-    /// <summary>整串宽度（含 letter-spacing 与字体字距对）。空串→0。复杂文字/缺字形走 TextShaper 通路。</summary>
+    /// <summary>整串宽度（含 letter-spacing 与字体字距对）。空串→0。复杂文字/缺字形走 TextShaper 通路。
+    /// letter-spacing 计**每个字符之后**都加一次（含末字符与词间空格）——Blink 就是把间距加在每个 cluster 上，
+    /// 实测 "PDFBENCH X VISUAL CHALLENGE"@13 ls:1px：Chrome 233.05 = 206.04 + 27×1，按 n−1 只给 226.04。</summary>
     public static float LineWidth(string s, SKFont font, float letterSpacing)
     {
         if (string.IsNullOrEmpty(s)) return 0;
@@ -268,7 +270,7 @@ public static class TextMeasurer
             return TextShaper.WidthOf(s, font.Typeface, font.Size, letterSpacing);
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
         return paint.MeasureText(s) + KernTable.Of(s, font.Typeface, font.Size)
-            + letterSpacing * Math.Max(0, s.Length - 1);
+            + letterSpacing * s.Length;
     }
 
     static float TokenWidth(string token, SKFont font, float ls)
@@ -278,7 +280,7 @@ public static class TextMeasurer
         if (TextShaper.NeedsSpecial(token, font.Typeface))
             return TextShaper.WidthOf(token, font.Typeface, font.Size, ls);
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
-        return paint.MeasureText(token) + KernTable.Of(token, font.Typeface, font.Size) + ls * Math.Max(0, token.Length - 1);
+        return paint.MeasureText(token) + KernTable.Of(token, font.Typeface, font.Size) + ls * token.Length;
     }
 
     /// <summary>文本不换行时的自然宽度（取多行中最长的一行）。flex 主轴 base 用。</summary>
@@ -296,7 +298,7 @@ public static class TextMeasurer
                 : TextShaper.NeedsSpecial(line, font.Typeface!)
                 ? TextShaper.WidthOf(line, font.Typeface!, font.Size, s.LetterSpacing)
                 : paint.MeasureText(line) + KernTable.Of(line, font.Typeface, font.Size)
-                    + s.LetterSpacing * Math.Max(0, line.Length - 1);
+                    + s.LetterSpacing * line.Length;
             max = Math.Max(max, w);
         }
         return max;

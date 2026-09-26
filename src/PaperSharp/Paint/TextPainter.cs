@@ -268,7 +268,7 @@ public static class TextPainter
         var tf = paint.Typeface ?? SKTypeface.Default;
         if (TextShaper.NeedsSpecial(s, tf))
             return TextShaper.WidthOf(s, tf, paint.TextSize, letterSpacing);
-        return paint.MeasureText(s) + letterSpacing * Math.Max(0, s.Length - 1);
+        return paint.MeasureText(s) + letterSpacing * s.Length;
     }
 
     static float Clamp01(float v) => v < 0 ? 0 : v > 1 ? 1 : v;

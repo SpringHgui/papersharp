@@ -327,6 +327,8 @@ public static class FontManager
                     || tf.FamilyName.Contains(name, StringComparison.OrdinalIgnoreCase)
                     || name.Contains(tf.FamilyName, StringComparison.OrdinalIgnoreCase)))
             {
+                // 系统字面没有 PRKT，但字距在自带的 GPOS 里：解析一次登记进缓存（后续按 family/weight 命中）。
+                KernTable.AttachFromTables(tf);
                 return tf;
             }
             tf?.Dispose();

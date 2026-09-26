@@ -365,7 +365,7 @@ public static class SvgWriter
                 string line = box.WrappedLines[i];
                 if (line.Length == 0) { baseline += lineHeight; continue; }
                 float inset = box.LineLefts != null && i < box.LineLefts.Length ? box.LineLefts[i] : 0;
-                float textW = paint.MeasureText(line) + s.LetterSpacing * Math.Max(0, line.Length - 1);
+                float textW = paint.MeasureText(line) + s.LetterSpacing * line.Length;
                 float x = left + inset;
                 if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
                 else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;
