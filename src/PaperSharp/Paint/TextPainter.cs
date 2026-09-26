@@ -45,18 +45,15 @@ public static class TextPainter
         // 按 字号×行高 画会让每块 code 芯片比浏览器高出一截（m8 的 h1：37.4px vs 浏览器 25.5px）。
         // 口径与 Renderer.CollectInlineBoxes 报的行内盒一致：基线 ± 片段真实 ascent/descent
         // （baseline 已由调用方折进 vertical-align 的下移），纵向补元素自己的 padding+border（横向 Width 已含）。
-        if (!s.BackgroundColor.Equals(SKColor.Empty))
+        // 块自身的文字（HostText）一律跳过：它的 Style 就是块样式，铺出来的"行内背景"实为
+        // 块底色按块 padding 外扩，会把上一行文字的下半截盖掉（m4 卡片标题被裁的根因）。
+        if (!f.HostText && !s.BackgroundColor.Equals(SKColor.Empty))
         {
             float vTop = s.BorderWidthTop + s.PaddingTop, vBot = s.BorderWidthBottom + s.PaddingBottom;
             float top = baseline - f.Ascent - vTop;
             float bgH = f.Ascent + f.Descent + vTop + vBot;
-            using var bp = new SKPaint
-            {
-                Color = s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * op)),
-                Style = SKPaintStyle.Fill,
-                IsAntialias = true,
-            };
-            canvas.DrawRect(x, top, f.Width, bgH, bp);
+            BoxPainter.PaintInlineBackground(canvas, new SKRect(x, top, x + f.Width, top + bgH), s,
+                s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * op)));
         }
 
         var typeface = FontManager.Get(s.FontFamily, s.FontWeight);
@@ -72,8 +69,37 @@ public static class TextPainter
         };
         if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         // x/f.Width 已是 padding box；文字要让开元素自己的左 padding（背景与装饰照旧铺满整盒）
+        if (s.TextShadow != null)
+            DrawTextShadow(canvas, s, f.Text!, x + f.PadLeft, baseline, typeface, f.FontSize, s.LetterSpacing, false);
         DrawSpaced(canvas, f.Text!, x + f.PadLeft, baseline, paint, s.LetterSpacing);
         DrawDecoration(canvas, s, x, baseline, f.Width, color);
+    }
+
+    /// <summary>text-shadow：把同一串字形按各层的颜色/偏移/模糊再画一遍，垫在真字底下。层序按 CSS
+    /// （第一条画在最上层）倒着铺。走 <see cref="DrawVisualLine"/> 与正文同一条 shaping/回退通路，
+    /// PDF 的字形子集记账才不会把这些副本字形漏掉（漏了就是成品里阴影整块空白）。</summary>
+    static void DrawTextShadow(SKCanvas canvas, ComputedStyle s, string text, float x, float baseline,
+        SKTypeface tf, float fontSize, float ls, bool rtl)
+    {
+        var layers = s.TextShadow;
+        if (layers == null || text.Length == 0) return;
+        float op = Clamp01(s.Opacity);
+        using var paint = new SKPaint
+        {
+            TextSize = fontSize,
+            Typeface = tf,
+            IsAntialias = true,
+            SubpixelText = true,
+            Style = SKPaintStyle.Fill,
+        };
+        for (int i = layers.Count - 1; i >= 0; i--)
+        {
+            var sh = layers[i];
+            float sigma = sh.Blur / 2f;
+            paint.Color = sh.Color.WithAlpha((byte)Math.Round(sh.Color.Alpha * op));
+            paint.ImageFilter = sigma > 0.01f ? SKImageFilter.CreateBlur(sigma, sigma) : null;
+            DrawVisualLine(canvas, text, x + sh.OffsetX, baseline + sh.OffsetY, paint, ls, rtl);
+        }
     }
     /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。lefts 为每行左缩进（环绕浮动），可 null。
     /// fillShader/fillOverride 用于 background-clip:text（把背景渐变当作字形填充）。</summary>
@@ -111,6 +137,7 @@ public static class TextPainter
             if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
             else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;
 
+            DrawTextShadow(canvas, s, line, x, baseline, typeface, s.FontSize, ls, s.Direction == "rtl");
             DrawVisualLine(canvas, line, x, baseline, paint, ls, s.Direction == "rtl");
             DrawDecoration(canvas, s, x, baseline, textW, color);
             baseline += lineHeight;

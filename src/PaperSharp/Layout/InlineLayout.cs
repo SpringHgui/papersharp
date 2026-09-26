@@ -27,6 +27,7 @@ public sealed class InlineFrag
     public BlockBox? Box;
     public float X, Width, FontSize, Ascent, Descent;
     public float PadLeft, PadRight;   // 仅文本片段：盒相对文字的左右外扩（padding+border）
+    public bool HostText;             // 块自身文字：底色已由块盒铺过，绘制端不得再按行补背景（见 InlineAtom.HostText）
     public float AlignDY;   // vertical-align 生效后的基线下移量（文本 run；原子盒由 PositionInline 处理）
 }
 
@@ -124,6 +125,9 @@ public static class InlineLayout
         var lines = new List<LineBox>();
         float yCursor = topY;
         var cur = NewLine(atoms.Count > 0 ? atoms[0].Style : null);
+        // text-indent 只作用于本 IFC 的首行：左缩进 += indent、可用宽 -= indent（负值=悬挂缩进）
+        float ti = strut?.TextIndent ?? 0;
+        if (ti != 0) { cur.Inset += ti; cur.Avail = Math.Max(1, cur.Avail - ti); }
         float curW = 0, avail = cur.Avail;
 
         LineBox NewLine(ComputedStyle? firstStyle)
@@ -202,7 +206,7 @@ public static class InlineLayout
                     AddFrag(new InlineFrag
                     {
                         Style = a.Style, Text = tok, Width = pl + tw + pr0, PadLeft = pl, PadRight = pr0,
-                        FontSize = a.Style.FontSize, Ascent = asc, Descent = desc,
+                        FontSize = a.Style.FontSize, Ascent = asc, Descent = desc, HostText = a.HostText,
                     });
                 }
             }

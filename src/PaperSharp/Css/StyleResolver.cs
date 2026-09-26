@@ -1376,11 +1376,16 @@ public static class StyleResolver
         // text-indent / text-shadow：AngleSharp 没注册这两条属性时 computed 与 declared 都是空串，
         // 只能在读不到之后回头看元素**自己的** style 属性。不进 UnsupportedProps 兜底表：那张表按 tag/class
         // 建键，一条 `p[data-f=textindent]{text-indent:2em}` 会把 2em 漏给页面上所有 <p>。
-        var tiDecl = Decl("text-indent");
+        // 取声明值而非 computed：AngleSharp 的 computed 按渲染设备字号（16）折 em，
+        // 而 text-indent 的 em 该按**本元素字号**折（`.a{font-size:20px;text-indent:2em}` 实测 40px 而非 32px）。
+        var tiDecl = SpecOnly("text-indent");
         // text-indent 是继承属性：祖先写的缩进要落到本块首行（% 需要包含块宽，样式期拿不到 → 按 0）
         s.TextIndent = tiDecl.Length == 0 ? parent?.TextIndent ?? 0
                      : tiDecl.Contains('%') ? 0 : CssValueParser.ToPixels(tiDecl, s.FontSize);
-        s.TextShadow = CssValueParser.ParseShadowLayers(Decl("text-shadow"), s.FontSize, allowSpread: false);
+        // text-shadow 在 CSS 里是继承属性：本元素没写过就照抄父亲的那几层（含已折算好的 px 偏移）。
+        var tsDecl = SpecOnly("text-shadow");   // 同上：em 要按本元素字号折，别用 computed 的 16 折算结果
+        s.TextShadow = tsDecl.Length == 0 ? parent?.TextShadow
+                     : CssValueParser.ParseShadowLayers(tsDecl, s.FontSize, allowSpread: false);
 
         // list-style：AngleSharp 的 computed 会把初值 disc 与继承来的值一起吐出来，分不清"作者在本元素写过"，
         // 而 <ol type> 的 presentational hint 只在没写过时才生效 → 判"作者写过"只认声明值/内联属性（SpecOnly）。

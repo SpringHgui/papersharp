@@ -411,7 +411,26 @@ public static class SvgWriter
                    (s.FontWeight >= 600 ? " font-weight=\"bold\"" : "") +
                    $" fill=\"{Color(c)}\" fill-opacity=\"{F4(c.Alpha / 255f)}\"" +
                    (Math.Abs(s.LetterSpacing) > 0.01f ? $" letter-spacing=\"{F4(s.LetterSpacing)}\"" : "") +
+                   ShadowStyle(s) +
                    $" xml:space=\"preserve\">{Escape(text)}</text>";
+        }
+
+        /// <summary>text-shadow → CSS 同名属性（Chrome/Firefox 都对 SVG &lt;text&gt; 生效）。层序原样保留。</summary>
+        string ShadowStyle(ComputedStyle s)
+        {
+            if (s.TextShadow is not { Count: > 0 } layers) return "";
+            var sbs = new System.Text.StringBuilder(" style=\"text-shadow:");
+            for (int i = 0; i < layers.Count; i++)
+            {
+                var sh = layers[i];
+                if (i > 0) sbs.Append(',');
+                var col = sh.Color;
+                string cs = col.Alpha == 255 ? Color(col)
+                    : $"rgba({col.Red},{col.Green},{col.Blue},{F4(col.Alpha / 255f)})";
+                sbs.Append($" {F(sh.OffsetX)}px {F(sh.OffsetY)}px {F(sh.Blur)}px {cs}");
+            }
+            sbs.Append('"');
+            return sbs.ToString();
         }
 
         void EmitDecor(string text, float x, float y, ComputedStyle s, float fontSize, float width)
