@@ -1,65 +1,13 @@
 {
  "summary": {
-  "ok": 28,
-  "drift": 5,
+  "ok": 32,
+  "drift": 1,
   "engineOnly": 0,
   "browserOnly": 0,
   "worst": 3.0087899999999763,
-  "mean": 2.690642000000003
+  "mean": 3.0087899999999763
  },
  "rows": [
-  {
-   "path": "body[1]/main[1]/section[1]/div[1]/label[1]/input[1]",
-   "tag": "input",
-   "kind": "drift",
-   "e": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/input[1]",
-    "tag": "input",
-    "x": 116,
-    "y": 819.9844,
-    "w": 17.38889,
-    "h": 20
-   },
-   "b": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/input[1]",
-    "tag": "input",
-    "x": 116,
-    "y": 819.984375,
-    "w": 20,
-    "h": 20
-   },
-   "dx": 0,
-   "dy": -0.000025000000050567905,
-   "dw": 2.61111,
-   "dh": 0,
-   "max": 2.61111
-  },
-  {
-   "path": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]",
-   "tag": "span",
-   "kind": "drift",
-   "e": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]",
-    "tag": "span",
-    "x": 147.38889,
-    "y": 813.9844,
-    "w": 608.6111,
-    "h": 64
-   },
-   "b": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]",
-    "tag": "span",
-    "x": 150,
-    "y": 813.984375,
-    "w": 606,
-    "h": 64
-   },
-   "dx": 2.6111099999999965,
-   "dy": -0.000025000000050567905,
-   "dw": -2.611099999999965,
-   "dh": 0,
-   "max": 2.6111099999999965
-  },
   {
    "path": "body[1]/main[1]/header[1]/p[1]/span[1]",
    "tag": "span",
@@ -85,58 +33,6 @@
    "dw": 0.6097749999999991,
    "dh": 0,
    "max": 3.0087899999999763
-  },
-  {
-   "path": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]/a[1]",
-   "tag": "a",
-   "kind": "drift",
-   "e": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]/a[1]",
-    "tag": "a",
-    "x": 287.3889,
-    "y": 816.9844,
-    "w": 120,
-    "h": 26
-   },
-   "b": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]/a[1]",
-    "tag": "a",
-    "x": 290,
-    "y": 816.984375,
-    "w": 120,
-    "h": 26
-   },
-   "dx": 2.6111000000000217,
-   "dy": -0.000025000000050567905,
-   "dw": 0,
-   "dh": 0,
-   "max": 2.6111000000000217
-  },
-  {
-   "path": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]/a[2]",
-   "tag": "a",
-   "kind": "drift",
-   "e": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]/a[2]",
-    "tag": "a",
-    "x": 427.3889,
-    "y": 816.9844,
-    "w": 120.00003,
-    "h": 26
-   },
-   "b": {
-    "domPath": "body[1]/main[1]/section[1]/div[1]/label[1]/span[1]/a[2]",
-    "tag": "a",
-    "x": 430,
-    "y": 816.984375,
-    "w": 120,
-    "h": 26
-   },
-   "dx": 2.6111000000000217,
-   "dy": -0.000025000000050567905,
-   "dw": -0.000029999999995311555,
-   "dh": 0,
-   "max": 2.6111000000000217
   }
  ]
 }

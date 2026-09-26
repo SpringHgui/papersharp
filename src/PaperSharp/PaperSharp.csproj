@@ -14,7 +14,7 @@
     <Version>0.1.0</Version>
     <PackageId>PaperSharp</PackageId>
     <Authors>SpringHgui</Authors>
-    <Description>面向 .NET 的高性能文档渲染引擎：纯托管管线把 HTML/CSS 编译为矢量 PDF 与高清图片（PNG/JPEG/WebP/ICO/SVG），无需浏览器、无需 headless Chrome。</Description>
+    <Description>要出分页文档，不必再为它养一个浏览器：一行 Renderer.RenderPdf(html, css) 就在 .NET 进程内产出矢量 PDF —— 文字可选中可搜索，@page 页边距、页眉页脚页码、表格跨页续 + 每页重放表头全部自动到位。单页中位约 30ms、单线程吞吐约 40 页/秒，类库线程安全可并发；零子进程、零调试端口、零 V8 内存包袱，容器与 CI 里开箱即用。内建中文原生排版（CJK 逐字折行、GB2312 字体子集 + 用字级嵌入，纯文字单页 PDF 约 90KB、中文数字页码），同一输入恒定产物，适合发票、合同、财务报表；同一管线还能出 PNG / JPEG / WebP / ICO / SVG。</Description>
     <PackageTags>pdf;html;css;render;document;skia;printing</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/SpringHgui/papersharp</PackageProjectUrl>

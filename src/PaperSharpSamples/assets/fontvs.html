@@ -66,7 +66,11 @@
 
   /* ---------------------------- 筛选区 ------------------------------ */
   .filters { padding: 83px 64px 43px; }
-  .frow { display: flex; align-items: flex-start; gap: 40px; }
+  .frow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 32px; }
+  /* 筛选条目一律不参与收缩：CJK 的 min-content 只有 1 个字，
+     一旦 shrink 生效，浏览器按字断行而引擎按词断行，整行高度就分叉。 */
+  .frow > div { flex: none; }
+  .fitems { white-space: nowrap; }
   .flabel { font-size: 16px; line-height: 20px; color: var(--ink-2); }
   .flabel .pill {
     display: inline-block;

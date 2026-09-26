@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PaperSharp 网页导出",
   "version": "0.1.0",
-  "description": "把当前网页导出为 PaperSharp 引擎支持的 PDF / PNG / JPEG / WebP / SVG / ICO —— 本机 .NET+WASM 渲染，不截图、不上传、不依赖服务端。",
+  "description": "任意网页一键导出 PDF / PNG / JPEG / WebP / SVG / ICO：本机 .NET+WASM 真渲染，不是截图拼图，PDF 文字可选中可搜索，页面内容永不上传。",
   "minimum_chrome_version": "116",
   "permissions": ["offscreen", "downloads", "alarms"],
   "host_permissions": ["<all_urls>"],

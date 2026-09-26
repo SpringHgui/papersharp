@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; margin: 0; font-size: 15px; }
+div { border: 1px solid #ccc; }
+/* 定高 + 绝对行高：m9 的 .box 形状，行盒高决定文字基线 */
+.a { height: 46px; line-height: 46px; }
+/* 无 height：块高 = 行数 × 行盒高，绝对行高直接决定盒高 */
+.b { line-height: 22px; }
+.c { line-height: 1.5em; }
+.d { font-size: 30px; line-height: 1.5em; }
+.e { line-height: 16.5px; }
+/* 继承：父给绝对行高，子字号不同 → 子行盒仍是父折算出的那个绝对值 */
+.p { line-height: 40px; font-size: 12px; }
+.k { font-size: 20px; }
+</style>
+</head>
+<body>
+<div class="a">定高 46 / 行高 46</div>
+<div class="b">行高 22px 的一段文字，用来验证块高是否等于行数乘行盒</div>
+<div class="c">行高 1.5em</div>
+<div class="d">30px 字号 + 1.5em</div>
+<div class="e">行高 16.5px</div>
+<div class="p"><span class="k">继承绝对行高</span></div>
+</body>
+</html>

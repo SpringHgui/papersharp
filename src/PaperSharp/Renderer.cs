@@ -24,7 +24,6 @@ public static class Renderer
         var pages = Paginator.Paginate(body, spec);
         var (outlines, links) = Pdf.PdfSemantic.Collect(pages);   // M5：书签 + 链接注释
 
-        using var ms = new MemoryStream();
         var meta = new SKDocumentPdfMetadata
         {
             Title = docInfo?.Title ?? "PaperSharp",
@@ -36,6 +35,37 @@ public static class Renderer
             RasterDpi = 72,
             EncodingQuality = 90,
         };
+
+        // Skia 的 PDF 后端整嵌字体文件（不子集化）：不裁字体时一份 2.4MB 的 CJK 子集字体就能撑爆
+        // 任何 PDF，且 deflate 它要花掉单页耗时的 85%+。这里双趟：
+        //   ①录制趟——同一套 PagePainter 往 scratch 画布空跑，记下每张 face 真正画过的字形；
+        //   ②真绘趟——字体换成只含这些字形的子集 face（GID 保持，度量/shaping 零漂移），Skia 只嵌这点字节。
+        // 真绘趟逐字继续校验：见到录制趟没见过的字形即整趟作废、退回原始字体重绘（预期永不触发）。
+        using var usage = Pdf.PdfGlyphUsage.Begin();
+        int pw = Math.Max(1, (int)Math.Ceiling(spec.PageW)), ph = Math.Max(1, (int)Math.Ceiling(spec.PageH));
+        using (var scratch = SKSurface.Create(new SKImageInfo(pw, ph)))
+            for (int i = 0; i < pages.Count; i++)
+            {
+                scratch.Canvas.Clear(SKColors.White);
+                // 与真绘趟逐字同参（含页码/总页数），否则录制出的字形集会偏
+                PagePainter.PaintPage(scratch.Canvas, pages[i], spec.PageW, spec.PageH);
+                MarginBoxRenderer.Render(scratch.Canvas, spec, i + 1, pages.Count);
+            }
+        usage.BuildSubsets();
+
+        byte[] raw = EncodePdfPages(pages, spec, meta);
+        if (usage.Violated)
+        {
+            usage.RetryWithoutSubsets();
+            raw = EncodePdfPages(pages, spec, meta);
+        }
+        // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
+        return Pdf.PdfEnhancer.Enhance(raw, outlines, links, spec.PageH);
+    }
+
+    static byte[] EncodePdfPages(List<Page> pages, PageSpec spec, SKDocumentPdfMetadata meta)
+    {
+        using var ms = new MemoryStream();
         using (var pdfDoc = SKDocument.CreatePdf(ms, meta))
         {
             for (int i = 0; i < pages.Count; i++)
@@ -47,8 +77,7 @@ public static class Renderer
             }
             pdfDoc.Close();
         }
-        // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
-        return Pdf.PdfEnhancer.Enhance(ms.ToArray(), outlines, links, spec.PageH);
+        return ms.ToArray();
     }
 
     /// <summary>

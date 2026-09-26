@@ -9,11 +9,12 @@
 ## 0. 结论速览（TL;DR）
 
 1. **PDF 的端到端耗时几乎全在"编码"，不在布局。** `SKDocument` 编码（主要是把 ~1.8MB 字体子集写进文档）占单页 PDF 总时间 **85%–95%**；真正的布局计算（measure+paginate）只有 **1–4ms**。
+   > **⚠️ 2026-09-26 已改写**：编码段那 85–95% 的绝对大头是「整嵌一份本次根本用不到的字体」。自研保 GID 的字体裁剪 + 双趟渲染落地后，单页 PDF 中位 228.6 → **31.0 ms**、体积 2464 → **94 KB**，见 §11。本条与下面 §3/§4/§7 的绝对数字均为改前留档。
 2. **PNG 比 PDF 快一个量级。** 热态小文档 PNG 中位 ~27–107ms、PDF 中位 ~184–280ms。差异就是 PDF 的字体嵌入 + PDF backend 初始化。
 3. **`buildDoc`（逐元素 `GetComputedStyle` 层叠）曾超线性 ~O(n^2.5)——但「它是不是第一瓶颈」取决于两个变量。** 规模扫描里 table 200→2000 行 buildDoc 1.0s→74.4s（×74），flexlist 同步恶化（410ms→21.5s，×52），两种结构同受害 → 成本在**元素个数**，与元素类型无关。**但「上千元素时层叠反超一切」不能笼统外推**：§6 的 22 个真实页面样例（15–501 元素、单幅 3.0–27.9 Mpx）上，改编码器之前编码占端到端 **70%**，元素最多的 m1（501 盒）层叠只有 323ms 而编码 628ms。正确的口径是**两个区间**——① 产物像素数主导（元素数百级、位图百万像素级）→ 编码第一；② 元素数上千 → 层叠第一，且与产物大小无关。本轮把编码压到 14% 之后，①的门槛大幅下移，500 元素级的真实页面（m1 / pricing-*）也已翻转为层叠第一（见 §5.1 末、§6）。这是 M6「自研级联替换 AngleSharp.Css」的核心量化依据（见 §5、§6、§8）。
 4. **手写布局层可扩展性良好。** 2000 条目时 measure+position 合计仅 76ms（table）/ 162ms（flexlist），position 段近似线性。
 5. **发现并已修复一个真实历史缺陷：表格定位曾是 O(行²)。** `PositionTable` 每行重遍历整棵表树取行盒；修复后 400 行定位 **16.78ms → 0.296ms（≈57×）**，回到线性（见 §5 历史小节）。
-6. **吞吐**：单页常规文档（invoice）热态 **4.9 页/秒**（Workstation GC、单线程）。
+6. **吞吐**：单页常规文档（invoice）热态 **4.9 → 42.4 页/秒**（Workstation GC、单线程；提升来自 §11 的字体子集化）。
 7. **冷启动首帧**（旧 Debug 数据）：PDF ~630ms、PNG ~64ms；之后进入热态。
 8. **✅ 已落地（09-23 那一轮，M6 步骤②+⑥）：展平快照路径换掉逐元素 `GetComputedStyle`。** 同一份 WASM 产物、同一张 964 盒真实站点快照，`precomputed` 渲染 **23.3s → 3.0s（≈7.8×）**，两路 PNG **字节完全相同**（131,980 B）。仅覆盖扩展展平快照；作者 CSS 路径仍是 AngleSharp 全量层叠（见 §5.4；其超线性已于本轮消掉，见 §5.5）。
 9. **✅ 已落地（2026-09-24 本轮）：自研并行 PNG 编码器换掉 `SKImage.Encode`。** Playground 口径（22 个真实页面样例）下编码段 **4752 → 339ms（14×）**、全语料端到端 **6761 → 2471ms（2.74×）**，逐像素与 Skia 输出相同、22 样例基准图无需重录。**同时纠正一处旧定性**：Playground 语料上「第一瓶颈」原本是编码不是层叠（见 §0.3 的两区间口径）。
@@ -534,3 +535,104 @@ bash tools/sweep.sh && node tools/compare.mjs <before.txt> <after.txt>
 
 基准代码：`src/PaperSharpSamples/Benchmark.cs`（`Playground` / `CanvasLifecycle`）+ `EncodeProbe.cs` + `CascadeProbe.cs` + `GoldenPixelCheck.cs`；入口分发在 `Program.cs`。输出为机器可读 CSV 行（`LAT` / `STAGE` / `MEM` / `SCALE` / `THROUGHPUT` / `PG` / `ENC` / `ALC` / `BLD`）。最新一次净跑输出：`src/PaperSharpSamples/bench_20260922.txt`（§3–§7）与 `src/PaperSharpSamples/pgstage_20260924_head.csv` / `..._work.csv`（§6）。
 **跑基准前别同时跑测试或另一个探针**（§9 第 5 条有实例），跑回归门之前先 `git status` 确认没有别人的并发改动。
+
+---
+
+## 11. PDF 字体子集化：速度 + 体积同一个根因，一次拿下（2026-09-26 本轮）
+
+### 11.1 根因（实测，不是推断）
+
+**Skia 的 PDF 后端对字体零子集化**：整份字体文件原样嵌进 PDF，再 deflate 一遍。2.88.9 与 3.119.2 行为一致，
+`SKDocumentPdfMetadata` 也没暴露任何相关开关——升级与调参两条路都堵死，只能自己裁。
+
+代价按字体字节数线性放大，两个探针实测：
+
+| 输入 | 嵌的字体 | PDF 体积 | paintEncode |
+|---|---|---:|---:|
+| 43 个拉丁字符 | Segoe UI（系统，未子集化） | 530 KB | — |
+| 同上 | msyh.ttc（12 MB 全量） | 12 MB | 952 ms |
+| 常规单页样例 | 打包的 GB2312 子集字体 ×2 face（各 1.8–2.5 MB） | ≥2.4 MB | 170–290 ms（占端到端 **85–95%**） |
+
+也就是说 §4 那句「PDF 的端到端耗时几乎全在编码」的真正内容是：**在编码一份每次都用不到的字体**。
+体积同理——纯文字发票 2.4 MB、report 5.4 MB、含 emoji 的 m7 18.7 MB、UI 还原页 login-page 23 MB。
+
+### 11.2 落地：保 GID 的 glyf/loca 裁剪器
+
+`src/PaperSharp/Pdf/TtfSubsetter.cs`。只重建 `glyf` + `loca`（必要时 short/long 格式互转）与 `head`
+（`indexToLocFormat`、`checkSumAdjustment`），**其余表逐字节原样复制**，且**字形 ID 不重编号**——
+所以 `cmap` / `hhea` / `GPOS` / `GSUB` / 度量 / shaping 全部零漂移，HarfBuzz 那条路不需要任何配套改动。
+（在此之上再补两刀与绘制无关的字节：§11.5 的死表清单、`hmtx`/`vmtx` 尾部收口——后者会改 `hhea`，
+但保留 GID 的度量逐字节不变，由 `TtfSubsetterTests` 的「同 face 逐字面宽度 + 栅格全等」把门。）
+复合字形做部件闭包（`ARGS_WORDS` / `WEIGHT_1X` 等标志逐字节解析，坏数据直接放弃裁剪）。
+无 `glyf`（CFF）或读表异常 → 返回 null，调用方保持整嵌，**绝不出坏字体**。
+
+### 11.3 落地：双趟渲染 + 校验回退
+
+`src/PaperSharp/Renderer.cs::RenderPdf` + `src/PaperSharp/Pdf/PdfGlyphUsage.cs`：
+
+1. **录制趟**：同一套 `PagePainter.PaintPage` / `MarginBoxRenderer.Render` 往一张 scratch 位图画布空跑，
+   经 `PdfGlyphUsage.DrawText` / `DrawShaped` 记下每张 face 真正画过哪些字形（参数与真绘趟逐字相同，
+   含页码/总页数，否则录出来的集合会偏）。
+2. `BuildSubsets()`：按用字集合裁 face，进程级缓存（键 = 原 face 引用 + 排序后的 GID 数组，上限 48）。
+3. **真绘趟**：绘制点把 face 换成子集，Skia 只嵌这点字节；同时继续逐字录制，
+   见到第 1 趟没记到的字形即置 `Violated` → 扔掉子集、原字体整趟重绘。
+
+选「拿同一套绘制代码空跑」而不是「手工遍历盒子树收集文字」，是因为后者一旦漏掉某处绘制点就是
+**静默空白字形**；前者的失败模式是 `Violated` 变红退回整嵌——只慢，不错。PNG/SVG 路径不设 `Current`，
+所有钩子直接透传，绘制行为零改动。
+
+### 11.4 两个静默坑（都只改像素、不抛异常）
+
+1. **彩色字体不能裁。** `seguiemj.ttf` 裁出的字节里 `COLR`/`CPAL` 明明还在，但经 `SKTypeface.FromData`
+   重建后不再被识别为彩色字体：Skia 光栅**什么都不画**，PDF 读回来退化成单色线稿。m7 的 emoji
+   从彩色变黑白描边、栅格 diff 0.29% 才暴露。现在 `IsColorFont` 命中 `COLR`/`CBDT`/`sbix`/`SVG ` 即跳过裁剪。
+2. **记账本 `cur` 必须 `[ThreadStatic]`。** 写成普通 static 时，xUnit 并行跑 `PdfRasterTests` 会把录制态
+   漏进 PNG 路径（钩子只判 `cur == null`），一次改动炸出 35 个失败、其中一半是 `PngGoldenTests`——
+   看着像"我改了绘制"，其实是线程污染。
+
+### 11.5 效果（Release `bench 30`，同一台机器；改前 `bench_pdf_baseline.txt` → 改后 `src/PaperSharpSamples/bench_pdf_20260926_final.txt`）
+
+| 样例 | PDF 中位 ms | PDF 体积 KB |
+|---|---:|---:|
+| invoice | 228.6 → **31.0**（7.4×） | 2464 → **94**（26×） |
+| long | 199.1 → **52.0**（3.8×） | 2465 → **112**（22×） |
+| flex | 209.9 → **33.9**（6.2×） | 2465 → **101**（24×） |
+| img | 224.8 → **27.5**（8.2×） | 2474 → **100**（25×） |
+| report | 466.0 → **64.8**（7.2×） | 5447 → **188**（29×） |
+| pct | 300.4 → **38.7**（7.8×） | 3946 → **151**（26×） |
+| polish | 282.6 → **38.6**（7.3×） | 3706 → **131**（28×） |
+| inline | 220.0 → **34.3**（6.4×） | 2992 → **136**（22×） |
+| table | 243.9 → **43.6**（5.6×） | 2988 → **118**（25×） |
+| **单线程吞吐** | **5.1 → 42.4 页/秒**（8.3×） | 托管堆增量 23.5 → 5.5 MB |
+
+体积上字体之后还有第二刀，都在 `TtfSubsetter` 里：
+
+- **扔掉与绘制无关的死表**：`PRKT`（微软私有，雅黑里 176 KB）、`hdmx`（设备像素度量表，雅黑里 **501 KB**）、
+  `LTSH`、`MERG`、`meta`、`DSIG`。这些在「保 GID 原样拷贝」的初版里是逐字节跟着走的，
+  纯文字 PDF 剪完字形后剩下的**就是它们**（report 改前 267 KB → 改后 122 KB）。**不碰** `VDMX`（部分渲染器据此取 CJK 设备行高）。
+- **hmtx/vmtx 收口到最后一个保留字形**：这两张表是「每 GID 一条」的定长数组，不跟着收的话，
+  114 个用字的发票要背 6763 条度量。折叠语义用表原生的「`numberOfHMetrics` 之后共用最后一条」表达，
+  中间空洞不动（只收尾部）。login-page 的 `hmtx` 117 KB / `cmap` 101 KB 即此。
+
+样例之外的极端口径（`html <名>` 产物）：m7 18.7 → **6.8 MB**（emoji 那张 COLR 字体仍整嵌，见 §11.6）、
+login-page 23.2 → **0.29 MB**、pricing-page 23.2 → **0.43 MB**、fontvs 77.8 → **6.8 MB**。
+
+**门**：全量测试 274 例 272 绿（含 `PdfRasterTests` 17/17 逐像素、`PngGoldenTests` 12/12、`ConcurrencyTests` 全绿），
+基准 PNG **无需重录**。新增 `tests/PaperSharp.Tests/TtfSubsetterTests.cs` 7 例：5 张打包字体逐字面
+「cmap→GID 相同 + 宽度相同 + 48×48 栅格逐字节相同」、裁剪体积、以及端到端 invoice < 1.4 MB。
+（仅剩 `BoxGoldenTests` 的 fontvs / framer-motion 两例红，属并发的 flex 尺寸改动，与字体链路无关。）
+
+### 11.6 改完之后的新瓶颈
+
+- `paintEncode` 冷跑（无字形缓存）仍在 160–300 ms 量级；热态端到端已降到 31–65 ms，
+  与 PNG 出口（15–35 ms）拉近到 2× 以内。剩余是 PDF 后端本身 + 位图嵌入。
+- **彩色字体（emoji）是唯一没被裁动的大块**：`seguiemj.ttf` 的 `COLR` 表 7.2 MB（v1 格式，
+  coverage 覆盖全部 64883 个字形），m7 那 6.8 MB 里 6.5 MB 是它。要收需要解析 COLR v1 的
+  LayerList / BaseGlyphList 做图层闭包——收益只覆盖「含 emoji 的页」，本轮按性价比未做。
+  实测确认：`FromData` 灌**原样字节**彩色照常（3973 彩色像素），是裁剪让图层 GID 掉出闭包才变黑白，
+  所以这条是「可解」而不是「无解」。
+- **位图**（`RasterDpi=72` / `EncodingQuality=90` 直接进 PDF）是 UI 还原类页面的下一个体积杠杆。
+- 剩余的字体字节大头是 `cmap`（login-page 101 KB）与 `GPOS`/`GSUB`，同样需要真正的表重建才能收，
+  deflate 后收益 ~10–30 KB / 页，本轮未做。
+- 编码压下来之后，`buildDoc`（层叠）在重页上重新成为第一瓶颈（§0.3 的两区间口径再次成立）。
+12. **✅ 已落地（2026-09-26 本轮，§11）：PDF 字体子集化——速度与体积是同一个根因。** Skia 的 PDF 后端**完全不子集化字体**（2.88.9 / 3.119.2 实测一致，也无参数可调），每次渲染整嵌 1.8–2.5 MB 的 CJK 子集字体再 deflate，这就是 §4 里 paintEncode 85–95% 的全部内容。自研「保 GID 的 glyf/loca 裁剪器」（其余表逐字节原样复制 → cmap/hmtx/GPOS/GSUB 与 shaping 零漂移）+ 双趟渲染（同一套 PagePainter 先往 scratch 画布空跑录字形，真绘趟换子集 face 并逐字校验，见未录到的字形即整趟作废退回原字体重绘）：invoice **7.4× 提速 / 26× 减体积**、report 7.2×/29×、吞吐 5.1 → 42.4 页/秒、托管堆增量 23.5 → 5.5 MB；UI 还原页 login-page 23.2 → 0.29 MB。门：全量 272/274 绿、**PNG 与 PDF 栅格基准一张都不用重录**。两条只改像素不抛异常的坑（彩色字体裁不得、记账本必须 `[ThreadStatic]`）见 §11.4。

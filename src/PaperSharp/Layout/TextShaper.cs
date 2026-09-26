@@ -185,7 +185,7 @@ public static class TextShaper
         try
         {
             using var shaper = new SKShaper(typeface);
-            canvas.DrawShapedText(shaper, text, x, y, paint);
+            Pdf.PdfGlyphUsage.DrawShaped(canvas, shaper, text, x, y, paint);
             return true;
         }
         catch

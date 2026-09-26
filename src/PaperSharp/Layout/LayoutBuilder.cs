@@ -139,7 +139,7 @@ public static class LayoutBuilder
     /// <summary>flex 子项：强制内容宽 = 分配到的主轴尺寸，再测高。</summary>
     static void MeasureWithContentWidth(BlockBox box, float contentWidth, float containingHeight)
     {
-        if (box.IsReplaced) { MeasureImage(box, contentWidth); return; }
+        if (box.IsReplaced) { MeasureImage(box, contentWidth, availIsOwnContent: true); return; }
         box.Style.ResolveBoxSizes(contentWidth);   // 走 Measure 主入口才做的声明值→float 折算，这里补上（否则子项 padding/margin 恒 0）
         ResetEdgeMargins(box);
         box.ContentWidth = contentWidth;
@@ -214,11 +214,14 @@ public static class LayoutBuilder
         return Math.Max(0, v);
     }
 
-    /// <summary>替换元素（img）：按 CSS 尺寸（含 width%）+ 自然尺寸定 content 盒，保持纵横比。</summary>
-    static void MeasureImage(BlockBox box, float availWidth)
+    /// <summary>替换元素（img / 内联 svg）：按 CSS 尺寸（含 width%）+ 自然尺寸定 content 盒，保持纵横比。
+    /// <paramref name="availIsOwnContent"/>：调用方传的不是包含块可用宽而是**已分配给本盒的内容宽**
+    /// （flex 子项走这条），此时自身 margin 不能再从可用空间里扣——扣了会把 16px 图标压成 8px。</summary>
+    static void MeasureImage(BlockBox box, float availWidth, bool availIsOwnContent = false)
     {
         var s = box.Style;
-        float decoW = s.MarginLeft + s.MarginRight + s.BorderWidthLeft + s.BorderWidthRight + s.PaddingLeft + s.PaddingRight;
+        float decoW = s.BorderWidthLeft + s.BorderWidthRight + s.PaddingLeft + s.PaddingRight
+            + (availIsOwnContent ? 0 : s.MarginLeft + s.MarginRight);
         float availContent = Math.Max(0, availWidth - decoW);
         float nw = box.NaturalW, nh = box.NaturalH;
         float ratio = nw > 0 && nh > 0 ? nh / nw : 1f;
@@ -1175,7 +1178,8 @@ public static class LayoutBuilder
         }
     }
 
-    /// <summary>子项主轴 base：flex-basis（%相对主轴可用；border-box 时含自身 padding/border）> 显式 width/height > 内在尺寸。</summary>
+    /// <summary>子项主轴 base（内容尺寸）：flex-basis（%相对主轴可用；border-box 时含自身 padding/border）
+    /// > 显式 width/height（同样按 box-sizing 决定声明值含不含装饰）> 内在尺寸。</summary>
     static float FlexBase(BlockBox c, bool isRow, float mainAvail, float? containerDefH)
     {
         var s = c.Style;
@@ -1183,10 +1187,11 @@ public static class LayoutBuilder
         {
             float r = s.FlexBasis.Resolve(mainAvail);
             if (!float.IsNaN(r))
-                return s.BoxSizing == "border-box" ? r - MainDeco(c, isRow) : r;
+                return s.BoxSizing == "border-box" ? r - MainBorderPadding(c, isRow) : r;
         }
         float dim = isRow ? s.Width.Resolve(mainAvail) : s.Height.Resolve(containerDefH ?? float.NaN);
-        if (!float.IsNaN(dim)) return dim;
+        if (!float.IsNaN(dim))
+            return s.BoxSizing == "border-box" ? Math.Max(0, dim - MainBorderPadding(c, isRow)) : dim;
         return isRow ? IntrinsicContentWidth(c) : c.ContentHeight;
     }
 
@@ -1200,6 +1205,12 @@ public static class LayoutBuilder
     static float MainDeco(BlockBox c, bool isRow) => isRow
         ? c.Style.MarginLeft + c.Style.MarginRight + c.Style.BorderWidthLeft + c.Style.BorderWidthRight + c.Style.PaddingLeft + c.Style.PaddingRight
         : c.Style.MarginTop + c.Style.MarginBottom + c.Style.BorderWidthTop + c.Style.BorderWidthBottom + c.Style.PaddingTop + c.Style.PaddingBottom;
+
+    /// <summary>主轴上的 padding+border（不含 margin）。box-sizing:border-box 的声明尺寸换内容尺寸用它——
+    /// margin 由 <see cref="MainDeco"/> 在分配外单独加，扣进尺寸里等于扣两遍。</summary>
+    static float MainBorderPadding(BlockBox c, bool isRow) => isRow
+        ? c.Style.BorderWidthLeft + c.Style.BorderWidthRight + c.Style.PaddingLeft + c.Style.PaddingRight
+        : c.Style.BorderWidthTop + c.Style.BorderWidthBottom + c.Style.PaddingTop + c.Style.PaddingBottom;
 
     /// <summary>内在宽的两个口径：max-content（不折行）与 min-content（每个断行机会都断）。</summary>
     enum Intrinsic { Max, Min }

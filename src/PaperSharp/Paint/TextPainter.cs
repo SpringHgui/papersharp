@@ -41,11 +41,15 @@ public static class TextPainter
         float op = Clamp01(s.Opacity);
         byte alpha = (byte)Math.Round(op * 255);
 
-        // inline 背景：覆盖文字行高区间（用 frag 字号 + 一点降部），仅纯色
+        // inline 背景：CSS 里行内盒只有**字体内容区**那么高，line-height 只撑行盒、不撑它自己，
+        // 按 字号×行高 画会让每块 code 芯片比浏览器高出一截（m8 的 h1：37.4px vs 浏览器 25.5px）。
+        // 口径与 Renderer.CollectInlineBoxes 报的行内盒一致：基线 ± 片段真实 ascent/descent
+        // （baseline 已由调用方折进 vertical-align 的下移），纵向补元素自己的 padding+border（横向 Width 已含）。
         if (!s.BackgroundColor.Equals(SKColor.Empty))
         {
-            float top = baseline - f.FontSize;
-            float bgH = Math.Max(f.FontSize, s.LineHeightPx());
+            float vTop = s.BorderWidthTop + s.PaddingTop, vBot = s.BorderWidthBottom + s.PaddingBottom;
+            float top = baseline - f.Ascent - vTop;
+            float bgH = f.Ascent + f.Descent + vTop + vBot;
             using var bp = new SKPaint
             {
                 Color = s.BackgroundColor.WithAlpha((byte)Math.Round(s.BackgroundColor.Alpha * op)),
@@ -161,7 +165,7 @@ public static class TextPainter
             return;
         }
         bool special = TextShaper.FirstUncovered(line, tf) != 0;
-        if (!special && Math.Abs(ls) < 0.01f) { canvas.DrawText(line, x, y, paint); return; }
+        if (!special && Math.Abs(ls) < 0.01f) { Pdf.PdfGlyphUsage.DrawText(canvas, line, x, y, paint); return; }
         // 逐字素排布：缺字形的字素换覆盖字体（一行混多脚本时每字素独立回退），其余情况仅 ls 逐字加距
         DrawPlainRun(canvas, line, x, y, paint, ls, tf);
     }
@@ -178,7 +182,7 @@ public static class TextPainter
             {
                 var gt = TextShaper.ResolveTypeface(g, tf);
                 if (!ReferenceEquals(gt, cur)) paint.Typeface = cur = gt;
-                canvas.DrawText(g, cx, y, paint);
+                Pdf.PdfGlyphUsage.DrawText(canvas, g, cx, y, paint);
                 cx += paint.MeasureText(g) + ls;
             }
         }

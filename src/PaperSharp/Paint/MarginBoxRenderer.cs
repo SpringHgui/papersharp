@@ -46,7 +46,7 @@ public static class MarginBoxRenderer
                 _ => spanLeft + (spanW - w) / 2f, // center
             };
 
-            canvas.DrawText(text, x, baseline, paint);
+            Pdf.PdfGlyphUsage.DrawText(canvas, text, x, baseline, paint);
         }
     }
 

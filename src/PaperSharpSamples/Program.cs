@@ -123,6 +123,12 @@ if (args.Length > 0 && args[0] == "pgstyle")
     CascadeProbe.Style(assets, sizes);
     return;
 }
+// PDF 字体嵌入行为探针：dotnet run -- pdfprobe
+if (args.Length > 0 && args[0] == "pdfprobe")
+{
+    PdfProbe.Run(assets, outDir);
+    return;
+}
 // 验证模式：把 SVG 文件栅格化为 PNG（用 Svg.Skia），供肉眼核对 SVG 输出
 if (args.Length > 2 && args[0] == "svgpng")
 {

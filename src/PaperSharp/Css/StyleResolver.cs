@@ -1043,7 +1043,7 @@ public static class StyleResolver
         var lhDeclared = Spec("line-height");
         if (lhDeclared.Contains("em", StringComparison.OrdinalIgnoreCase)) lhText = lhDeclared;
         float lhFactor = CssValueParser.ParseLineHeight(lhText);
-        s.LineHeightAbsPx = float.NaN; // TEMP
+        s.LineHeightAbsPx = CssValueParser.ParseLineHeightLength(lhText, s.FontSize);
         s.LineHeightNumeric = !float.IsNaN(lhFactor);
         s.LineHeightFactor = float.IsNaN(lhFactor)
             ? PaperSharp.Layout.FontManager.NormalLineHeight(s.FontFamily, s.FontWeight)
@@ -1239,6 +1239,18 @@ public static class StyleResolver
         s.OffsetRight = CssValueParser.ParseSize(Val("right"), s.FontSize);
         s.OffsetBottom = CssValueParser.ParseSize(Val("bottom"), s.FontSize);
         s.OffsetLeft = CssValueParser.ParseSize(Val("left"), s.FontSize);
+        // CSS 规范：position 为 absolute/fixed 时 display 的计算值一并「块级化」。
+        // 不补这一步，<span style="position:absolute"> 留在行内路径上既不建盒也不绘制
+        // （fluent-docs 滑杆的拇指就是这么整个消失的）。
+        if (s.Position is "absolute" or "fixed")
+            s.Display = s.Display switch
+            {
+                "inline" or "inline-block" => "block",
+                "inline-flex" => "flex",
+                "inline-grid" => "grid",
+                "inline-table" => "table",
+                _ => s.Display,
+            };
         var zIndex = Raw("z-index");
         if (!string.IsNullOrEmpty(zIndex) && zIndex != "auto")
         {
