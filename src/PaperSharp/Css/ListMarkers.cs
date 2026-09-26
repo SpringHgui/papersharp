@@ -13,9 +13,11 @@ namespace PaperSharp.Css;
 /// </summary>
 public static class ListMarkers
 {
-    /// <summary>marker 右缘到正文起点的空隙。Chrome 实测（2× 探针，disc @ fs=10/16/24/48 → 空隙 6/8/10/17px）：
-    /// 约 3px + 0.3em，与 marker 文本宽无关——正文恒落在 li 内容盒左缘，marker 整体挂在盒外。</summary>
-    static float MarkerGap(ComputedStyle s) => 3f + 0.3f * s.FontSize;
+    /// <summary>marker 盒右缘到正文起点的空隙。同一探针（_probe-mk，li 内容盒左缘 x=100）下
+    /// 墨迹右缘实测：字形符号 @fs 12/16/24/32 → 7.5/9/12/15px（= 3 + 0.375em，扣掉 • 自己的右侧空档
+    /// 就是这里的 3+0.3em）；十进制序号 → 4/5.5/8/10.5px = **1/3em 且不含常数**。引擎按
+    /// 「advance + gap」铺号，末尾句点的 advance 又比墨迹宽 0.075em，故 gap 取 1/4em 才落到 1/3em。</summary>
+    static float MarkerGap(ComputedStyle s, bool glyph) => glyph ? 3f + 0.3f * s.FontSize : s.FontSize / 4f;
 
     /// <summary>跑一遍整棵树，注入 marker 片段。返回是否至少注入了一个（决定要不要跑 PseudoContent.Apply）。</summary>
     public static bool Apply(ComputedStyle root)
@@ -55,8 +57,8 @@ public static class ListMarkers
         if (img == null && text.Length == 0) return;
 
         // 图片 marker 与正文的间隙恒 ~3px（探针 fs=8/12/16/24 下图片右缘到正文都是 3px，不随字号走）；
-        // 文字 marker 的 3+0.3em 里含了「字形 advance 比墨迹宽出来的那截侧空」，两者不是一条规则。
-        float gap = img != null ? 3f : MarkerGap(item);
+        // 字形符号（•/◦/▪）另有一条 3+0.3em 的规则，序号则是纯 1/3em——三者不是一条规则，见 MarkerGap。
+        float gap = img != null ? 3f : MarkerGap(item, glyph.Length > 0);
         var gen = new PseudoGen
         {
             Style = MarkerStyle(item, img != null ? null : text, gap),

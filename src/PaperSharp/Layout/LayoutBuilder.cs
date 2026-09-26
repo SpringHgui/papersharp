@@ -2046,6 +2046,9 @@ public static class LayoutBuilder
     {
         float boxH = f.Box!.TotalHeight;
         float baseTop = lineY + ln.Baseline - boxH + f.Descent;   // vertical-align: baseline
+        // 外侧图片 marker 不按「盒底贴基线」落位：12/20px 实心方块 @fs16 探针量到方块中心在
+        // 「基线 + 0.25em」上（盒底因此比基线低 h/2+0.25em），fs8/12/16/24 下误差 ≤1px。
+        if (f.Style.IsListMarker && boxH > 0) baseTop += boxH / 2 + 0.25f * f.FontSize;
         var va = f.Style.VerticalAlign;
         switch (va)
         {
