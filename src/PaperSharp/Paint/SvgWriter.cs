@@ -413,6 +413,9 @@ public static class SvgWriter
             var c = s.Color;
             return $"<text x=\"{F(x)}\" y=\"{F(y)}\" font-family=\"{Escape(s.FontFamily)}\" font-size=\"{F(fontSize)}\"" +
                    (s.FontWeight >= 600 ? " font-weight=\"bold\"" : "") +
+                   // small-caps 交回 SVG 的 font-variant（SVG 1.1 只有 normal|small-caps 两档，
+                   // all-small-caps 退化成小写变换、大写保持原样，交给看图器按真 smcp 字形排）
+                   (s.FontVariantCaps == "small-caps" ? " font-variant=\"small-caps\"" : "") +
                    $" fill=\"{Color(c)}\" fill-opacity=\"{F4(c.Alpha / 255f)}\"" +
                    (Math.Abs(s.LetterSpacing) > 0.01f ? $" letter-spacing=\"{F4(s.LetterSpacing)}\"" : "") +
                    ShadowStyle(s) +

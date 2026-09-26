@@ -100,7 +100,7 @@ public static class TextPainter
         // x/f.Width 已是 padding box；文字要让开元素自己的左 padding（背景与装饰照旧铺满整盒）
         if (s.TextShadow != null)
             DrawTextShadow(canvas, s, f.Text!, x + f.PadLeft, baseline, typeface, f.FontSize, s.LetterSpacing, false);
-        DrawSpaced(canvas, f.Text!, x + f.PadLeft, baseline, paint, s.LetterSpacing);
+        DrawSpaced(canvas, f.Text!, x + f.PadLeft, baseline, paint, s.LetterSpacing, s.FontVariantCaps);
         DrawDecoration(canvas, s, x, baseline, f.Width, color);
     }
 
@@ -127,7 +127,7 @@ public static class TextPainter
             float sigma = sh.Blur / 2f;
             paint.Color = sh.Color.WithAlpha((byte)Math.Round(sh.Color.Alpha * op));
             paint.ImageFilter = sigma > 0.01f ? SKImageFilter.CreateBlur(sigma, sigma) : null;
-            DrawVisualLine(canvas, text, x + sh.OffsetX, baseline + sh.OffsetY, paint, ls, rtl);
+            DrawVisualLine(canvas, text, x + sh.OffsetX, baseline + sh.OffsetY, paint, ls, rtl, s.FontVariantCaps);
         }
     }
     /// <summary>画 lines[first..first+count) 到 (left,top) 起的内容区，宽度 width。lefts 为每行左缩进（环绕浮动），可 null。
@@ -167,29 +167,31 @@ public static class TextPainter
             else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;
 
             DrawTextShadow(canvas, s, line, x, baseline, typeface, s.FontSize, ls, s.Direction == "rtl");
-            DrawVisualLine(canvas, line, x, baseline, paint, ls, s.Direction == "rtl");
+            DrawVisualLine(canvas, line, x, baseline, paint, ls, s.Direction == "rtl", s.FontVariantCaps);
             DrawDecoration(canvas, s, x, baseline, textW, color);
             baseline += lineHeight;
         }
     }
 
     /// <summary>画一行文本：按 bidi run 切段（RTL 基底方向反转 run 序），逐段走 shaped / 普通 / 回退通路。</summary>
-    static void DrawVisualLine(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls, bool rtl)
+    static void DrawVisualLine(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls, bool rtl,
+        string caps = "normal")
     {
         if (line.Length == 0) return;
         var tf = paint.Typeface ?? SKTypeface.Default;
-        if (!rtl && !TextShaper.NeedsSpecial(line, tf)) { DrawSpaced(canvas, line, x, y, paint, ls); return; }
+        if (!rtl && !TextShaper.NeedsSpecial(line, tf)) { DrawSpaced(canvas, line, x, y, paint, ls, caps); return; }
         var runs = Layout.TextShaper.BidiRuns(line);
         if (rtl) runs.Reverse();
         float cx = x;
         foreach (var (text, _) in runs)
         {
-            DrawSpaced(canvas, text, cx, y, paint, ls);
+            DrawSpaced(canvas, text, cx, y, paint, ls, caps);
             cx += TextShaper.WidthOf(text, tf, paint.TextSize, ls);
         }
     }
 
-    static void DrawSpaced(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls)
+    static void DrawSpaced(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls,
+        string caps = "normal")
     {
         if (line.Length == 0) return;
         var tf = paint.Typeface ?? SKTypeface.Default;
@@ -207,7 +209,7 @@ public static class TextPainter
                 if (segShaped && TextShaper.DrawShaped(canvas, seg, cx, y, paint))
                     cx += TextShaper.WidthOf(seg, tf, paint.TextSize, 0); // shaped 段不加 ls（已知限制）
                 else
-                    cx += DrawPlainRun(canvas, seg, cx, y, paint, ls, tf);
+                    cx += DrawPlainRun(canvas, seg, cx, y, paint, ls, tf, caps);
                 sb.Clear();
             }
             foreach (var g in TextShaper.Graphemes(line))
@@ -221,15 +223,21 @@ public static class TextPainter
             return;
         }
         bool special = TextShaper.FirstUncovered(line, tf) != 0;
-        if (!special && Math.Abs(ls) < 0.01f) { Pdf.PdfGlyphUsage.DrawText(canvas, line, x, y, paint); return; }
+        if (!special && Math.Abs(ls) < 0.01f && caps == "normal")
+        { Pdf.PdfGlyphUsage.DrawText(canvas, line, x, y, paint); return; }
         // 逐字素排布：缺字形的字素换覆盖字体（一行混多脚本时每字素独立回退），其余情况仅 ls 逐字加距
-        DrawPlainRun(canvas, line, x, y, paint, ls, tf);
+        DrawPlainRun(canvas, line, x, y, paint, ls, tf, caps);
     }
 
-    /// <summary>非 shaping 绘制：逐字素解析覆盖字体并排布，返回占用宽度。</summary>
-    static float DrawPlainRun(SKCanvas canvas, string seg, float x, float y, SKPaint paint, float ls, SKTypeface tf)
+    /// <summary>非 shaping 绘制：逐字素解析覆盖字体并排布，返回占用宽度。
+    /// caps ≠ normal 时小写字母改画**缩到 x-height 的大写**（顶线落在 x 高度、基线不动），
+    /// 但推进仍按原来的小写 advance——Chrome 用的是字体自带的 GSUB smcp 字形，那些字形本就与
+    /// 小写同宽（实测 "Small Caps 效果" 整串与小写排版只差 1.2px），所以布局一行都不用改。</summary>
+    static float DrawPlainRun(SKCanvas canvas, string seg, float x, float y, SKPaint paint, float ls,
+        SKTypeface tf, string caps = "normal")
     {
         float cx = x;
+        float size = paint.TextSize;
         SKTypeface? cur = tf;
         paint.Typeface = cur;
         try
@@ -238,8 +246,17 @@ public static class TextPainter
             {
                 var gt = TextShaper.ResolveTypeface(g, tf);
                 if (!ReferenceEquals(gt, cur)) paint.Typeface = cur = gt;
-                Pdf.PdfGlyphUsage.DrawText(canvas, g, cx, y, paint);
-                cx += paint.MeasureText(g) + ls;
+                float w = paint.MeasureText(g);
+                char ch = g.Length == 1 ? g[0] : '\0';
+                bool fold = caps != "normal" && (char.IsLower(ch) || (caps == "all-small-caps" && char.IsUpper(ch)));
+                if (fold)
+                {
+                    paint.TextSize = size * SmallCapsScale(cur ?? tf);
+                    Pdf.PdfGlyphUsage.DrawText(canvas, char.ToUpperInvariant(ch).ToString(), cx, y, paint);
+                    paint.TextSize = size;
+                }
+                else Pdf.PdfGlyphUsage.DrawText(canvas, g, cx, y, paint);
+                cx += w + ls;
             }
         }
         finally
@@ -248,6 +265,17 @@ public static class TextPainter
         }
         return cx - x - ls; // 末字素后不加间距
     }
+
+    // small-caps 的缩放系数 = x-height / cap-height（缩出来的大写正好顶到 x 高度）。只跟字面有关，按字面缓存。
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float> SmallCapsK = new();
+
+    static float SmallCapsScale(SKTypeface tf)
+        => SmallCapsK.GetOrAdd(tf.FamilyName + '/' + tf.FontWeight, _ =>
+        {
+            using var f = new SKFont(tf, 100f);
+            var m = f.Metrics;
+            return m.CapHeight > 0.01f ? Math.Clamp(m.XHeight / m.CapHeight, 0.4f, 1f) : 0.72f;
+        });
 
     static void DrawDecoration(SKCanvas canvas, ComputedStyle s, float x, float baseline, float width, SKColor color)
     {

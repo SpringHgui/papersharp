@@ -360,6 +360,25 @@ public static class CssValueParser
         return (bolder ? BolderByParent : LighterByParent)[slot];
     }
 
+    /// <summary>font-variant-caps 长写与 font-variant 简写里的 caps 分量。两处都没写→null（交调用方继承）。
+    /// 简写里同时出现的其它分量（normal/small-caps 之外的 common-ligatures 等）一律忽略：引擎只实现 caps 这一维。
+    /// petite-caps 与 unicase 在本引擎里与 small-caps 同形（都按 x-height 缩放），故归并到 small-caps。</summary>
+    public static string? ParseFontVariantCaps(string? caps, string? shorthand)
+    {
+        foreach (var src in new[] { caps, shorthand })
+        {
+            if (string.IsNullOrWhiteSpace(src)) continue;
+            foreach (var tok in src.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                switch (tok.Trim().ToLowerInvariant())
+                {
+                    case "normal": return "normal";
+                    case "small-caps": case "petite-caps": case "unicase": return "small-caps";
+                    case "all-small-caps": case "all-petite-caps": return "all-small-caps";
+                }
+        }
+        return null;
+    }
+
     /// <summary>flex-grow / flex-shrink：无单位数字，非法时回退默认。</summary>
     public static float ParseFlexNumber(string value, float fallback)
     {

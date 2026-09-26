@@ -85,7 +85,10 @@ public static class StyleResolver
         "align-self", "justify-self", "align-items", "justify-items", "place-self", "place-items", "align-content", "justify-content",
         // overflow-wrap 的属性名 AngleSharp 认得，但值表停在 normal|break-word|break-all：写了
         // `anywhere` 的整条声明在解析期就被丢掉（computed/declared 皆空），断词行为整个消失。
-        "overflow-wrap" };
+        "overflow-wrap",
+        // 同理 font-variant-caps 长写与 font-variant 的 petite-caps/all-small-caps 值 AngleSharp 不认，
+        // 整条声明在解析期丢掉 → 小型大写整个不生效，只能靠原始 CSS 兜底表捞回。
+        "font-variant-caps", "font-variant" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -1484,6 +1487,12 @@ public static class StyleResolver
         s.LetterSpacing = lsp.Trim() == "normal" ? 0 : CssValueParser.ToPixels(lsp, s.FontSize);
         s.WhiteSpace = CssValueParser.ParseKeyword(Raw("white-space"), "normal");
         s.TextTransform = CssValueParser.ParseKeyword(Raw("text-transform"), "none");
+        // font-variant-caps 可继承；AngleSharp 是否把 font-variant 简写拆成长写随版本而变，两处都问一遍，
+        // 并且都要过 Lookup——长写属性名与 petite-caps 这类值它压根不认，声明在解析期就被丢了。
+        s.FontVariantCaps = CssValueParser.ParseFontVariantCaps(
+                                Lookup("font-variant-caps", element, Raw("font-variant-caps"), ctx),
+                                Lookup("font-variant", element, Raw("font-variant"), ctx))
+                            ?? parent?.FontVariantCaps ?? "normal";
         s.TextOverflow = CssValueParser.ParseKeyword(Lookup("text-overflow", element, Raw("text-overflow"), ctx), "clip");
         s.WordBreak = CssValueParser.ParseKeyword(Raw("word-break"), "normal");
         // overflow-wrap 的旧名 word-wrap 仍常见于老样式表，读不到 overflow-wrap 时退回去看它。

@@ -267,6 +267,10 @@ public sealed class ComputedStyle
     public float LetterSpacing;              // px
     public string WhiteSpace = "normal";     // normal | nowrap | pre | pre-wrap | pre-line
     public string TextTransform = "none";    // none | uppercase | lowercase | capitalize
+    /// <summary>font-variant-caps（含 font-variant 简写里的分量）：normal | small-caps | all-small-caps。
+    /// Chrome 用字体的 GSUB smcp 字形，其 advance 与小写字母同宽——布局口径不用变，只在绘制时把小写
+    /// 换成缩放到 x-height 的大写。继承属性。</summary>
+    public string FontVariantCaps = "normal";
     public string TextOverflow = "clip";     // clip | ellipsis
     public string WordBreak = "normal";      // normal | break-all | keep-all
     /// <summary>overflow-wrap（旧名 word-wrap）：normal | break-word | anywhere。
