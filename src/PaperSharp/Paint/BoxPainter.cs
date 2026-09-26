@@ -19,7 +19,8 @@ public static class BoxPainter
         var radii = ClampRadii(r, s);
         bool sq = rounded && s.CornerShape == "squircle";
 
-        if (s.Shadow != null) PaintShadow(canvas, r, s, radii, rounded, sq, opacity);
+        if (s.Shadows != null)
+            foreach (var sh in s.Shadows) PaintShadow(canvas, r, s, sh, radii, rounded, sq, opacity);
 
         // 背景（background-clip:text 时不铺满盒矩形——改由文字承载，见 Painter）
         bool hasBg = !backgroundClippedToText && (!s.BackgroundColor.Equals(SKColor.Empty) || s.Background != null);
@@ -37,9 +38,8 @@ public static class BoxPainter
         PaintBorder(canvas, r, s, radii, rounded, sq, opacity);
     }
 
-    static void PaintShadow(SKCanvas canvas, SKRect r, ComputedStyle s, SKPoint[] radii, bool rounded, bool sq, float opacity)
+    static void PaintShadow(SKCanvas canvas, SKRect r, ComputedStyle s, BoxShadow sh, SKPoint[] radii, bool rounded, bool sq, float opacity)
     {
-        var sh = s.Shadow!;
         float sigma = sh.Blur / 2f;
         var sr = new SKRect(r.Left + sh.OffsetX - sh.Spread, r.Top + sh.OffsetY - sh.Spread,
                             r.Right + sh.OffsetX + sh.Spread, r.Bottom + sh.OffsetY + sh.Spread);
@@ -123,6 +123,21 @@ public static class BoxPainter
         if (s.BorderStyleTop == "dashed" || s.BorderStyleRight == "dashed" || s.BorderStyleBottom == "dashed" || s.BorderStyleLeft == "dashed") return "dashed";
         if (s.BorderStyleTop == "dotted" || s.BorderStyleRight == "dotted" || s.BorderStyleBottom == "dotted" || s.BorderStyleLeft == "dotted") return "dotted";
         return "solid";
+    }
+
+    /// <summary>行内盒背景：只有底色没有边框/阴影，但圆角与盒级装饰同口径（squircle 也跟随）。</summary>
+    public static void PaintInlineBackground(SKCanvas canvas, SKRect r, ComputedStyle s, SKColor color)
+    {
+        if (r.Width <= 0 || r.Height <= 0) return;
+        bool rounded = s.BorderRadiusTopLeft > 0 || s.BorderRadiusTopRight > 0
+                    || s.BorderRadiusBottomRight > 0 || s.BorderRadiusBottomLeft > 0;
+        using var p = new SKPaint
+        {
+            Color = color,
+            Style = SKPaintStyle.Fill,
+            IsAntialias = true,
+        };
+        DrawRR(canvas, r, ClampRadii(r, s), rounded, rounded && s.CornerShape == "squircle", p);
     }
 
     static void DrawRR(SKCanvas canvas, SKRect r, SKPoint[] radii, bool rounded, bool sq, SKPaint p)

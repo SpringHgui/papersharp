@@ -2,11 +2,13 @@ using SkiaSharp;
 
 namespace PaperSharp.Css;
 
-/// <summary>盒阴影（单层）：offset-x / offset-y / blur / spread / 颜色。</summary>
+/// <summary>盒阴影（单层）：offset-x / offset-y / blur / spread / 颜色 / inset。</summary>
 public sealed class BoxShadow
 {
     public float OffsetX, OffsetY, Blur, Spread;
     public SKColor Color;
+    /// <summary>inset：阴影画在盒内（裁剪到 padding 盒），外阴影画在盒外。</summary>
+    public bool Inset;
 }
 
 /// <summary>CSS filter 子集：blur() 与 drop-shadow()，可链式。</summary>

@@ -109,7 +109,7 @@ public static class LayoutBuilder
         anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
         anon.BackgroundColor = SKColor.Empty;
         anon.Background = null;
-        anon.Shadow = null;
+        anon.Shadows = null;
         return anon;
     }
 

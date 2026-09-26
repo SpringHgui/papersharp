@@ -150,12 +150,15 @@ public static class SvgWriter
             }
 
             // 阴影（box-shadow → filter: drop-shadow，浏览器 SVG 支持 CSS filter 函数）
-            // 已由 EffectStyle 输出？否——box-shadow 不在 filter 里，单独补：
-            if (s.Shadow != null)
+            // 已由 EffectStyle 输出？否——box-shadow 不在 filter 里，单独补：每层一个 rect（inset 层 SVG 表达不了，跳过）
+            if (s.Shadows != null)
             {
-                var sh = s.Shadow;
-                _body.Append($"<rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(bw)}\" height=\"{F(bh)}\" rx=\"{F4(rx)}\" " +
-                    $"fill=\"none\" style=\"filter:drop-shadow({F(sh.OffsetX)}px {F(sh.OffsetY)}px {F(sh.Blur / 2f)}px {Color(sh.Color)})\"/>");
+                foreach (var sh in s.Shadows)
+                {
+                    if (sh.Inset) continue;
+                    _body.Append($"<rect x=\"{F(x)}\" y=\"{F(y)}\" width=\"{F(bw)}\" height=\"{F(bh)}\" rx=\"{F4(rx)}\" " +
+                        $"fill=\"none\" style=\"filter:drop-shadow({F(sh.OffsetX)}px {F(sh.OffsetY)}px {F(sh.Blur / 2f)}px {F(sh.Spread)}px {Color(sh.Color)})\"/>");
+                }
             }
 
             // 边框

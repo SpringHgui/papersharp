@@ -13,7 +13,44 @@ public static class CssValueParser
     static readonly Regex ReHex = new("^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", RegexOptions.Compiled);
     static readonly Regex ReRgb = new(@"^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*(\d*\.?\d+)\s*)?\)$", RegexOptions.Compiled);
 
-    /// <summary>px / pt / em / rem / % → 像素。% 这里只返回数值比例（layout 层自己乘可用宽度）。</summary>
+    // CSS 绝对长度（1in=96px 基准）。AngleSharp 的 computed 串会替我们折成 px，但作者原文
+    // （AuthorEdge 简写、calc 内部）不折——曾经 `.page{padding:12mm 14mm 16mm}` 整条静默变 0。
+    internal const float PxPerMm = 96f / 25.4f;
+    internal const float PxPerCm = 96f / 2.54f;
+
+    /// <summary>绝对长度单位 → px 系数；不是这些单位返回 null。</summary>
+    internal static float? AbsoluteUnitFactor(string unit) => unit switch
+    {
+        "px" => 1f,
+        "pt" => 96f / 72f,
+        "mm" => PxPerMm,
+        "cm" => PxPerCm,
+        "in" => 96f,
+        "pc" => 16f,
+        "q" => PxPerCm / 4f,
+        _ => null,
+    };
+
+    /// <summary>末尾若是绝对长度单位，返回 (数值, 系数)。</summary>
+    static bool TryAbsoluteLength(ReadOnlySpan<char> v, out float num, out float factor)
+    {
+        num = 0; factor = 1f;
+        foreach (var u in AbsoluteUnits)
+        {
+            if (v.EndsWith(u, StringComparison.Ordinal))
+            {
+                num = ParseFloat(v[..^u.Length]);
+                factor = AbsoluteUnitFactor(u)!.Value;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 顺序重要：先长的单位，避免 "mm" 被 "m" 之类的短前缀截走。
+    static readonly string[] AbsoluteUnits = { "px", "pt", "mm", "cm", "in", "pc", "q" };
+
+    /// <summary>px / pt / mm / cm / in / pc / q / em / rem / % → 像素。% 这里只返回数值比例（layout 层自己乘可用宽度）。</summary>
     public static float ToPixels(string value, float parentFontSize, float rootFontSize = 16f)
     {
         if (string.IsNullOrWhiteSpace(value)) return 0;
@@ -27,8 +64,7 @@ public static class CssValueParser
             var ev = EvalCalc(value, parentFontSize, rootFontSize);
             return ev.HasValue ? ev.Value.abs : 0;   // 无包含块基准，百分比项忽略
         }
-        if (v.EndsWith("px", StringComparison.Ordinal)) return ParseFloat(v[..^2]);
-        if (v.EndsWith("pt", StringComparison.Ordinal)) return ParseFloat(v[..^2]) * 96f / 72f;
+        if (TryAbsoluteLength(v, out float num, out float factor)) return num * factor;
         if (v.EndsWith("rem", StringComparison.Ordinal)) return ParseFloat(v[..^3]) * rootFontSize;
         if (v.EndsWith("em", StringComparison.Ordinal)) return ParseFloat(v[..^2]) * parentFontSize;
         if (v.EndsWith("%", StringComparison.Ordinal)) return -1f; // 百分比不在这里折算（需包含块尺寸），由 ParseSize 走 CssSize
@@ -51,14 +87,22 @@ public static class CssValueParser
             var num = v[..^1];                    // 与原实现逐字一致：数值取未 trim 切片（"50 %" → ParseFloat 失败 = 0）
             return num.Trim().Length > 0 ? CssSize.Pct(ParseFloat(num)) : CssSize.Auto;
         }
-        bool isLen = v.EndsWith("px", StringComparison.Ordinal) || v.EndsWith("pt", StringComparison.Ordinal)
-                  || v.EndsWith("em", StringComparison.Ordinal) || v.EndsWith("rem", StringComparison.Ordinal);
+        bool isLen = IsLength(v);
         float px = ToPixels(value, fontSize);
         if (px > 0) return CssSize.Abs(px);
         if (px < 0 && isLen) return CssSize.Abs(px);   // 负偏移（top:-10px 等）合法
-        if (v.Equals("0", StringComparison.Ordinal) || v.Equals("0px", StringComparison.Ordinal)
-            || v.Equals("0pt", StringComparison.Ordinal) || v.Equals("0em", StringComparison.Ordinal)) return CssSize.Abs(0);
+        if (v.Equals("0", StringComparison.Ordinal) || (isLen && ParseFloat(v.TrimEnd(LengthUnitChars)) == 0)) return CssSize.Abs(0);
         return CssSize.Auto;
+    }
+
+    static readonly char[] LengthUnitChars = { 'p', 'x', 't', 'm', 'c', 'i', 'n', 'q', 'e', 'r' };
+
+    /// <summary>以长度单位结尾（px/pt/mm/cm/in/pc/q/em/rem）——负值与 0 值都要靠它判定"这是个长度"。</summary>
+    static bool IsLength(ReadOnlySpan<char> v)
+    {
+        foreach (var u in AbsoluteUnits)
+            if (v.EndsWith(u, StringComparison.Ordinal)) return true;
+        return v.EndsWith("em", StringComparison.Ordinal) || v.EndsWith("rem", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -144,10 +188,10 @@ public static class CssValueParser
                 return v;
             }
             var (num, unit) = NumUnit();
+            if (unit.Length == 0) return (0, num);
+            if (AbsoluteUnitFactor(unit) is float absFactor) return (0, num * absFactor);
             return unit switch
             {
-                "px" or "" => (0, num),
-                "pt" => (0, num * 96f / 72f),
                 "em" => (0, num * _em),
                 "rem" => (0, num * _rem),
                 "%" => (num, 0),
@@ -269,9 +313,7 @@ public static class CssValueParser
     {
         if (string.IsNullOrWhiteSpace(value) || value == "normal") return float.NaN;
         var v = value.AsSpan().Trim();
-        bool isLen = v.EndsWith("px", StringComparison.Ordinal) || v.EndsWith("pt", StringComparison.Ordinal)
-                  || v.EndsWith("em", StringComparison.Ordinal) || v.EndsWith("rem", StringComparison.Ordinal)
-                  || v.IndexOf("calc(", StringComparison.OrdinalIgnoreCase) >= 0;
+        bool isLen = IsLength(v) || v.IndexOf("calc(", StringComparison.OrdinalIgnoreCase) >= 0;
         if (!isLen) return float.NaN;
         float px = ToPixels(value, fontSize, rootFontSize);
         return px > 0 ? px : float.NaN;
@@ -405,32 +447,53 @@ public static class CssValueParser
         return (a, b, V(3), c);
     }
 
-    /// <summary>box-shadow：取第一条阴影 "offsetX offsetY [blur [spread]] color"。none/非法→null。</summary>
-    public static BoxShadow? ParseBoxShadow(string value, float fontSize)
+    /// <summary>box-shadow 简写：逗号分层，每层 <c>inset? dx dy [blur [spread]] color</c>。none/非法→null。
+    /// 层序即绘制序（CSS 里第一条画在最上层），inset 与实色 <c>0 0 0 2px</c> 环都是作者常用的招。
+    /// text-shadow 复用本函数（<c>allowSpread=false</c>：它没有 spread，也不接受 inset）。</summary>
+    public static List<BoxShadow>? ParseShadowLayers(string value, float fontSize, bool allowSpread = true)
     {
         value = value?.Trim() ?? "";
         if (value.Length == 0 || value.Equals("none", StringComparison.OrdinalIgnoreCase)) return null;
-        // 多条阴影取第一条（逗号分隔，但颜色里 rgb() 也含逗号——用顶层逗号切）
-        var first = SplitTopLevel(value, ',')[0].Trim();
-        var toks = SplitTopLevel(first, ' ');
+        List<BoxShadow>? layers = null;
+        foreach (var raw in SplitTopLevel(value, ','))
+        {
+            var one = ParseShadowLayer(raw, fontSize, allowSpread);
+            if (one == null) continue;
+            (layers ??= new List<BoxShadow>()).Add(one);
+        }
+        return layers;
+    }
+
+    /// <summary>单层阴影。长度值最多 4 个（dx dy blur spread），其余 token 合成颜色串。</summary>
+    public static BoxShadow? ParseShadowLayer(string value, float fontSize, bool allowSpread = true)
+    {
+        value = value?.Trim() ?? "";
+        if (value.Length == 0 || value.Equals("none", StringComparison.OrdinalIgnoreCase)) return null;
+        bool inset = false;
         var nums = new List<float>();
         var colorToks = new List<string>();
-        foreach (var t in toks)
+        int maxNums = allowSpread ? 4 : 3;
+        foreach (var t in SplitTopLevel(value, ' '))
         {
-            if (nums.Count < 4 && colorToks.Count == 0 && IsLengthToken(t))
-                nums.Add(ToPixels(t, fontSize));
-            else
-                colorToks.Add(t);
+            var tok = t.Trim();
+            if (tok.Length == 0) continue;
+            if (tok.Equals("inset", StringComparison.OrdinalIgnoreCase)) { inset = true; continue; }
+            if (nums.Count < maxNums && colorToks.Count == 0 && IsLengthToken(tok))
+            {
+                nums.Add(ToPixels(tok, fontSize));
+                continue;
+            }
+            colorToks.Add(tok);
         }
         if (nums.Count < 2) return null;
-        var color = ParseColor(string.Join(" ", colorToks)) ?? new SKColor(0, 0, 0, 128);
         return new BoxShadow
         {
             OffsetX = nums[0],
             OffsetY = nums[1],
             Blur = nums.Count > 2 ? Math.Max(0, nums[2]) : 0,
-            Spread = nums.Count > 3 ? nums[3] : 0,
-            Color = color,
+            Spread = nums.Count > 3 && allowSpread ? nums[3] : 0,
+            Color = ParseColor(string.Join(" ", colorToks)) ?? new SKColor(0, 0, 0, 128),
+            Inset = inset,
         };
     }
 
@@ -441,6 +504,28 @@ public static class CssValueParser
         if (t == "0") return true;
         var c = t[0];
         return char.IsDigit(c) || c == '-' || c == '+' || c == '.';
+    }
+
+    /// <summary>list-style-type 关键字 → 本引擎的规范名（CounterStyle 支持的 style 名 / 三个图形符号 / none）。
+    /// latin 是 alpha 的别名；未收录的 counter-style 与 url() 回 null，由调用方决定兜底。</summary>
+    public static string? ListStyleTypeKeyword(string kw)
+    {
+        kw = kw.Trim().ToLowerInvariant();
+        return kw switch
+        {
+            "disc" or "circle" or "square" or "none" => kw,
+            "decimal-leading-zero" => kw,
+            "decimal" or "arabic-indic" or "devanagari" or "persian" or "gujarati" or "kannada" or "malayalam" or "oriya" or "tamil" or "telugu" => "decimal",
+            "lower-alpha" or "lower-latin" => "lower-alpha",
+            "upper-alpha" or "upper-latin" => "upper-alpha",
+            "lower-roman" => "lower-roman",
+            "upper-roman" => "upper-roman",
+            "cjk-decimal" or "simp-chinese-informal" or "simp-chinese-formal" or "japanese-formal" => "cjk-ideographic",
+            "trad-chinese-informal" or "trad-chinese-formal" => "trad-chinese-informal",
+            "lower-greek" => "lower-alpha",
+            "armenian" or "georgian" or "hebrew" or "ethiopic-halehame" => "upper-roman",
+            _ => null,
+        };
     }
 
     /// <summary>解析 background(-image) 里的 linear-gradient(...) / radial-gradient(...)。非渐变→null。</summary>
@@ -504,7 +589,7 @@ public static class CssValueParser
                 var last = sp[^1].Trim();
                 bool taken = false;
                 if (last.EndsWith("%")) { pct = ParseFloat(last[..^1]) / 100f; taken = true; }
-                else if (last.EndsWith("px")) { px = ParseFloat(last[..^2]); taken = true; }
+                else if (TryAbsoluteLength(last, out float stopNum, out float stopFactor)) { px = stopNum * stopFactor; taken = true; }
                 else if (last.EndsWith("deg") && conic) { pct = ParseFloat(last[..^3]) / 360f; taken = true; }   // conic 角停止位
                 else if (last == "0") { pct = 0; taken = true; }
                 if (taken)

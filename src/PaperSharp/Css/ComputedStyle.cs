@@ -193,7 +193,8 @@ public sealed class ComputedStyle
     public SKColor BackgroundColor = SKColor.Empty;
     public GradientSpec? Background;     // background-image: linear/radial-gradient(...)
     public string BackgroundClip = "border-box"; // border-box | padding-box | text（text：背景裁剪到字形=渐变文字）
-    public BoxShadow? Shadow;
+    /// <summary>box-shadow 的每一层（作者书写序，第一条画在最上层）。inset 层画在盒内。</summary>
+    public List<BoxShadow>? Shadows;
     public float BorderRadiusTopLeft, BorderRadiusTopRight, BorderRadiusBottomRight, BorderRadiusBottomLeft;
     public float Opacity = 1f;
 
@@ -231,6 +232,12 @@ public sealed class ComputedStyle
         return (float)(Math.Floor(fs * LineHeightFactor * 64d + 1e-6d) / 64d);
     }
     public CssTextAlign TextAlignment = CssTextAlign.Left;
+    /// <summary>text-indent 折成 px：只作用于块的首行，可为负（列表 marker 的悬挂缩进就靠它）。
+    /// 浏览器口径是首行**起点**平移 indent、首行**可用宽**随之变 <c>width - indent</c>（负值⇒首行更宽），
+    /// 所以它必须同时进折行与绘制，只补绘制位移会让首行少排一个字。</summary>
+    public float TextIndent;
+    /// <summary>text-shadow 的每一层（复用 BoxShadow：dx/dy/blur/color，spread 恒 0）。画在字形下偏处。</summary>
+    public List<BoxShadow>? TextShadow;
     public string TextDecoration = "none";   // none | underline | line-through | overline
     public float LetterSpacing;              // px
     public string WhiteSpace = "normal";     // normal | nowrap | pre | pre-wrap | pre-line
@@ -238,6 +245,15 @@ public sealed class ComputedStyle
     public string TextOverflow = "clip";     // clip | ellipsis
     public string WordBreak = "normal";      // normal | break-all | keep-all
     public string Direction = "ltr";         // ltr | rtl（CSS direction：驱动 bidi 重排与默认对齐）
+
+    // 列表标记（list-style-* 简写/长写 + <ol type>/<ol start> 的 presentational hint）
+    public string ListStyleType = "disc";    // disc|circle|square|decimal|lower-alpha|upper-alpha|lower-roman|upper-roman|none
+    public bool ListStyleInside;             // list-style-position: inside（false=outside：marker 落在负 text-indent 让出的悬挂区）
+    public int ListStartOffset;              // <ol start="n"> → n-1（序号 = 该偏移 + 本项在列表中的第几项）
+    public bool ListStyleAuthorSet;          // 作者写过 list-style*：<ol type> 只能在没写时覆盖它
+    /// <summary>本元素自己（或经继承落到本元素上的）list-style-type 声明原文。子元素用它辨别
+    /// "这条声明是我写的还是从父亲抄来的"——AngleSharp 的声明值里两者长得一样。</summary>
+    public string ListStyleSpecified = "";
 
     // 分页控制（打印媒体 / @page 上下文）
     public string BreakInside = "auto";      // auto | avoid

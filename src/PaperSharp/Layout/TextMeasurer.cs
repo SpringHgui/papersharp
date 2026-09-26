@@ -51,12 +51,17 @@ public static class TextMeasurer
 
         text = Normalize(text, ws);
 
+        // text-indent 只作用于**块的首行**：首行左缩进 += indent、首行可用宽 -= indent
+        // （负值即悬挂缩进，列表 marker 就靠它让出内容盒外的落点）。
+        float indent = s.TextIndent;
+        bool first = true;
         (float, float) Query() => fc != null ? fc.Insets(y, lineHeight) : (0, 0f);
         void TakeLine(string line)
         {
             var (l, _) = Query();
             lines.Add(line);
-            leftList.Add(l);
+            leftList.Add(first ? l + indent : l);
+            first = false;
             y += lineHeight;
         }
 
@@ -69,10 +74,12 @@ public static class TextMeasurer
             return Finish(lines, leftList, fc, out lefts);
         }
 
-        foreach (var para in text.Split('\n'))
+        var paras = text.Split('\n');
+        for (int pi = 0; pi < paras.Length; pi++)
         {
+            var para = paras[pi];
             if (para.Length == 0) { TakeLine(""); continue; }
-            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, TakeLine, Query);
+            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, TakeLine, Query, pi == 0 ? indent : 0f);
         }
         if (lines.Count == 0) TakeLine("");
         return Finish(lines, leftList, fc, out lefts);
@@ -80,7 +87,8 @@ public static class TextMeasurer
 
     static string[] Finish(List<string> lines, List<float> lefts, FloatContext? fc, out float[]? leftArr)
     {
-        leftArr = fc != null && lefts.Any(v => v > 0.5f) ? lefts.ToArray() : null;
+        // 有浮动环绕或首行 text-indent（含负的悬挂缩进）时才下发逐行左缩进；全 0 保持 null（绘制端按 0 处理）
+        leftArr = lefts.Any(v => MathF.Abs(v) > 0.01f) ? lefts.ToArray() : null;
         return lines.ToArray();
     }
 
@@ -132,12 +140,12 @@ public static class TextMeasurer
     }
 
     static void WrapParagraph(string para, float maxWidth, SKFont font, float ls, string wordBreak,
-        Action<string> take, Func<(float left, float right)> query)
+        Action<string> take, Func<(float left, float right)> query, float firstIndent)
     {
         var current = new StringBuilder();
         float currentWidth = 0;
         var (inL, inR) = query();
-        float lineMax = Math.Max(1, maxWidth - inL - inR);
+        float lineMax = Math.Max(1, maxWidth - inL - inR - firstIndent);
         void EmitLine(string line)
         {
             take(line);

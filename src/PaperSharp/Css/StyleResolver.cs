@@ -32,6 +32,12 @@ public static class StyleResolver
            是肉眼可见的错位而非比对口径问题）。嵌套列表的块边距归零也是浏览器行为。 */
         ul, ol { margin: 1em 0; padding-left: 40px; }
         ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; }
+        /* Chrome UA 的嵌套记号（2× 探针实测）：ul 二层 circle、三层 square；ol 二层 lower-alpha、三层 lower-roman。
+           ol 里套 ul 仍换 circle，ul 里套 ol 仍是 decimal——只有同类连续嵌套才升级记号。 */
+        ul ul, ol ul { list-style-type: circle; }
+        ul ul ul, ol ul ul { list-style-type: square; }
+        ol ol { list-style-type: lower-alpha; }
+        ol ol ol { list-style-type: lower-roman; }
         dd { margin-left: 40px; }
         blockquote { margin: 1em 40px; }
         figure { margin: 1em 40px; }
@@ -178,7 +184,10 @@ public static class StyleResolver
         ctx.Styles = new EagerStyleCollection(window.GetStyleCollection());
 
         var root = Walk(body, null, ctx);
-        if (ctx.HasPseudoRules) PseudoContent.Apply(root);   // 文档序求值 counter + 注入伪元素匿名盒
+        // 列表 marker 先做成 ::before 片段（复用伪元素的注入与匿名盒机制，两条排版通路一次到位），
+        // 再和作者的伪元素一起由 PseudoContent 落进树里。
+        bool anyMarker = ListMarkers.Apply(root);
+        if (ctx.HasPseudoRules || anyMarker) PseudoContent.Apply(root);   // 文档序求值 counter + 注入伪元素匿名盒
         if (animationTime.HasValue && ctx.Keyframes.Count > 0)
             Animation.Apply(root, ctx.Keyframes, animationTime.Value);   // 确定性取帧：按时刻插值覆盖样式
         root.Document = new DocumentInfo(ctx.Title, ctx.Author, ctx.Description, ctx.Keywords);
@@ -564,6 +573,50 @@ public static class StyleResolver
         return value;
     }
 
+    /// <summary>内联 <c>style="a:b; c:d"</c> 拆成小写键表（无声明→null）。键按 CSS 属性名原样，值去空白。</summary>
+    static Dictionary<string, string>? ParseStyleAttribute(string? style)
+    {
+        if (string.IsNullOrWhiteSpace(style)) return null;
+        Dictionary<string, string>? d = null;
+        foreach (var decl in style.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int colon = decl.IndexOf(':');
+            if (colon <= 0) continue;
+            var k = decl[..colon].Trim().ToLowerInvariant();
+            if (k.Length == 0) continue;
+            (d ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))[k] = decl[(colon + 1)..].Trim();
+        }
+        return d;
+    }
+
+    /// <summary><ol type="a|A|i|I|1"> / <ul type="disc|circle|square"> → 本引擎的 list-style-type 规范名；没有或不认识→null。</summary>
+    static string? ListTypeHint(IElement el)
+    {
+        var t = (el.GetAttribute("type") ?? "").Trim();
+        if (t.Length == 0) return null;
+        if (el.TagName.Equals("OL", StringComparison.OrdinalIgnoreCase))
+            return t switch
+            {
+                "1" => "decimal", "a" => "lower-alpha", "A" => "upper-alpha",
+                "i" => "lower-roman", "I" => "upper-roman", _ => null,
+            };
+        return CssValueParser.ListStyleTypeKeyword(t);
+    }
+
+    /// <summary>list-style 简写里的 type 关键字（disc/circle/square/decimal/lower-roman/…，含 latin↔alpha 别名）；没有→null。</summary>
+    static string? ListShorthandType(string decl) => ListShorthandKeyword(decl, CssValueParser.ListStyleTypeKeyword);
+
+    /// <summary>list-style 简写里的 position 关键字 inside/outside；没有→null。</summary>
+    static string? ListShorthandPosition(string decl) => ListShorthandKeyword(decl, k => k is "inside" or "outside" ? k : null);
+
+    static string? ListShorthandKeyword(string decl, Func<string, string?> match)
+    {
+        if (string.IsNullOrWhiteSpace(decl)) return null;
+        foreach (var tok in TopLevelTokens(decl))
+            if (match(tok.ToLowerInvariant()) is { } v) return v;
+        return null;
+    }
+
     /// <summary>按 CSS 继承语义查变量：从元素自身向上走，同级内联 style &gt; class &gt; id &gt; tag &gt; *。</summary>
     static string? FindVar(IElement el, string name, DocContext ctx)
     {
@@ -613,6 +666,21 @@ public static class StyleResolver
         if (fs == null && ctx.Flat != null) ctx.Flat = null;
         var cs = ReadStyle(element, parent, ctx, flat: fs);
         cs.Tag = element.TagName.ToLowerInvariant();
+
+        // 列表：标签默认（UA 的 ul{list-style-type:disc} / ol{decimal}）与 <ol type> / <ul type> 的
+        // presentational hint。两条都只在作者没写过 list-style* 时才生效——作者声明压过 UA 提示是级联的铁律。
+        if (cs.Tag is "ul" or "ol")
+        {
+            // AngleSharp 自带的 UA 表就把 ol 的 list-style-type 报成 decimal、ul 报成 disc，和作者声明
+            // 长得一模一样（SpecOnly 拿到的也是它），所以 authorSet 对这两标签不可信。判据换成
+            // "值是否等于本标签的 UA 默认"：等于就说明没人真写过，<ol type> 提示与标签默认都能上。
+            string uaDefault = cs.Tag == "ol" ? "decimal" : "disc";
+            var hint = ListTypeHint(element);
+            bool authorWroteIt = cs.ListStyleAuthorSet && cs.ListStyleType != uaDefault;
+            if (!authorWroteIt) cs.ListStyleType = hint ?? uaDefault;
+            if (int.TryParse(element.GetAttribute("start"), out var lstart) && lstart >= 1)
+                cs.ListStartOffset = lstart - 1;
+        }
 
         // DOM 身份串（body/div[1]/p[2]）：兄弟序按 CSS nth-of-type 的口径数——连 script/style/br 这些
         // 不成盒的兄弟也占号，浏览器侧才能用同一条规则数出同一个下标。默认关，见 DocContext.DomPath。
@@ -715,7 +783,9 @@ public static class StyleResolver
         bool hasImgChild = cs.Children.Any(c => c.Tag is "img" or "svg" && c.Display != "none");
         bool hasBr = cs.InlinePieces.Any(p => p.IsBreak);
         // 只有 block 与 table-cell 为其内容建立 inline 格式化上下文（flex/table/row/行内级都不算）
-        bool blockish = cs.Display == "block" || cs.Display == "table-cell";
+        // list-item 也算（AngleSharp 的 UA 表给 li 的就是它）：漏掉的话 li 里的 <span> 走不到
+        // InlinePieces，块路径只收直接文本 → 整段彩色 span 凭空消失。
+        bool blockish = cs.Display is "block" or "table-cell" or "list-item";
         cs.IsInlineFC = blockish && !hasBlockChild && (hasInlineEl || hasBr || (hasImgChild && cs.TextContent != null));
 
         // 块里与块级兄弟混排的行内级内容（inline 元素、img/svg）：CSS 会把它裹进匿名块再立行盒。
@@ -797,7 +867,7 @@ public static class StyleResolver
         anon.BorderRadiusTopLeft = anon.BorderRadiusTopRight = anon.BorderRadiusBottomRight = anon.BorderRadiusBottomLeft = 0;
         anon.BackgroundColor = SKColor.Empty;
         anon.Background = null;
-        anon.Shadow = null;
+        anon.Shadows = null;
         return anon;
     }
 
@@ -995,6 +1065,17 @@ public static class StyleResolver
             var g = Get(prop);
             return string.IsNullOrEmpty(g) ? Spec(prop) : g;
         }
+        // 本元素自己的内联 style 属性表（AngleSharp 不认识的属性靠它兜底）。整个元素只解析一次。
+        Dictionary<string, string>? inlineAttrs = null;
+        string Inline(string prop)
+        {
+            inlineAttrs ??= ParseStyleAttribute(element.GetAttribute("style"));
+            return inlineAttrs != null && inlineAttrs.TryGetValue(prop, out var v) ? v : "";
+        }
+        // 声明值 → 内联属性：给 text-indent/text-shadow/list-style* 这类 AngleSharp 未注册的属性用
+        string Decl(string prop) { var v = Raw(prop); return v.Length != 0 ? v.Trim() : Inline(prop).Trim(); }
+        // 只算"本元素自己写过"的声明：computed（含继承）与内联属性，不含父链
+        string SpecOnly(string prop) { var v = Spec(prop); return v.Length != 0 ? v.Trim() : Inline(prop).Trim(); }
         // margin/padding 的初值是 0 不是 auto：展平快照只在浏览器算出的用值非 0 时才下发（capture.js），
         // 缺值即 0。走 ParseSize 的空调用会得到 CssSize.Auto，布局按 margin:auto 居中处理 → 整页块级元素错位。
         // 仅限展平路径：作者 CSS 那边 margin-left 读空正是 `margin: 0 auto` 的到达方式（AngleSharp 表达不出
@@ -1292,6 +1373,33 @@ public static class StyleResolver
         s.TextOverflow = CssValueParser.ParseKeyword(Lookup("text-overflow", element, Raw("text-overflow"), ctx), "clip");
         s.WordBreak = CssValueParser.ParseKeyword(Raw("word-break"), "normal");
 
+        // text-indent / text-shadow：AngleSharp 没注册这两条属性时 computed 与 declared 都是空串，
+        // 只能在读不到之后回头看元素**自己的** style 属性。不进 UnsupportedProps 兜底表：那张表按 tag/class
+        // 建键，一条 `p[data-f=textindent]{text-indent:2em}` 会把 2em 漏给页面上所有 <p>。
+        var tiDecl = Decl("text-indent");
+        // text-indent 是继承属性：祖先写的缩进要落到本块首行（% 需要包含块宽，样式期拿不到 → 按 0）
+        s.TextIndent = tiDecl.Length == 0 ? parent?.TextIndent ?? 0
+                     : tiDecl.Contains('%') ? 0 : CssValueParser.ToPixels(tiDecl, s.FontSize);
+        s.TextShadow = CssValueParser.ParseShadowLayers(Decl("text-shadow"), s.FontSize, allowSpread: false);
+
+        // list-style：AngleSharp 的 computed 会把初值 disc 与继承来的值一起吐出来，分不清"作者在本元素写过"，
+        // 而 <ol type> 的 presentational hint 只在没写过时才生效 → 判"作者写过"只认声明值/内联属性（SpecOnly）。
+        // 没写过时的取值次序：浏览器 computed（支持继承时就是父链的值）→ 本引擎父样式（不支持时）→ 标签默认。
+        string declShorthand = SpecOnly("list-style");
+        string declaredType = FirstNonEmpty(CssValueParser.ListStyleTypeKeyword(SpecOnly("list-style-type")),
+                                            ListShorthandType(declShorthand));
+        s.ListStyleSpecified = declaredType;
+        // 与父亲的声明原文同值 = 只是继承（AngleSharp 把继承值也当"本元素的声明"返回），此时要用父亲
+        // **裁决后**的值——<ol type="a"> 这类 HTML 提示在 Walk 里才落到父样式上，抄原文会把它吃掉。
+        bool ownType = declaredType.Length > 0 && declaredType != parent?.ListStyleSpecified;
+        if (ownType) s.ListStyleType = declaredType;
+        else s.ListStyleType = parent?.ListStyleType ?? "disc";   // 标签默认（ul→disc / ol→decimal）在 Walk 里补
+        s.ListStyleAuthorSet = ownType;
+        string declaredPos = FirstNonEmpty(SpecOnly("list-style-position"), ListShorthandPosition(declShorthand) ?? "");
+        s.ListStyleInside = declaredPos.Length > 0 ? declaredPos.Contains("inside", StringComparison.OrdinalIgnoreCase)
+                      : Raw("list-style-position") is { Length: > 0 } pc ? pc.Contains("inside", StringComparison.OrdinalIgnoreCase)
+                      : parent?.ListStyleInside ?? false;
+
         // 分页控制
         s.BreakInside = CssValueParser.ParseKeyword(Raw("break-inside"), "auto");
         s.BreakBefore = CssValueParser.ParseKeyword(Raw("break-before"), "auto");
@@ -1306,7 +1414,11 @@ public static class StyleResolver
         s.BorderRadiusTopRight = FirstRadius(Raw("border-top-right-radius"), s.FontSize);
         s.BorderRadiusBottomRight = FirstRadius(Raw("border-bottom-right-radius"), s.FontSize);
         s.BorderRadiusBottomLeft = FirstRadius(Raw("border-bottom-left-radius"), s.FontSize);
-        s.Shadow = CssValueParser.ParseBoxShadow(Raw("box-shadow"), s.FontSize);
+        // 优先声明值：AngleSharp 的 computed 会把 `0 0 0 2px` 重序列化成 `0 0 2px`（blur 与 spread 串位，
+        // 实测三重阴影那格的外环 2px 被当成 2px 模糊）。声明值本就是作者原样，em 也按本元素字号折算。
+        var shadowDecl = Spec("box-shadow");
+        if (shadowDecl.Length == 0) shadowDecl = Decl("box-shadow");
+        s.Shadows = CssValueParser.ParseShadowLayers(shadowDecl, s.FontSize);
         // background-image/background 一律不读 computed：值里只要含 repeating-* 渐变，
         // AngleSharp 的 CssPeriodicValue.CssText 必抛 NRE（其解析也不完整，渐变串本就走 Spec/Lookup 自解析）。
         string bgi = Spec("background-image");
