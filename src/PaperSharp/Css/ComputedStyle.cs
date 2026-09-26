@@ -230,14 +230,29 @@ public sealed class ComputedStyle
     /// used line-height。Blink 的口径：font-size 先量化到 1/64px（就近），再对「量化后的 fs × 倍数」
     /// 向下取到 1/64px。13.3333×1.6 → 21.3125 而不是 21.3333——每行 −0.0208px 看着无害，长文档里
     /// 逐行累积到页面下部就是 2~3px 的整体纵向漂移（m1 探针实测：td 高 38.3125 = 8+8+1+21.3125）。
+    /// <c>normal</c> 不走这条量化：浏览器取的是**逐度量取整后的** ascent+descent（见
+    /// <see cref="PaperSharp.Layout.FontManager.NormalLineHeightPx"/>），乘出来的倍数（1.3988em 之类）
+    /// 每行恒多 0.2~1.2px，正是整页下部纵向漂移的主因。
     /// </summary>
     public float LineHeightPx()
     {
         if (!float.IsNaN(LineHeightAbsPx)) return LineHeightAbsPx;
-        if (!LineHeightNumeric) return FontSize * LineHeightFactor;
+        if (!LineHeightNumeric)
+        {
+            // 本方法在折行/测量循环里逐行调用，字体度量查询按 (字号) memo；字号被改（伪元素/匿名盒）自动失效
+            if (_normalLhFs != FontSize || _normalLhPx <= 0f)
+            {
+                _normalLhFs = FontSize;
+                _normalLhPx = PaperSharp.Layout.FontManager.NormalLineHeightPx(FontFamily, FontWeight, FontSize);
+            }
+            return _normalLhPx;
+        }
         double fs = Math.Round((double)FontSize * 64d, MidpointRounding.AwayFromZero) / 64d;
         return (float)(Math.Floor(fs * LineHeightFactor * 64d + 1e-6d) / 64d);
     }
+
+    float _normalLhFs = float.NaN;
+    float _normalLhPx;
     public CssTextAlign TextAlignment = CssTextAlign.Left;
     /// <summary>text-indent 折成 px：只作用于块的首行，可为负（列表 marker 的悬挂缩进就靠它）。
     /// 浏览器口径是首行**起点**平移 indent、首行**可用宽**随之变 <c>width - indent</c>（负值⇒首行更宽），

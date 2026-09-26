@@ -23,7 +23,10 @@ public static class StyleResolver
     // 否则两边 UA 默认值（字体/行高/标题字号）就不是一套，每个文本元素都白报一条高度差。
     public const string UaStylesheet = """
         html, body { margin: 0; padding: 0; }
-        body { font-family: sans-serif; font-size: 16px; color: #000; line-height: 1.4; }
+        /* 不写 line-height：Chrome 的 UA 默认是 normal（= 字体 ascent+descent 逐度量取整），
+           这里补一条 1.4 会让所有未显式设行高的元素按 1.4 走行盒（雅黑 1.4 > normal 1.31），
+           每行 +0.2~1.2px，整页累积成 10px+ 的纵向漂移。缺省值交给 ComputedStyle.LineHeightPx 的 normal 分支。 */
+        body { font-family: sans-serif; font-size: 16px; color: #000; }
         h1 { font-size: 32px; font-weight: bold; margin: 21px 0; }
         h2 { font-size: 24px; font-weight: bold; margin: 20px 0; }
         h3 { font-size: 19px; font-weight: bold; margin: 19px 0; }

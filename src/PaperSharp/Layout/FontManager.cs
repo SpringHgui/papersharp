@@ -224,7 +224,7 @@ public static class FontManager
         var m = f.Metrics;
         float a = -m.Ascent / 100f, d = m.Descent / 100f;   // SKFontMetrics.Ascent 为负
         if (!(a > 0 && d >= 0) || float.IsNaN(a + d)) return new VertMetrics(0.8f, 0.2f, 1.4f, 0.5f);
-        float lh = a + d + m.Leading / 100f;
+        float lh = a + d;   // 不含 lineGap：Blink 的 normal 行盒就是取整后的 ascent+descent
         float xh = m.XHeight / 100f;
         return new VertMetrics(a, d, lh > 0 && !float.IsNaN(lh) ? lh : 1.4f, xh > 0.05f && xh < a ? xh : 0.5f);
     });
@@ -254,11 +254,19 @@ public static class FontManager
     public static float XHeightPerEm(string family, int weight) => Of(Get(family, weight)).XHeight;
 
     /// <summary>
-    /// 该字族+字重的 <c>line-height: normal</c> 行距比 = 字体 ascent+descent+lineGap 相对 em。
-    /// 浏览器就是这个口径（雅黑 1.318、常见 serif 回退 1.4875），而 CSS 里没有「1.4」这条：
-    /// 写死 1.4 会让每一段未显式设行高的正文各差几个百分点，整页累积下移。
+    /// 该字族+字重的 <c>line-height: normal</c> 行距比 = 字体 ascent+descent 相对 em（不含 lineGap）。
+    /// 只作 ratio 用；行盒高一律走 <see cref="NormalLineHeightPx"/>——浏览器是**逐度量取整后相加**，
+    /// 不是「比值 × 字号」（13px 雅黑：round(13·0.9678)+round(13·0.3310)=13+4=17，而乘出来 16.88）。
+    /// 统一按 1.4 或按不取整的比值兜底，会让每段未显式设行高的正文各差零点几 px，逐段累积成整页漂移。
     /// </summary>
     public static float NormalLineHeight(string family, int weight) => Of(Get(family, weight)).NormalLh;
+
+    /// <summary><c>line-height: normal</c> 在该字号下的行盒高（px）= 取整后的 ascent + descent。</summary>
+    public static float NormalLineHeightPx(string family, int weight, float sizePx)
+    {
+        var (asc, desc) = TextExtents(family, weight, sizePx);
+        return asc + desc;
+    }
 
     static SKTypeface? LoadRegistered((int weight, string[] paths)[] faces, int weight, string? baseDir)    {
         // 按字重就近取；同字重内按 src 声明顺序逐个尝试文件
