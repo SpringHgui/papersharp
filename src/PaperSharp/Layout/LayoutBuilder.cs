@@ -222,21 +222,44 @@ public static class LayoutBuilder
     static void MeasureImage(BlockBox box, float availWidth, bool availIsOwnContent = false)
     {
         var s = box.Style;
-        float decoW = s.BorderWidthLeft + s.BorderWidthRight + s.PaddingLeft + s.PaddingRight
-            + (availIsOwnContent ? 0 : s.MarginLeft + s.MarginRight);
+        float decoH = s.BorderWidthLeft + s.BorderWidthRight + s.PaddingLeft + s.PaddingRight;
+        float decoV = s.BorderWidthTop + s.BorderWidthBottom + s.PaddingTop + s.PaddingBottom;
+        float decoW = decoH + (availIsOwnContent ? 0 : s.MarginLeft + s.MarginRight);
         float availContent = Math.Max(0, availWidth - decoW);
         float nw = box.NaturalW, nh = box.NaturalH;
         float ratio = nw > 0 && nh > 0 ? nh / nw : 1f;
 
+        // box-sizing:border-box 时 width/height/max-width 命名的是外盒，先扣自身边框+padding 才换成内容尺寸。
+        // 漏这一步，<img width=110 height=110 style="border:4px"> 被当成内容盒 → 外盒 118，比浏览器大一圈。
+        bool borderBox = s.BoxSizing == "border-box";
         float wRes = s.Width.Resolve(availWidth);   // 绝对或 % of 包含块宽
         float hRes = s.Height.Resolve(float.NaN);   // img 的 height% 无可靠基准 → 视为 auto
+        if (borderBox)
+        {
+            if (!float.IsNaN(wRes)) wRes = Math.Max(0, wRes - decoH);
+            if (!float.IsNaN(hRes)) hRes = Math.Max(0, hRes - decoV);
+        }
         bool hasW = !float.IsNaN(wRes), hasH = !float.IsNaN(hRes);
+        float maxW = s.MaxWidth.Resolve(availWidth), minW = s.MinWidth.Resolve(availWidth);
+        if (borderBox)
+        {
+            if (!float.IsNaN(maxW)) maxW = Math.Max(0, maxW - decoH);
+            if (!float.IsNaN(minW)) minW = Math.Max(0, minW - decoH);
+        }
 
         float w, h;
+        bool hFromRatio = false;
         if (hasW && hasH) { w = wRes; h = hRes; }
-        else if (hasW) { w = wRes; h = w * ratio; }
+        else if (hasW) { w = wRes; h = w * ratio; hFromRatio = true; }
         else if (hasH) { h = hRes; w = nh > 0 ? h / ratio : h; }
-        else { w = nw; h = nh; if (w > availContent && w > 0) { h *= availContent / w; w = availContent; } }
+        else { w = nw; h = nh; if (w > availContent && w > 0) { h *= availContent / w; w = availContent; } hFromRatio = true; }
+
+        // 高由比例算出时，max/min-width 得带着比例一起缩——浏览器对替换元素正是这么处理的
+        if (hFromRatio && w > 0)
+        {
+            if (!float.IsNaN(maxW) && w > maxW) { h *= maxW / w; w = maxW; }
+            if (!float.IsNaN(minW) && w < minW) { h *= minW / w; w = minW; }
+        }
 
         box.ContentWidth = Math.Max(0, w);
         box.ContentHeight = Math.Max(0, h);
@@ -1102,8 +1125,61 @@ public static class LayoutBuilder
                 }
             }
 
-            // 夹到 min/max
-            for (int i = 0; i < line.ItemIndices.Count; i++)
+            // 夹到 min/max。行向内还要叠 CSS Flexbox §4.5 的「自动最小尺寸」：min-width:auto 的
+            // flex 子项不得窄于自身 min-content；顶到最小尺寸的项退出分配（frozen），剩余自由空间
+            // 按 grow 比例继续分给其余项——浏览器正是这么把「三格 flex:1 各锁 142.14、
+            // 而 flex:2 那格拿到 216.11」算出来的（纯一步比例分配会得到 139.68/223.49）。
+            int cnt = line.ItemIndices.Count;
+            var frozen = new bool[cnt];
+            var floorMain = new float[cnt];
+            for (int i = 0; i < cnt; i++)
+            {
+                var ms = kids[line.ItemIndices[i]].Style;
+                floorMain[i] = isRow ? ms.MinWidth.Resolve(lineMainAvail) : ms.MinHeight.Resolve(myDefH ?? float.NaN);
+                if (isRow && ms.MinWidth.IsAuto)
+                {
+                    // 规范 §4.5「内容相关最小尺寸」= min(指定尺寸建议, 内容尺寸建议)：显式定宽的
+                    // 收缩项以其自身宽为上界，min-content 只是下界里的候选。少了这层 min() 会把
+                    // width:36mm 的 flex 项锁死在 136.06（Chrome 缩到 134.17 整行才塞得下）。
+                    float mc = MinContentWidthOfContent(kids[line.ItemIndices[i]]);
+                    if (!float.IsNaN(mc)) floorMain[i] = Math.Min(mc, lineBase[i]);
+                }
+            }
+            for (int round = 0; round <= cnt; round++)
+            {
+                bool newly = false;
+                for (int i = 0; i < cnt; i++)
+                    if (!frozen[i] && !float.IsNaN(floorMain[i]) && lineFinal[i] < floorMain[i] - 0.01f)
+                    {
+                        lineFinal[i] = Math.Max(0, floorMain[i]);
+                        frozen[i] = true;
+                        newly = true;
+                    }
+                if (!newly) break;
+                float used2 = gap * (cnt - 1);
+                for (int i = 0; i < cnt; i++) used2 += lineDeco[i] + (frozen[i] ? lineFinal[i] : lineBase[i]);
+                float free2 = lineMainAvail - used2;
+                float grow2 = 0, shrink2 = 0;
+                for (int i = 0; i < cnt; i++)
+                    if (!frozen[i])
+                    {
+                        grow2 += kids[line.ItemIndices[i]].Style.FlexGrow;
+                        shrink2 += kids[line.ItemIndices[i]].Style.FlexShrink * Math.Max(1, lineBase[i]);
+                    }
+                for (int i = 0; i < cnt; i++)
+                {
+                    if (frozen[i]) continue;
+                    var st = kids[line.ItemIndices[i]].Style;
+                    // 顶到最小尺寸的项退出后，余量要按同一套规则重分给未冻结项：正空间分 grow，
+                    // 负空间分 shrink。只处理 grow 会把收缩结果整轮回退成 lineBase（少缩 1.89px/项）。
+                    if (free2 > 0.5f && grow2 > 0)
+                        lineFinal[i] = lineBase[i] + free2 * st.FlexGrow / grow2;
+                    else if (free2 < -0.5f && shrink2 > 0)
+                        lineFinal[i] = Math.Max(0, lineBase[i] + free2 * st.FlexShrink * Math.Max(1, lineBase[i]) / shrink2);
+                    else lineFinal[i] = lineBase[i];
+                }
+            }
+            for (int i = 0; i < cnt; i++)
             {
                 var ms = kids[line.ItemIndices[i]].Style;
                 lineFinal[i] = isRow
@@ -1189,7 +1265,10 @@ public static class LayoutBuilder
         {
             float r = s.FlexBasis.Resolve(mainAvail);
             if (!float.IsNaN(r))
-                return s.BoxSizing == "border-box" ? r - MainBorderPadding(c, isRow) : r;
+                // border-box 口径下 basis 是外盒尺寸，而外盒不可能小于自身边框+padding：
+                // 不夹到 0 会让 flex:1 的厚边框项「倒贴」装饰，把兄弟格的空间吃掉。
+                // 夹住后两格 flex:1（padding+border 分别 34.68 / 4）自由空间各半 → 351.72/321.04，与浏览器逐一致。
+                return s.BoxSizing == "border-box" ? Math.Max(0, r - MainBorderPadding(c, isRow)) : r;
         }
         float dim = isRow ? s.Width.Resolve(mainAvail) : s.Height.Resolve(containerDefH ?? float.NaN);
         if (!float.IsNaN(dim))
@@ -1229,15 +1308,27 @@ public static class LayoutBuilder
     static float MinContentWidth(BlockBox c) => IntrinsicWidth(c, Intrinsic.Min);
 
     /// <summary>
+    /// min-content 的「内容建议」：连子项自己声明的 width 也不算数，只看它装得下什么。
+    /// CSS Flexbox §4.5 的自动最小尺寸取 min(指定尺寸建议, 内容建议)，故显式定宽
+    /// （width:36mm）的 flex 项照样能缩到文字所需宽以下的那条线；直接用
+    /// <see cref="MinContentWidth"/> 会在上面的固定宽短路处返回声明值，把收缩钉死。
+    /// </summary>
+    static float MinContentWidthOfContent(BlockBox c) => IntrinsicWidth(c, Intrinsic.Min, ignoreOwnSize: true);
+
+    /// <summary>
     /// 内在宽：min 与 max 只差在**叶子**（文字/原子序列怎么量），容器层的组合规则一模一样
     /// （沿主轴并排求和、块级子项取最宽、固定宽/替换元素照抄）。因此共用一趟遍历、
     /// 分支只写一处——两棵平行的树迟早在一侧补漏时分叉。
     /// </summary>
-    static float IntrinsicWidth(BlockBox c, Intrinsic kind)
+    static float IntrinsicWidth(BlockBox c, Intrinsic kind, bool ignoreOwnSize = false)
     {
         var s = c.Style;
-        if (s.Width.IsFixed) return s.Width.Absolute;
-        if (s.FlexBasis.IsFixed) return s.FlexBasis.Absolute;
+        // 固定 width 是「声明尺寸」，内在宽要的是它对内容盒的贡献：box-sizing:border-box 时边框+padding
+        // 已经含在声明值里，直接返回会让上层 (+MainDeco) 再补一遍 —— 实测 flex 项里的
+        // <img width=110 style="border:4px"> 使父盒 max-content 报 118，整格被撑宽 8px。
+        if (!ignoreOwnSize && s.Width.IsFixed)
+            return s.Width.Absolute - (s.BoxSizing == "border-box" ? MainBorderPadding(c, true) : 0f);
+        if (!ignoreOwnSize && s.FlexBasis.IsFixed) return s.FlexBasis.Absolute;
         if (c.IsReplaced) return c.NaturalW;
         // inline FC：max = 各原子内在宽之和（不折行）；min = 压到零宽走一遍真实折行取最宽行
         if (c.Atoms != null)

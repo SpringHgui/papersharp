@@ -49,6 +49,9 @@ public static class StyleResolver
         div, section, article, header, footer, main { display: block; }
         /* 行内级元素默认 display:inline（AngleSharp 未必内置 UA 表，显式声明以驱动 inline 格式化上下文检测） */
         a, span, em, i, strong, b, u, s, small, code, label, cite, abbr, mark, sub, sup, tt, kbd, var, q, ins, del, time { display: inline; }
+        /* 替换元素同属行内级：缺了这条它按上面的兜底初值 block 定性，浏览器「图文混排立行盒 + 图片下方留 strut
+           descent」的形态就整个丢了（作者真写了 display:block 的 <img> 由后注的作者表压过本表，仍然成块）。 */
+        img, svg, picture, video, canvas { display: inline; }
         /* 表格家族 UA 默认 */
         table { display: table; border-collapse: separate; border-spacing: 2px; }
         thead { display: table-header-group; }
@@ -781,9 +784,9 @@ public static class StyleResolver
 
         // 判定纯 inline 格式化上下文：块级、无块级子元素、且含【行内元素 / 换行 / 图文混排的 img】。
         // 关键：只有文本、无任何行内结构的块 NOT 走这里 → 仍用老的 WrappedLines 路径，保证既有样例零回归。
-        bool hasBlockChild = cs.Children.Any(c => c.Display != "none" && !ComputedStyle.IsInlineLevel(c.Display) && c.Tag is not ("img" or "svg"));
+        bool hasBlockChild = cs.Children.Any(c => c.Display != "none" && !ComputedStyle.IsInlineLevel(c.Display));
         bool hasInlineEl = cs.Children.Any(c => ComputedStyle.IsInlineLevel(c.Display) && c.Tag != "img");
-        bool hasImgChild = cs.Children.Any(c => c.Tag is "img" or "svg" && c.Display != "none");
+        bool hasImgChild = cs.Children.Any(c => c.Tag is "img" or "svg" && c.Display != "none" && ComputedStyle.IsInlineLevel(c.Display));
         bool hasBr = cs.InlinePieces.Any(p => p.IsBreak);
         // 只有 block 与 table-cell 为其内容建立 inline 格式化上下文（flex/table/row/行内级都不算）
         // list-item 也算（AngleSharp 的 UA 表给 li 的就是它）：漏掉的话 li 里的 <span> 走不到
@@ -796,7 +799,10 @@ public static class StyleResolver
         // div.note > strong 实测引擎 1168×21 vs 浏览器 132×17，还连带把后面的 <ul> 顶下一行）。
         // 只裹「元素行内片段」：直接文本参与裹行需要按 DOM 序切分文本，本引擎的 TextContent
         // 是整块合并的，切不准则宁可退回老路径，故有直接文本时不接管。
-        if (blockish && !cs.IsInlineFC && string.IsNullOrEmpty(cs.TextContent))
+        // 判据必须是**直接**文本而非 TextContent：后者聚合了后代文字，只要块里嵌了任何一个
+        // 带文字的兄弟就恒非空，于是 <div><div>label</div><img></div> 永远不裹行盒，
+        // 图片按块级子盒算高（浏览器还要加一截 strut descent，实测差 5px/格）。
+        if (blockish && !cs.IsInlineFC && !cs.InlinePieces.Any(p => !string.IsNullOrWhiteSpace(p.Text)))
             cs.Children = WrapAnonymousInlineRuns(cs);
 
         // 伪元素 ::before/::after：仅当 CSS 里确有伪元素规则时才建生成盒（content 片段 + 自身样式），
@@ -816,11 +822,12 @@ public static class StyleResolver
     /// 匿名块给行内内容立一行盒，图片下方那截 strut descent 也才留得下来。
     /// 纯 img/svg 的run即便父块没有块级兄弟也要裹（保持原行为：块里只有图时整块就是行盒）；
     /// 纯 inline 元素的run只有在确实与块级兄弟混排时才裹——全是行内时上面已判成 IsInlineFC。
+    /// 替换元素按**计算后的 display** 定性：作者写了 display:block 的 &lt;img&gt; 是块级盒，
+    /// 裹进行盒会让它和兄弟图片并排成一行，还白吃一截 strut descent（实测每格 +4px）。
     /// </summary>
     static List<ComputedStyle> WrapAnonymousInlineRuns(ComputedStyle owner)
     {
-        bool Inlineish(ComputedStyle c) => c.Display != "none"
-            && (c.Tag is "img" or "svg" || ComputedStyle.IsInlineLevel(c.Display));
+        bool Inlineish(ComputedStyle c) => c.Display != "none" && ComputedStyle.IsInlineLevel(c.Display);
         bool Replaced(ComputedStyle c) => c.Tag is "img" or "svg";
         bool hasBlockSibling = owner.Children.Any(c => !Inlineish(c));
         var outList = new List<ComputedStyle>(owner.Children.Count);
