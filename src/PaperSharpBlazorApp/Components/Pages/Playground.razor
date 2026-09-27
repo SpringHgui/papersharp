@@ -387,8 +387,10 @@
         }
     }
 
-    /// <summary>换页缩放都交给内置查看器；token 变了就是新文档，不必再加查询串防缓存。</summary>
-    static string PdfUrl(PlaygroundPdf p) => $"/api/playground/pdf/{p.Token}#zoom=page-width";
+    /// <summary>换页缩放都交给内置查看器；token 变了就是新文档，不必再加查询串防缓存。
+    /// navpanes=0：查看器那圈侧栏（缩略图/目录）在这份没有大纲的 PDF 里就是一条空白带，
+    /// 开着它等于从窗口宽度里白扣两百多像素，页面被挤成中间一小坨。</summary>
+    static string PdfUrl(PlaygroundPdf p) => $"/api/playground/pdf/{p.Token}#navpanes=0&zoom=page-width";
 
     /// <summary>容差只改判定、不改布局——拿已缓存的浏览器矩形重算一遍即可，别白渲染一次。</summary>
     Task ReDiffAsync()

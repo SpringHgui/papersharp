@@ -345,16 +345,18 @@ iframe { display: block; border: 0; background: #fff; }
 /* ── PDF 悬浮窗 ───────────────────────────────────────────────────────── */
 
 /* fixed 而非 absolute：脱开 .split 那套网格，浮在两窗与状态栏之上，位置只跟视口有关。
-   overflow:hidden 一是让 resize 生效（overflow:visible 的元素不出现把手），二是把 iframe 裁进圆角。 */
+   overflow:hidden 一是让 resize 生效（overflow:visible 的元素不出现把手），二是把 iframe 裁进圆角。
+   宽度按视口给（不是 430px 那种小票尺寸）：Chrome 的 PDF 查看器要把整页 A4 摆开，
+   窄了就先被它自己的工具条/侧栏吃掉一圈，页面缩成中间一小坨，看不出排版对不对。 */
 .pdfwin {
     position: fixed;
     right: 18px;
     bottom: 42px;
     z-index: 20;
-    width: 430px;
-    height: min(74vh, 800px);
-    min-width: 260px;
-    min-height: 170px;
+    width: min(72vw, 1040px);
+    height: min(82vh, 900px);
+    min-width: 420px;
+    min-height: 260px;
     max-width: calc(100vw - 24px);
     max-height: calc(100vh - 80px);
     display: flex;
