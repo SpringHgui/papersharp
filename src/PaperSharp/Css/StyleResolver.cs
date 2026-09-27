@@ -1470,11 +1470,18 @@ public static class StyleResolver
                        || AnyClips(Lookup("overflow-y", element, Raw("overflow-y"), ctx));
 
         // 文本高级：vertical-align / text-wrap / text-fit（非标准，走属性兜底 + HTML 属性）
-        // Chrome UA 表给 sub/sup 的 vertical-align。AngleSharp 不认这条属性（全靠 UnsupportedProps 扫作者
-        // CSS 兜底），而 ScanUnsupported 又只扫作者 CSS、不扫本引擎注入的 UA 表，所以 UA 里写了也读不到
-        // ——实测 m3 的 <sup>/<sub> 因此两条都落在基线上（y 完全相同，与浏览器差 -6.0/+4.5）。
-        // 放在级联与作者扫描**之后**，保证作者显式声明仍能压过它。
-        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Raw("vertical-align"), ctx),
+        // Chrome UA 表给 sub/sup 的 vertical-align，本引擎 UA 表里没有（AngleSharp 的层叠视图读不到注入表
+        // 的这条），所以靠 TagDefault 兜底——实测 m3 的 <sup>/<sub> 缺它时两条都落在基线上（y 完全相同，
+        // 与浏览器差 -6.0/+4.5）。放在级联与作者扫描**之后**，保证作者显式声明仍能压过它。
+        // 相对长度必须由布局层折算：AngleSharp 的 computed 把 vertical-align 按「根字号 16 + 视口宽」
+        // 折成绝对 px，两个基准都错——CSS 里 em 是**元素自己的字号**、% 是**元素自己的 line-height**
+        // （实测 12px 的 1.5em 浏览器抬 18px，computed 给 24px；25% 抬 4.8px，computed 给 198.5px）。
+        // 而且**只**认本元素自己的声明，连非相对值也不读 computed：Chrome 不让 vertical-align 继承
+        // （探针 _probe-va8：span{va:super} 套 <i> → i 的 computed 是 baseline；td/th{va:middle} 里的
+        // span 同样是 baseline）。AngleSharp 按 CSS 规范把它当继承属性，于是 UA 表那条
+        // td, th{vertical-align:middle} 会漏进单元格里的每一段文字，table 样例整表每行虚高 2.2px。
+        // 展平快照路径无需补救：那份 px 本就是浏览器按正确基准折的，而 Spec 在该路径就是它。
+        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Spec("vertical-align"), ctx),
                                         TagDefaultVerticalAlign(element), "baseline")!;
         s.TextWrap = CssValueParser.ParseKeyword(Lookup("text-wrap", element, Raw("text-wrap"), ctx), "wrap");
         var tf = Lookup("text-fit", element, Raw("text-fit"), ctx);

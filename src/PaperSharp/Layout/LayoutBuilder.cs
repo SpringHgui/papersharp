@@ -2038,31 +2038,18 @@ public static class LayoutBuilder
         }
     }
 
-    /// <summary>原子盒（inline-block/img）按 vertical-align 求行内顶边 y。
-    /// 基线类对齐（baseline/middle/super/sub/长度）都从「盒基线压行盒基线」推起：盒基线以下的部分
-    /// 由 <c>f.Descent</c> 给出（inline-block 是末行基线以下那截，替换元素是 0），所以顶边 =
-    /// 行盒基线 − 盒高 + 盒基线以下。</summary>
+    /// <summary>原子盒（inline-block/img）按 vertical-align 求行内顶边 y。对齐位移已在
+    /// <see cref="InlineLayout.FinalizeLine"/> 里与文本 run 一并算好（<c>f.AlignDY</c>，两者同一约定：
+    /// 顶边 = 行盒基线 + dy − 盒基线以上段），这里只做「盒高 − 基线以下段」的换算
+    /// （inline-block 的基线以下那截由 <c>f.Descent</c> 给出，替换元素是 0）。</summary>
     static float AtomicTop(InlineFrag f, float lineY, LineBox ln)
     {
         float boxH = f.Box!.TotalHeight;
         float baseTop = lineY + ln.Baseline - boxH + f.Descent;   // vertical-align: baseline
         // 外侧图片 marker 不按「盒底贴基线」落位：12/20px 实心方块 @fs16 探针量到方块中心在
         // 「基线 + 0.25em」上（盒底因此比基线低 h/2+0.25em），fs8/12/16/24 下误差 ≤1px。
-        if (f.Style.IsListMarker && boxH > 0) baseTop += boxH / 2 + 0.25f * f.FontSize;
-        var va = f.Style.VerticalAlign;
-        switch (va)
-        {
-            case "top": return lineY;
-            case "bottom": return lineY + ln.Height - boxH;
-            case "middle": return lineY + ln.Baseline - f.FontSize * FontManager.XHeightPerEm(f.Style.FontFamily, f.Style.FontWeight) / 2 - boxH / 2;
-            case "super": return baseTop - 0.35f * f.FontSize;
-            case "sub": return baseTop + 0.25f * f.FontSize;
-            default:
-                float len = va.EndsWith('%')
-                    ? ln.Height * CssValueParser.ParseFloat(va[..^1]) / 100f
-                    : CssValueParser.ToPixels(va, f.FontSize);
-                return baseTop - (float.IsNaN(len) ? 0 : len);
-        }
+        if (f.Style.IsListMarker) return baseTop + boxH / 2 + 0.25f * f.FontSize;
+        return baseTop + f.AlignDY;
     }
 
     /// <summary>absolute 子盒：按包含块 + 偏移定位（left 优先，其次 right 反推；auto 落到静态位置）。</summary>

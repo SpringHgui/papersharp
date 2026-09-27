@@ -28,7 +28,7 @@ public sealed class InlineFrag
     public float X, Width, FontSize, Ascent, Descent;
     public float PadLeft, PadRight;   // 仅文本片段：盒相对文字的左右外扩（padding+border）
     public bool HostText;             // 块自身文字：底色已由块盒铺过，绘制端不得再按行补背景（见 InlineAtom.HostText）
-    public float AlignDY;   // vertical-align 生效后的基线下移量（文本 run；原子盒由 PositionInline 处理）
+    public float AlignDY;   // vertical-align 生效后的基线下移量（文本 run 与原子盒同一约定，见 AlignShift）
 }
 
 /// <summary>一行：若干 frag + 行高/基线/宽度。Left 为对齐后的 x 偏移（相对内容盒）。
@@ -449,55 +449,101 @@ public static class InlineLayout
 
     static void FinalizeLine(LineBox ln, ComputedStyle? strut)
     {
-        float maxAsc = 0, maxDesc = 0, w = 0;
+        // 行盒 = 行内每个盒**按 vertical-align 对齐之后**的上下伸出量的并集（CSS 2.1 §10.8）。
+        // 除了 top/bottom，位移量都与行盒无关 → 一遍就能同时定出各片段的位移和撑开后的行盒；
+        // 被抬起的片段因此会把基线顶下去（整行文字随之一起下移），被压下的片段只加高下半截。
+        // Chrome 同口径：_probe-va5 里 14px/行高 21 的一行放个「上抬 18px」的 12px 片段，
+        // 行盒 21→37、基线由盒顶第 16 变第 32，片段顶边落在盒顶 +1，逐位吻合。
+        // top/bottom 反过来要贴行盒的边，先按基线对齐计入并集（免得整行只有一个贴图时被算成空行），
+        // 再在并集定稿后贴一次边。外侧 marker 完全不撑行盒：见 ComputedStyle.IsListMarker。
+        float asc = 0, desc = 0, w = 0;
         foreach (var f in ln.Frags)
         {
-            // 外侧 marker（list-style-position: outside）不撑行盒：见 ComputedStyle.IsListMarker。
             if (f.Style.IsListMarker) { w += f.Width; continue; }
-            var (a, d) = BoxOf(f);
-            if (a > maxAsc) maxAsc = a;
-            maxDesc = Math.Max(maxDesc, d);
+            var (fAsc, fDesc) = BoxOf(f);
             w += f.Width;
+            if (f.Style.VerticalAlign is "top" or "bottom")
+            {
+                if (fAsc > asc) asc = fAsc;
+                desc = Math.Max(desc, fDesc);
+                continue;
+            }
+            float dy = f.AlignDY = AlignShift(f, ln, fAsc, fDesc);
+            asc = Math.Max(asc, fAsc - dy);
+            desc = Math.Max(desc, fDesc + dy);
         }
         // strut（块自身的字体与行高）恒在每一行里：小图独占一行时行高也得不低于它
         if (strut != null)
         {
             var (a, d) = BoxOf(strut);
-            maxAsc = Math.Max(maxAsc, a);
-            maxDesc = Math.Max(maxDesc, d);
+            asc = Math.Max(asc, a);
+            desc = Math.Max(desc, d);
         }
-        ln.Baseline = maxAsc > 0 ? maxAsc : strut?.FontSize ?? 14;
-        ln.Height = maxAsc + maxDesc;
+        ln.Baseline = asc > 0 ? asc : strut?.FontSize ?? 14;
+        ln.Height = asc + desc;
         ln.Width = w;
 
-        // 文本 run 的 vertical-align（top/bottom 对齐行盒，super/sub 惯例偏移，length/% 相对基线上移）
         foreach (var f in ln.Frags)
         {
-            if (f.Text == null) continue;
-            var va = f.Style.VerticalAlign;
+            if (f.Style.IsListMarker) continue;
+            if (f.Style.VerticalAlign is not ("top" or "bottom")) continue;
             var (fAsc, fDesc) = BoxOf(f);
-            float dy;
-            switch (va)
-            {
-                // top/bottom：把该片段自己的行高盒上/下边贴到行盒对应边上（相对基线换算成下移量）
-                case "top": dy = fAsc - ln.Baseline; break;
-                case "bottom": dy = (ln.Height - ln.Baseline) - fDesc; break;
-                // Chrome 实测：super 上抬 = 父字号/3 + 1px，sub 下移 = 父字号/5 + 1px，
-                // 只看**父**字号（4 字体 × 3 行高 × 7 档父字号拟合残差 ≤0.006px）。
-                // 旧式按自身字号算：m3 的 sup{font-size:11px} 在 16px 段里少抬 2.48px。
-                case "super": dy = -(ParentFontSize(f) / 3f + 1f); break;
-                case "sub": dy = ParentFontSize(f) / 5f + 1f; break;
-                default:
-                    float len = va.EndsWith('%')
-                        ? ln.Height * CssValueParser.ParseFloat(va[..^1]) / 100f
-                        : CssValueParser.ToPixels(va, f.FontSize);
-                    dy = float.IsNaN(len) ? 0 : -len; // 正值上移；"baseline"/"middle" 等关键字解析为 0
-                    break;
-            }
-            f.AlignDY = dy;
+            f.AlignDY = AlignShift(f, ln, fAsc, fDesc);
         }
 
         ReorderForRtl(ln);
+    }
+
+    /// <summary>
+    /// 一个片段按 vertical-align 相对基线的**下移量**（正 = 下）。文本 run 与原子盒共用：
+    /// 绘制顶边一律是「行盒基线 + dy − 自己的上段」，上段对文本取 <see cref="BoxOf(InlineFrag)"/>
+    /// 的行高盒、对原子盒取盒基线以上那截（<c>f.Ascent</c>，两者相加恒等于盒高），故同一条算式两边都成立。
+    /// 基准一律是**父元素**（CSS 2.1 §10.8.1，见 <see cref="ParentStyle"/>）：
+    /// text-top/text-bottom 贴父字体内容区的上下边，middle 把自身盒中点摆到「父基线 + 父 x-height/2」。
+    /// Chrome 实测：super 上抬 = 父字号/3 + 1px、sub 下移 = 父字号/5 + 1px（只看**父**字号，
+    /// 4 字体 × 3 行高 × 7 档父字号拟合残差 ≤0.006px）；% 的基准是**元素自己的 used line-height**
+    /// （19.1875px 的 25% = 4.797、40px 的 25% = 10、normal 行高 16px 的 25% = 4），em 是自己的字号
+    /// （故这两个值必须由声明文本换算，见 StyleResolver 里 vertical-align 取 Spec 的那段）。
+    /// **嵌套行内要累加外层盒的位移**：行内盒挪的是自己的基线，子元素按 baseline 落在这条挪过的基线上，
+    /// 不是回到整行的基线（探针 _probe-va9 p[5]：<span{va:super}> 里的 <i> 与 span 同顶边 109，
+    /// 旧口径把它放回 114.67，比浏览器低 5.7px）。
+    /// </summary>
+    static float AlignShift(InlineFrag f, LineBox ln, float fAsc, float fDesc)
+    {
+        // 块自身的文字不按块的 vertical-align 位移：这条属性只作用于「行盒里的那个盒」，块级盒写了它
+        // 也只被外层用作对齐（表格单元格走 ValignDY，另有 inline-block/行内块作为原子盒在此行里）。
+        // Chrome 实测：<p style="vertical-align:super"> 与对照 <p> 行盒同高（_probe-va8）；td/th 的 UA
+        // middle 若作用到单元格里每段文字，table 样例每一行都虚高 2.2px。
+        if (f.HostText) return 0;
+        float dy = OwnShift(f.Style, fAsc, fDesc, ln);
+        for (var p = f.Style.Parent; p is { Display: "inline" }; p = p.Parent)
+            if (p.VerticalAlign != "baseline")
+            {
+                var (pAsc, pDesc) = BoxOf(p);
+                dy += OwnShift(p, pAsc, pDesc, ln);
+            }
+        return dy;
+    }
+
+    /// <summary>某个盒**自己**那条 vertical-align 的位移（外层行内盒的贡献由 AlignShift 逐层累加）。</summary>
+    static float OwnShift(ComputedStyle st, float fAsc, float fDesc, LineBox ln)
+    {
+        var va = st.VerticalAlign;
+        switch (va)
+        {
+            case "top": return fAsc - ln.Baseline;
+            case "bottom": return (ln.Height - ln.Baseline) - fDesc;
+            case "text-top": return fAsc - ParentFontBox(st).Asc;
+            case "text-bottom": return ParentFontBox(st).Desc - fDesc;
+            case "middle": return (fAsc - fDesc) / 2 - ParentXHeight(st) / 2;
+            case "super": return -(ParentFontSize(st) / 3f + 1f);
+            case "sub": return ParentFontSize(st) / 5f + 1f;
+            default:
+                float len = va.EndsWith('%')
+                    ? st.LineHeightPx() * CssValueParser.ParseFloat(va[..^1]) / 100f
+                    : CssValueParser.ToPixels(va, st.FontSize);
+                return float.IsNaN(len) ? 0 : -len;   // 正值上移；"baseline" 等解析为 0
+        }
     }
 
     /// <summary>RTL 基底方向：把行内 frag 按强方向分组并反转为视觉序（规则与 TextShaper.BidiRuns 一致），重排 X。
@@ -530,9 +576,26 @@ public static class InlineLayout
         }
     }
 
-    /// <summary>CSS 2.1 §10.8.1 的 sub/super 偏移以**父元素**字号为基（ComputedStyle.Parent 在样式期已挂好）。</summary>
-    static float ParentFontSize(InlineFrag f)
-        => f.Style.Parent is { FontSize: > 0 } p ? p.FontSize : f.FontSize;
+    /// <summary>CSS 2.1 §10.8.1 的 sub/super/middle/text-top/text-bottom 都以**父元素**的字体为基准
+    /// （ComputedStyle.Parent 在样式期已挂好）。</summary>
+    static ComputedStyle ParentStyle(ComputedStyle st) => st.Parent ?? st;
+
+    /// <summary>父字体内容区（ascent/descent，各自取整到整像素）在父字号下的上下高度。</summary>
+    static (float Asc, float Desc) ParentFontBox(ComputedStyle st)
+    {
+        var p = ParentStyle(st);
+        return FontManager.TextExtents(p.FontFamily, p.FontWeight, p.FontSize);
+    }
+
+    /// <summary>父字体的 x-height（px）——vertical-align:middle 把自身盒中点摆到「基线 + 它的一半」。</summary>
+    static float ParentXHeight(ComputedStyle st)
+    {
+        var p = ParentStyle(st);
+        return FontManager.XHeightPerEm(p.FontFamily, p.FontWeight) * p.FontSize;
+    }
+
+    static float ParentFontSize(ComputedStyle st)
+        => st.Parent is { FontSize: > 0 } p ? p.FontSize : st.FontSize;
 
     static string LastText(LineBox ln)
     {
