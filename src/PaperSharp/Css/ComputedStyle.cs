@@ -217,6 +217,10 @@ public sealed class ComputedStyle
     // 文本
     public string FontFamily = "sans-serif";
     public float FontSize = 14f;
+    /// <summary>本节点读到的 font-size **声明原文**（未折算；没声明就是空串）。只用于伪元素：AngleSharp
+    /// 会把宿主的声明漏进伪元素的读取结果，串与宿主的这份逐字相同即判为泄漏 → 按继承处理，
+    /// 详见 <see cref="StyleResolver"/> 字号那段（判别探针 _probe-em）。</summary>
+    public string FontSizeSpec = "";
     public int FontWeight = 400;
     public float LineHeightFactor = 1.4f;
     /// <summary>CSS 是否显式给出数字/百分比行高。false = normal（走字体度量，浏览器对它不做 1/64 量化）。</summary>

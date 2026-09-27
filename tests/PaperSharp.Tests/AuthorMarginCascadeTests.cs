@@ -87,7 +87,9 @@ public class AuthorMarginCascadeTests
     public void UniversalReset_winsOverUaDefault()
     {
         // 没写重置时 h2 的内建默认须在；写了 `*{margin:0}` 就必须被压掉（AngleSharp 会反，故有本类）。
-        Assert.Equal(20, H2Margins("<h2>x</h2>", "h2{font-size:14px}").Top);
+        // 默认值现在是 **em**（Chrome UA：h2 { margin: .83em }），按 h2 自己的字号折算而不是 16px 根字号，
+        // 所以 14px 的 h2 是 .83×14=11.62 而不是 20（_probe-ua2 实测 headless Chrome 同值）。
+        Assert.Equal(11.62f, H2Margins("<h2>x</h2>", "h2{font-size:14px}").Top, 2);
         Assert.Equal(0, H2Margins("<h2>x</h2>", $"{Reset} h2{{font-size:14px}}").Top);
     }
 

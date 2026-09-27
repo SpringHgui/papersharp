@@ -27,10 +27,18 @@ public static class StyleResolver
            这里补一条 1.4 会让所有未显式设行高的元素按 1.4 走行盒（雅黑 1.4 > normal 1.31），
            每行 +0.2~1.2px，整页累积成 10px+ 的纵向漂移。缺省值交给 ComputedStyle.LineHeightPx 的 normal 分支。 */
         body { font-family: sans-serif; font-size: 16px; color: #000; }
-        h1 { font-size: 32px; font-weight: bold; margin: 21px 0; }
-        h2 { font-size: 24px; font-weight: bold; margin: 20px 0; }
-        h3 { font-size: 19px; font-weight: bold; margin: 19px 0; }
-        p { margin: 16px 0; }
+        /* 标题/段落的字号与块边距一律写成 em：Chrome UA 用的就是 em（h1=2em/.67em、h6=.67em/2.33em、
+           p=1em 0），按**元素自己的字号**伸缩。原先抄成 16px 根字号下的定值（32px/21px/16px…），
+           作者把 body 设成 14px 或 30px 时每档整页的盒间距都错一截（_probe-ua 实测 10px 段里
+           h1 高 43 而浏览器 27，一路累积到页底差 170px）。 */
+        h1 { font-size: 2em; font-weight: bold; margin: .67em 0; }
+        h2 { font-size: 1.5em; font-weight: bold; margin: .83em 0; }
+        h3 { font-size: 1.17em; font-weight: bold; margin: 1em 0; }
+        h4 { font-size: 1em; font-weight: bold; margin: 1.33em 0; }
+        h5 { font-size: .83em; font-weight: bold; margin: 1.67em 0; }
+        h6 { font-size: .67em; font-weight: bold; margin: 2.33em 0; }
+        p { margin: 1em 0; }
+        dl { margin: 1em 0; }
         /* 列表 UA 默认（实测 headless Edge：li 在 x=40、宽比 ul 少 40；本表缺这两行时引擎把 li 摆到 x=0 满宽，
            是肉眼可见的错位而非比对口径问题）。嵌套列表的块边距归零也是浏览器行为。 */
         ul, ol { margin: 1em 0; padding-left: 40px; }
@@ -44,6 +52,14 @@ public static class StyleResolver
         dd { margin-left: 40px; }
         blockquote { margin: 1em 40px; }
         figure { margin: 1em 40px; }
+        /* Chrome UA 给 pre 的也是 em 块边距（1em 0）；本表缺这条时 <pre> 上下各贴死前一个块，
+           每段代码块少 1em（_probe-ua：10px 段差 10、30px 段差 30，一路累积到页底 34px）。 */
+        pre { margin: 1em 0; }
+        /* hr 的块边距同样是 em（_probe-ua2 实测 20px 字号下 computed margin-top/bottom = 10px = .5em，
+           不是抄来的 2px 定值；水平边距 computed 就是 0px，故写 0 而不写 auto，避开自动居中机器）。
+           缺这条时 hr 的下边距整个丢掉——父块按 border 收边、不塌陷，
+           每个 <hr> 让整段少 0.5em（_probe-ua 30px 段 section 高少 15px）。 */
+        hr { margin: .5em 0; }
         /* 本表按 author 源注入：作者写了 margin（含 `* { margin:0 }` 重置）时由 AuthorBoxSpacing 微级联裁决，
            不会像现在这样被这里的元素选择器反向压过重置；无作者声明才落到本表/内置 UA 默认值。 */
         div, section, article, header, footer, main { display: block; }
@@ -1217,7 +1233,23 @@ public static class StyleResolver
         s.BorderSpacingV = PixelSpacing(bs, bs.Length > 1 ? 1 : 0, s.FontSize);
 
         // 字号：支持 %（相对父字号）、em/rem（父字号基准）、px/pt
-        s.FontSize = ParseFontSize(Val("font-size"), parent?.FontSize ?? 16f);
+        // em 必须读**声明值**（同上面 line-height 的取 Spec 那段）：AngleSharp 的 computed 把 em 一律按
+        // 渲染设备的初值字号 16px 折算（DefaultRenderDevice.FontSize），基准根本不是本元素的父字号，
+        // 于是 UA 表 h1{font-size:2em} 无论落在 10px 还是 30px 的区块里都是 32px
+        // （探针 _probe-ua：10px 区块里引擎 43 vs 浏览器 27，整页逐段累积漂移 170px）。
+        // 伪元素再套一层坑：GetDeclarations(el, pseudo) 与 computed **两条路都会把宿主的声明漏进来**
+        // （同下面八条边那段注释），串与宿主记下的 FontSizeSpec 逐字相同即判为泄漏 → 按继承走；
+        // 否则 h3::before 会把宿主的 1.17em 再乘一遍（m8 每个带 counter 的 h3 虚高 2px，判别探针 _probe-em）。
+        var fsSpec = Spec("font-size").Trim();
+        string fsText;
+        if (fsSpec.Length != 0 && !string.IsNullOrEmpty(pseudo) && fsSpec == (parent?.FontSizeSpec ?? ""))
+            fsText = "";   // 泄漏：伪元素按继承
+        else if (fsSpec.EndsWith("em", StringComparison.OrdinalIgnoreCase) || fsSpec.EndsWith('%'))
+            fsText = fsSpec;   // 相对单位一律自己按父字号折算（computed 折的基准是设备初值 16px）
+        else
+            fsText = Val("font-size");
+        s.FontSizeSpec = fsSpec;
+        s.FontSize = ParseFontSize(fsText, parent?.FontSize ?? 16f);
 
         s.FontFamily = FirstNonEmpty(CssValueParser.ParseFirstFontFamily(Raw("font-family")), parent?.FontFamily, "sans-serif")!;
         s.FontWeight = CssValueParser.ParseFontWeight(Raw("font-weight"), parent?.FontWeight ?? 400);
