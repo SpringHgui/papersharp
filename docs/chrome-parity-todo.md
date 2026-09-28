@@ -194,9 +194,13 @@ margin 版是三者里唯一「有改善、零回退」的形状，与机制自�
 ---
 
 
-## P2-5 · 两个样例在浏览器侧压根量不到（观测盲区）
+## P2-5 · 两个样例在浏览器侧压根量不到（观测盲区）—— ✅ 已定位并绕开（波次9）
 
-`fluent-docs`、`framer-motion` 跑 `boxdiff` 报 `Error: {"code":-32000,"message":"Execution context was destroyed."}`（Edge 无头，CDP 页面被导航/脚本搞挂）→ 这两页从未进入对拍统计，等于没有真值。要先定位是页面里的脚本/重定向还是 `boxdiff` 的等待策略，必要时给这两个样例走 `--virtual-time-budget` 或禁脚本。
+`fluent-docs`、`framer-motion` 跑 `boxdiff` 报 `Error: {"code":-32000,"message":"Execution context was destroyed."}`，此前判成「页面里有脚本/重定向把 CDP 打挂」。
+
+**复核结论是否**：`fluent-docs.html` 里 `<script>` / `location` / `reload` 命中数为 **0**；换私有端口单跑立刻正常（`153 盒 / 浏览器 153 矩形 · 漂移 0 · 最坏 0.0px`，截图 341 KB 正常落盘）。真因是 **`boxdiff.mjs` 的调试端口写死 9411**，同机多个会话并发量测时互踩 CDP 会话。`tools/pixelsweep.sh` 已默认按进程号取端口（`CDPPORT` 可覆盖），手跑 `boxdiff` 带 `--port` 即可。
+
+**连带影响**：任何在并发环境下跑出的对拍数字都要先确认端口独占——本台账里 framer-motion / fluent-docs 的历史数字都按私有端口复测过两遍，两遍逐张一致。
 
 ## P2-6 · 亚像素盒漂移残差（几何侧，非本轮新发现但仍未清）
 
@@ -245,6 +249,9 @@ margin 版是三者里唯一「有改善、零回退」的形状，与机制自�
 
 ## 取证脚本与复现约定
 
-- 本轮所有数值来自：逐行扫描截图蓝区（`B−R ≥ 15 且 B > 200`）左右边界求弧长，2x 设备 px ÷ 实测比例 1.986 折 CSS px；引擎侧同法量 `dotnet run -- html login-page` 的 2x 光栅。
-- 临时探针工程落在 `.scratch/radius/probe/`（仓库外，不随分发）——**按根 `AGENTS.md` 约定，P0-1/P0-2/P1-3 修之前先把最小复现固化成受跟踪的 `assets/_probe-*.html` + xunit 断言**，否则下次还得重摸。
-- 复跑几何基线：`bash tools/sweep.sh`（26 行，2 行失败即 P2-5）。
+- 圆角类数值来自：逐行扫描截图蓝区（`B−R ≥ 15 且 B > 200`）左右边界求弧长，2x 设备 px ÷ 实测比例 1.986 折 CSS px；引擎侧同法量 `dotnet run -- html login-page` 的 2x 光栅。
+- 回归断言已固化成受跟踪测试 `tests/PaperSharp.Tests/PseudoScopeTests.cs`（23 条，含双向对照），不再依赖仓库外探针（`.scratch/radius/probe/` 只作临时取证）。
+- 几何基线复跑：`bash tools/sweep.sh`；绘制层基线复跑：`bash tools/pixelsweep.sh [样例…]`。
+- **并发量测必须错开 CDP 端口**：`boxdiff.mjs` 的调试端口默认写死 9411，同机多个会话同时量会互踩 CDP——表现为 `Execution context was destroyed`、或干脆量到半张图当真实差。`tools/pixelsweep.sh` 已改成默认按进程号取端口（`CDPPORT=…` 可覆盖）；手跑 `boxdiff` 时记得带 `--port`。P2-5 那两条「样例测不到」经复核就是这一条，不是页面问题。
+- 待落刀补丁：`python .scratch/apply-layoutunit-margin-snap.py`（P2-7 的 margin 版，幂等、`--revert` 可撤）。已用私有端口复验两遍：challenge 12.5→12.1（位移带 6→3）、m7 24.4→24.1、framer-motion / fluent-docs / m1 三张守卫逐张不变；代价是 2 张 `PngGolden` 自比金标失效（40 红→42 红），等金标收敛后落。
+
