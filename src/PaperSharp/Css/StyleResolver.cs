@@ -1494,10 +1494,15 @@ public static class StyleResolver
             if (AuthorEdge(prop) is { Length: > 0 } pv) return ExpandVars(pv, element, ctx);
             return Size0(prop);
         }
-        s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);
-        s.MarginRightCss = CssValueParser.ParseSize(MarginVal("margin-right"), s.FontSize);
-        s.MarginBottomCss = CssValueParser.ParseSize(MarginVal("margin-bottom"), s.FontSize);
-        s.MarginLeftCss = CssValueParser.ParseSize(MarginVal("margin-left"), s.FontSize);
+        // 块间距折到 Chrome 的 1/64 px 网格（Blink LayoutUnit）：Chrome 把 margin 折到该网格，
+        // 引擎留 float 全精度 → 每跳一个兄弟多约 0.011-0.014px，沿文档序累积到页尾差 0.226px
+        // （challenge 实测，四条物理单位间距逐一对上 floor(px×64)/64）。取整方向只在正数上验过。
+        static CssSize SnapM(CssSize v) =>
+            v.Kind == CssSizeKind.Absolute ? CssSize.Abs(MathF.Floor(v.Value * 64f) / 64f) : v;
+        s.MarginTopCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize));
+        s.MarginRightCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-right"), s.FontSize));
+        s.MarginBottomCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-bottom"), s.FontSize));
+        s.MarginLeftCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-left"), s.FontSize));
         // 作者是否真的写了 auto：AngleSharp 对未声明的 margin 也返回空串，令 CssSize.IsAuto 无法区分
         // "auto" 与 "没设"。computed 值里 "auto" 才是真自动边距（快照路径浏览器已折成解析后 px，恒非 auto）。
         // 伪元素仍走 computed 会把宿主的 `margin:0 auto` 当成自己的自动边距，只认它自己的裁决结果。
