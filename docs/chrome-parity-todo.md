@@ -139,6 +139,47 @@
 
 **影响面**：`InlineUniqueVars` 那条预内联已把「全局唯一定值」的变量折成字面值，所以只有**同名变量多作用域取值**的 margin/padding 才会经过这条路——首版全样例像素对拍见下。
 
+## P2-7 · `challenge` 整页逐块下坠：Chrome 把长度折到 1/64 px（Blink LayoutUnit），引擎保留 float 精度
+
+**症状**（`boxdiff challenge --tol 0.05` 实测）：229 个盒的 `dy` 沿文档序**单调累积**——`div[2]` −0.053 → `p[2]` −0.065 → `h2[2]` −0.074 → … → 页尾 −0.226；而 `dh`（盒高）几乎全为 0。也就是说每个块自己的尺寸是对的，**块间距**每跳一个兄弟多约 0.011–0.014px，攒到页尾差出 0.226px，在像素上表现为若干条 1px 边翻转（该样例 `位移带 6/122`）。
+
+**机制已钉死**：该样例的间距全是物理单位（`margin:3.5mm 0 2mm` 等）。逐条对账 Chrome 的取值：
+
+| 作者值 | 引擎（float） | Chrome | `floor(px×64)/64` |
+|---|---|---|---|
+| 2.5mm | 9.4488 | 9.4375 | 9.4375 ✓ |
+| 3.5mm | 13.2284 | 13.2188 | 13.2188 ✓ |
+| 2mm | 7.5591 | 7.5469 | 7.5469 ✓ |
+| 1mm | 3.7795 | 3.7656 | 3.7656 ✓ |
+
+四条全中 —— Chrome 把长度折到 Blink 的 `LayoutUnit` 网格（1 px = 1/64），引擎走的是 float 全精度。
+
+**两种朴素全局折法都已实测否决**（在 `CssValueParser.ToPixels` 的 5 个出口统一加 `SnapLayoutUnit`，2x 强差 %）：
+
+| 样例 | 基线 | floor（朝零截断） | round（四舍五入） |
+|---|---|---|---|
+| challenge | 12.5 | **12.2**（位移带 6/122 → **1/108**） | 12.8（位移带反升到 14） |
+| m7 | 24.4 | 24.1 | 24.4 |
+| m1 | 12.4 | 15.7 ✗ | 12.6 |
+| framer-motion | 6.8 | 10.9 ✗ | 10.3 ✗ |
+| fluent-docs | 14.5 | 22.7 ✗ | 22.6 ✗ |
+
+结论：**不能在全局长度折算口子上统一 snap**。floor 能把 challenge 的累积漂移基本消掉（位移带 6→1），代价是 fluent-docs +8.2、framer-motion +4.1、m1 +3.3；round 保住 m1 却把 challenge 的位移带顶到 14。Chrome 的 LayoutUnit 是**在具体换算点**（margin/border-box 宽度等）折的，不是每个长度都折，且不同属性用的换算站点不同。
+
+**下一步的正确形状**（留给修的人，别重复试全局版）：只在「块间距的生成处」折——即 margin 折叠结果与 `AuthorBoxSpacing` 折出的 px 值，而不是 `ToPixels` 通用出口；改完用 `node tools/boxdiff.mjs challenge --tol 0.05 --json` 看累积 `dy` 是否归零，再用 `tools/pixelsweep.sh` 逐张确认 fluent-docs/framer-motion/m1 不回退。
+
+---
+
+## P2-8 · `m9` / `m2` 的「位移带」是测量口径问题，不是布局 bug（已给门加两面旗）
+
+- `m9 2/13`：浏览器截图含视口留白（`body{min-height:100vh}` 一类），文档高 972 CSS px vs 引擎 645.5 —— 比的是两份不同高度的文档；灰带上下边在 2x 下只差 1 设备 px，盒几何 `boxdiff` 全绿。
+- `m2 6/34`：全局整数平移没收敛（`SAD 72%`，引擎 body 原点 (0,0) vs 浏览器 (84,1)），残余的整体 1px 被逐条边重复计成 6 条「位移带」——六条全是 `dy-1`，正是那个残差。
+
+`tools/pixelsweep.sh` 现在对每张额外打两面旗：`高度不可比(引擎vs浏览器)` 与 `对齐未收敛(SADx%)`；带旗的位移带数**不当 bug 追**。全样例重跑后新暴露 6 张带旗的（table / invoice / report / pct / m7 / m1 等），此前它们的百分比都是不可比的。
+
+---
+
+
 ## P2-5 · 两个样例在浏览器侧压根量不到（观测盲区）
 
 `fluent-docs`、`framer-motion` 跑 `boxdiff` 报 `Error: {"code":-32000,"message":"Execution context was destroyed."}`（Edge 无头，CDP 页面被导航/脚本搞挂）→ 这两页从未进入对拍统计，等于没有真值。要先定位是页面里的脚本/重定向还是 `boxdiff` 的等待策略，必要时给这两个样例走 `--virtual-time-budget` 或禁脚本。
