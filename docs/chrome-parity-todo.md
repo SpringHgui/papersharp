@@ -109,9 +109,15 @@
 
 原始 CSS 兜底表（`ScanUnsupported`）与自定义属性索引（`ScanVars` 之外的 `Spec`/`Lookup` 那条路）对 `.a, .b { border-radius: 9px }` 这种分组选择器**只取整串的末段**建键，于是 `.a` 拿不到值。波次1 试过顺手改成逐段建键，实测会把 26 个样例里 9 个的像素基线掀了（改动面与伪元素无关，属另一条独立轴），为守住「一波一因」已回退。现状由 `PseudoScopeTests.Grouped_selector_pseudo_part_does_not_leak_to_other_part` 钉住，修它时要连同金标一起重出。
 
-## P1-8 · 宿主的自定义属性喂不到伪元素的 margin/padding 上
+## P1-8 · 宿主的自定义属性喂不到伪元素的 margin/padding 上 —— ✅ 已修（波次5）
 
-`.a{--pad:5px} .a::after{margin-left:var(--pad)}`：Chrome 里伪元素继承宿主的变量 → 5px；引擎里 `margin`/`padding` 走的是 `AuthorBoxSpacing.ResolvePseudo` 那条作者源索引，它不展开 `var()`（也不认伪元素作用域键）→ 0。波次1 把 `border-radius` 这类走 `Lookup` 的属性接通了（`PseudoScopeTests.Host_custom_property_still_visible_to_pseudo` 用 border-radius 断言），margin/padding 这一对角仍待接。
+**症状**：`.a{--pad:5px} .a::after{margin-left:var(--pad,0px)}`：Chrome 里伪元素继承宿主的变量 → 5px；引擎里那条边吃初值 0。
+
+**根因（实测修正）**：不是「作者源索引不认伪元素作用域键」。`AuthorBoxSpacing.Parse` 在**建索引时就把值里含 `var()` 的声明整条跳过**（`if (val.Length == 0 || val.Contains("var(")) continue;`），于是这条边在作者源桶里根本不存在；而伪元素的八条边只能由这张桶裁决（AngleSharp 的 computed/declared 两条路都会把宿主声明漏进伪元素结果，见该处注释）→ 结果恒为初值 0。
+
+**改法**：桶里照收带 `var()` 的值，展开交给消费侧——宿主走 `AuthorEdge` → `ExpandVars(mv, element, ctx)`，伪元素走 `PseudoEdge` → `ExpandVars(pv, element, ctx, pseudo)`（波次1 已把 pseudo 上下文接进 FindVar：先查伪元素自己的作用域键，再按继承回落宿主链）。变量查不到又没写回退值时留下 `var(--x)` 原串，`ParseSize` 判非法 → 0，与 Chrome 的 invalid-at-computed-value-time 一致。
+
+**影响面**：`InlineUniqueVars` 那条预内联已把「全局唯一定值」的变量折成字面值，所以只有**同名变量多作用域取值**的 margin/padding 才会经过这条路——首版全样例像素对拍见下。
 
 ## P2-5 · 两个样例在浏览器侧压根量不到（观测盲区）
 

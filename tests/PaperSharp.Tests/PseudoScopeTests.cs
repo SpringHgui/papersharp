@@ -101,14 +101,14 @@ public class PseudoScopeTests
     [Fact]
     public void Host_custom_property_still_visible_to_pseudo()
     {
-        // 反方向必须照常：伪元素继承宿主的自定义属性
+        // 反方向必须照常：伪元素继承宿主的自定义属性。两条路都要通——border-radius 走
+        // Lookup/兜底表那条，margin 走 AuthorBoxSpacing 那条作者源（波次5 才接上 var() 展开）。
         var cs = Build("<div class=a>hi</div>",
-            ".a{--r:9px}.a::after{content:\"X\";border-radius:var(--r,0px)}");
+            ".a{--r:9px;--pad:5px}.a::after{content:\"X\";border-radius:var(--r,0px);margin-left:var(--pad,0px)}");
         var after = First(cs, "div").After;
         Assert.NotNull(after);
         Assert.Equal(9, after!.Style.BorderRadiusTopLeft, 1);
-        // 已知边界（docs/chrome-parity-todo.md P1-8）：同一份变量写在 margin/padding 上时
-        // 走的是 AuthorBoxSpacing 那条作者源索引，它不认伪元素作用域键，故宿主变量喂不到伪元素的 margin 上。
+        Assert.Equal(5, after.Style.MarginLeftCss.Absolute, 1);   // 作者源那条边的值（MarginLeft 要等布局折算）
     }
 
     [Fact]

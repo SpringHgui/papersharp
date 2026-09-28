@@ -1418,7 +1418,9 @@ public static class StyleResolver
         // 作者为该伪元素写过就用，没写过就是初值 0。
         bool isPseudo = !string.IsNullOrEmpty(pseudo);
         string?[]? pseudo8 = flat == null && isPseudo ? ctx.Spacing?.ResolvePseudo(element, pseudo!, ctx.ViewportWidth) : null;
-        string PseudoEdge(string prop) => pseudo8?[Slot(prop)] is { Length: > 0 } pv ? pv : "0px";
+        string PseudoEdge(string prop) => pseudo8?[Slot(prop)] is { Length: > 0 } pv
+            ? ExpandVars(pv, element, ctx, pseudo)   // 作者源那条边的值里可以写 var()：宿主的变量对伪元素可见（继承），
+            : "0px";                                  // 不展开的话 margin-left:var(--pad) 会被当非法值吃成 0
         static int Slot(string prop) => prop switch
         {
             "margin-top" => 0, "margin-right" => 1, "margin-bottom" => 2, "margin-left" => 3,
@@ -1430,7 +1432,7 @@ public static class StyleResolver
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已算好 used value，缺值即 0，Spec≡Get 无声明可谈
             if (isPseudo) return PseudoEdge(prop);
-            if (AuthorEdge(prop) is { Length: > 0 } mv) return mv;
+            if (AuthorEdge(prop) is { Length: > 0 } mv) return ExpandVars(mv, element, ctx);   // 作者源那条值里可以写 var()
             var sp = Spec(prop);
             return string.IsNullOrWhiteSpace(sp) ? Get(prop) : sp;
         }
@@ -1439,7 +1441,7 @@ public static class StyleResolver
         {
             if (flat != null) return Size0(prop);   // 快照路径：浏览器已折好用值，无声明可谈
             if (isPseudo) return PseudoEdge(prop);
-            if (AuthorEdge(prop) is { Length: > 0 } pv) return pv;
+            if (AuthorEdge(prop) is { Length: > 0 } pv) return ExpandVars(pv, element, ctx);
             return Size0(prop);
         }
         s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);

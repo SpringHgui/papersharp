@@ -97,7 +97,11 @@ sealed class AuthorBoxSpacing
                 if (colon <= 0) continue;
                 string prop = d[..colon].Trim().ToLowerInvariant();
                 string val = d[(colon + 1)..].Trim();
-                if (val.Length == 0 || val.Contains("var(")) continue;
+                // 值里带 var() 的照收（旧写法整条跳过 → 伪元素的 margin/padding 写成 var(--x) 时
+                // 作者源这条路上根本没有它，裁决结果吃初值 0）。展开交给消费侧 ExpandVars：
+                // 变量查不到又没写回退值时留下 "var(--x)" 原串，ParseSize 判非法 → 0，
+                // 与 Chrome 的 invalid-at-computed-value-time 结果一致。
+                if (val.Length == 0) continue;
                 r ??= new Rule { Selector = sel, Spec = Specificity(sel), MaxW = maxW, MinW = minW, Order = _count++ };
                 switch (prop)
                 {
