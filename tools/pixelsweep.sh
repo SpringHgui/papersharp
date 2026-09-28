@@ -17,8 +17,7 @@ cd "$(dirname "$0")/.." || exit 1
 WIDTH=${WIDTH:-1284}
 # 无头浏览器调试端口默认 9411 是**固定**的：同机多个会话同时跑 boxdiff 会互相打断 CDP，
 # 表现就是 "Execution context was destroyed" 或量到半张图（实测 fluent-docs 在并发下时好时坏）。
-# 这里默认按进程号错开（变量名不叫 PORT——bash 里 PORT 是登录终端端口的内建变量）
-，保证一轮 sweep 的浏览器真值不被别人踩。
+# 这里默认按进程号错开（变量名不叫 PORT——bash 里 PORT 是登录终端端口的内建变量），保证一轮 sweep 的浏览器真值不被别人踩。
 CDPPORT=${CDPPORT:-$((9500 + $$ % 400))}
 OUTDIR=.scratch/pixelsweep
 mkdir -p "$OUTDIR"
