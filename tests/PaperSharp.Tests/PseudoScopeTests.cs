@@ -1,3 +1,4 @@
+using SkiaSharp;
 using PaperSharp.Css;
 using PaperSharp.Layout;
 
@@ -134,5 +135,56 @@ public class PseudoScopeTests
         Assert.Empty(hero.Shadows ?? new List<BoxShadow>());
         // 卡片自己的 24px 圆角不能被误伤
         Assert.Equal(24, First(cs, "main").BorderRadiusTopLeft);
+    }
+
+    // ── 波次2：绝对定位的装饰伪元素必须块级化成盒（Chrome 里它们就是块盒）──────────────
+
+    [Fact]
+    public void Absolute_empty_content_pseudo_gets_blockified()
+    {
+        // 作者没写 display → 规范初值 inline；但 position:absolute 要把 display 再块级化一次。
+        // 归一发生在块级化之后时，空内容的行内伪元素「不成盒」，整块装饰直接消失。
+        var cs = Build("<div class=a>x</div>",
+            "html,body{margin:0}.a{position:relative;width:200px;height:100px}" +
+            ".a::after{content:\"\";position:absolute;top:0;left:0;width:50px;height:50px;background:#ff0000}");
+        var after = First(cs, "div").After;
+        Assert.NotNull(after);
+        Assert.Equal("block", after!.Style.Display);
+    }
+
+    [Fact]
+    public void Absolute_empty_content_pseudo_paints_its_box()
+    {
+        // 端到端：Chrome 在该位置画 50×50 红块，引擎也必须画出来
+        const string Css = "html,body{margin:0}.a{position:relative;width:200px;height:100px;background:#00ff00}" +
+                           ".a::after{content:\"\";position:absolute;top:0;left:0;width:50px;height:50px;background:#ff0000}";
+        using var bmp = SKBitmap.Decode(Renderer.RenderPng("<div class=a>x</div>", Css, 400f, scale: 1f));
+        var inside = bmp.GetPixel(25, 25);
+        Assert.True(inside.Red > 180 && inside.Green < 80, $"装饰伪元素该画出红块，实测 ({inside.Red},{inside.Green},{inside.Blue})");
+        var outside = bmp.GetPixel(150, 25);
+        Assert.True(outside.Green > 180 && outside.Red < 80, $"盒外不该被染色，实测 ({outside.Red},{outside.Green},{outside.Blue})");
+    }
+
+    [Fact]
+    public void Inline_empty_content_pseudo_still_does_not_box()
+    {
+        // 对照组：非绝对定位的空内容行内伪元素在 Chrome 里也是零尺寸——不得被波次2 顺手改成成盒
+        var cs = Build("<div class=a>x</div>", ".a::before{content:\"\"}");
+        var after = First(cs, "div").Before;
+        Assert.NotNull(after);
+        Assert.Equal("inline", after!.Style.Display);
+    }
+
+    [Fact]
+    public void LoginPage_hero_decorations_are_boxed()
+    {
+        // login-page 横幅右侧那两块圆角装饰件（.hero::before / ::after，绝对定位 + 空 content）
+        var html = File.ReadAllText(Path.Combine(Fixture.AssetsDir, "login-page.html"));
+        var cs = StyleResolver.BuildDocument(html, "", viewportWidth: 1284);
+        var hero = First(cs, "header");
+        Assert.NotNull(hero.Before);
+        Assert.NotNull(hero.After);
+        Assert.Equal("block", hero.Before!.Style.Display);
+        Assert.Equal("block", hero.After!.Style.Display);
     }
 }

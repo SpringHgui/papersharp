@@ -973,6 +973,22 @@ public static class StyleResolver
         return anon;
     }
 
+    /// <summary>
+    /// CSS 规范的「块级化」（blockify）：<c>position:absolute/fixed</c> 与浮动都把行内级 display 提升为
+    /// 块级。真元素在 <c>ReadStyle</c> 末尾就地改；伪元素必须**再走一次**——它的 display 是 ReadStyle 之后
+    /// 才按「作者有没有显式写 display」归一回 inline 的（AngleSharp 对伪元素恒注入 display:block，不可信），
+    /// 归一发生在块级化之后就会把绝对定位的装饰件打回行内，而空内容的行内伪元素不成盒
+    /// （login-page 横幅右侧两块圆角装饰件就是这么整块消失的）。
+    /// </summary>
+    static string Blockified(string display) => display switch
+    {
+        "inline" or "inline-block" => "block",
+        "inline-flex" => "flex",
+        "inline-grid" => "grid",
+        "inline-table" => "table",
+        _ => display,
+    };
+
     /// <summary>为一个伪元素建生成盒：读 content（不成盒则返回 null）+ 伪元素自身 computed 样式（display 归一为 inline 缺省）。</summary>
     static PseudoGen? BuildPseudoGen(IElement element, ComputedStyle owner, DocContext ctx,
                                      string pseudo, FlatCascade.Scope? fscope)
@@ -1003,6 +1019,8 @@ public static class StyleResolver
         var declaredDisp = LookupPseudoMap(ctx.PseudoDisplay, element, pseudo) ?? "";
         style.Display = string.IsNullOrWhiteSpace(declaredDisp) || declaredDisp == "normal"
             ? "inline" : declaredDisp;
+        // 归一之后必须补一次块级化（见 Blockified）：绝对/固定定位的装饰伪元素在 Chrome 里就是块盒
+        if (style.Position is "absolute" or "fixed") style.Display = Blockified(style.Display);
         style.Children = new();
         style.InlinePieces = new();
         style.TextContent = null;
@@ -1532,15 +1550,7 @@ public static class StyleResolver
         // CSS 规范：position 为 absolute/fixed 时 display 的计算值一并「块级化」。
         // 不补这一步，<span style="position:absolute"> 留在行内路径上既不建盒也不绘制
         // （fluent-docs 滑杆的拇指就是这么整个消失的）。
-        if (s.Position is "absolute" or "fixed")
-            s.Display = s.Display switch
-            {
-                "inline" or "inline-block" => "block",
-                "inline-flex" => "flex",
-                "inline-grid" => "grid",
-                "inline-table" => "table",
-                _ => s.Display,
-            };
+        if (s.Position is "absolute" or "fixed") s.Display = Blockified(s.Display);
         var zIndex = Raw("z-index");
         if (!string.IsNullOrEmpty(zIndex) && zIndex != "auto")
         {

@@ -48,17 +48,29 @@
 
 ---
 
-## P1-3 · `content:""` 的伪元素根本不成盒（装饰件全丢）
+## P1-3 · 绝对定位的装饰伪元素整块不出现 —— ✅ 已修（波次2，根因与初判不同）
 
 **症状**：`login-page` 的 `.hero::before`（260×260、`rgba(255,255,255,.35)`、`rotate(24deg)`）与 `.hero::after`（320×320 白色渐变 + `rotate(-18deg)`）在 Chrome 里是横幅右侧两块可见的浅色装饰；引擎整页光栅里**一块都没有**（盒树里 `header` 只有 `h1`、`p` 两个孩子）。
 
-**根因位置**：`PseudoContent.Apply` 只给有文字内容的伪元素建盒；`content:""` 被当成「无内容」跳过。AngleSharp 侧 `content` 的空串与 `none` 也需分开处理。
+**根因（实测修正，与初判不同）**：不是「`content:""` 被当成无内容」。AngleSharp 的 computed 分得开：未写 `content` → 空串，写了 `content:""` → 两字符的 `""""`，`PseudoContent.Parse` 据此已建出 `runs=[Literal:""]`。真凶是 **伪元素的 display 归一发生在块级化之后**：`ReadStyle` 末尾按规范把 `position:absolute/fixed` 的 display 块级化（真元素靠它才成盒，见 fluent-docs 滑杆拇指），可 `BuildPseudoGen` 在那之后又按「作者有没有显式写 display」把伪元素打回 `inline`（AngleSharp 对伪元素恒注入 `display:block`，不可信，故必须问作者）。空内容的行内伪元素在 `Materialize` 里 `InlinePieces.Count == 0 → return`，整块装饰就这么没了。修法：抽出 `Blockified(display)` 单一口径，伪元素归一之后再走一次。
 
-**注意与 P0-1 的关系**：这两条同时存在会非常误导人——装饰件没画，但它的 `border-radius`/`box-shadow` 却漏到了宿主身上（等于只继承了副作用）。修 P0-1 时若不同步补 P1-3，`login-page` 会从「错圆角」变成「装饰件缺失」，仍不等于 Chrome。
+**修后实测**：`login-page` 的 `header` 盒树多出 `<> 260×260 R=44` 与 `<> 320×320 R=64` 两个块盒（半径各归各的，正是 P0-1 修完后的样子），2x 光栅上横幅右侧两块装饰出现，差异包围盒 x1992–2449 / y120–515、15742 像素；对照组 `pricing-mid`/`m8`/`table`/`report` 逐字节不变。
 
-**依赖项**：`transform: rotate()` 引擎未实现（ROADMAP 已记），故本条补齐后这两块装饰的角度仍与 Chrome 有差；划账时把「装饰件出现且尺寸/落位正确」作为本条验收，旋转另立条目跟随 `transform`。
+**依赖项**：`transform: rotate()` 引擎未实现（ROADMAP 已记），故本条补齐后这两块装饰的**角度**仍与 Chrome 有差；本条只验收「装饰件出现且尺寸/落位正确」，旋转跟随 `transform`。
 
-**验收**：`content:"";position:absolute;width:50px;height:50px;background:#f00` 的 `.a::after` 在引擎盒树里成盒并画出 50×50 红块。
+**验收**：`content:"";position:absolute;width:50px;height:50px;background:#f00` 的 `.a::after` 在引擎盒树里成盒并画出 50×50 红块（`PseudoScopeTests.Absolute_empty_content_pseudo_paints_its_box` 逐像素钉住），且非绝对定位的空内容行内伪元素仍不成盒（`Inline_empty_content_pseudo_still_does_not_box` 反向钉住，防扩面）。
+
+---
+
+## P1-9 · 多类名伪元素选择器被伪元素闸门整条挡掉（波次2 中发现，未动）
+
+**症状**：`login-page` 的选中页签蓝条 `.tab.active::after{content:"";position:absolute;left:50%;bottom:0;width:104px;height:4px;border-radius:2px;background:#1a5cf0}` 在 Chrome 里画得出来，引擎里**整条伪元素规则压根没进 `BuildPseudoGen`**（盒树里 `.tab` 无伪元素子盒），蓝条缺失。
+
+**根因**：`ScanPseudoDisplay` 建 `ctx.PseudoScope` 时把末段冒号后剥掉 → 存的是 **`.tab.active`**（多类名整串）；而 `PseudoMayMatch` 的候选是按元素的 class 列表逐个拼的 **`.tab`** / **`.active`** → 两边永不同名 → 闸门按「这个元素不可能有伪元素」把它跳过了。同一个 token 口径也用于 `LookupPseudoMap`（伪元素显式 display / `::placeholder` 颜色 / `::marker`），所以带叠加类名的伪元素规则整体处于「看不见」状态。
+
+**为什么没跟着波次2 一起改**：闸门是**性能**闸门（每元素多跑一轮层叠实测 ~5ms），放宽它要走「多类名逐个登记」的超集路线——对闸门是安全的（宁可多放行），但 `PseudoDisplay` 那张表不能同样放宽（会把 A 规则的 display 发给 B 元素，正是 P0-1 那类串味）。要改就得把「闸门候选」与「取值键」拆成两套匹配，属独立一波。
+
+**验收（修时）**：上述蓝条在引擎里出现且落位/尺寸与 Chrome 一致；`PseudoScope` 命中数不劣化（跑 `dotnet run -- pgstyle` 对账层叠次数）。
 
 ---
 
