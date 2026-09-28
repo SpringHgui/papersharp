@@ -208,6 +208,13 @@ public sealed class ComputedStyle
     // 视觉增强（M3）
     public string MixBlendMode = "normal";   // normal | multiply | screen | overlay | darken | lighten ...
     public string CornerShape = "round";     // round | squircle（配合 border-radius）
+
+    // ── transform（2D，见 TransformParser）：函数列表按书写顺序保留；null / 空 = 无变换。
+    // 变换原点存「px 分量 + % 分量」两路，绘制期才知道边框盒尺寸，故此刻不折算。
+    // 默认 50% 50%（CSS 初值 center center）。
+    public List<TransformFn>? Transform;
+    public float TransformOriginX, TransformOriginY;
+    public float TransformOriginXPct = 50f, TransformOriginYPct = 50f;
     public string? ClipPath;                 // clip-path 原始值（inset/circle/polygon）
     public GradientSpec? MaskImage;          // mask-image: linear-gradient(...)（alpha 用渐变）
     public CssFilter? Filter;                // filter: blur() / drop-shadow()（前景）

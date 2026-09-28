@@ -80,11 +80,42 @@
 
 ---
 
-## P1-10 · `transform` 未实现，凡靠它定位/旋转的装饰都偏位
+## P1-10 · `transform` 未实现 —— 🟡 2D 已落（本波），3D 与两条旁路待做
 
-`translateX(-50%)`（居中）、`rotate(24deg)` / `rotate(-18deg)`（login-page 横幅那两块圆角装饰件的角度）在引擎里一律忽略：盒出现、尺寸对，但角度与位移与 Chrome 有差。ROADMAP 早已把 `transform` 列为未做项（依赖它的动画停在基线态），本条只是把它在**静态装饰**上的可见后果点名归档：P1-3 / P1-9 修完后，剩下的差异全部落在这一条上。
+**原来**：引擎完全不读 `transform`，凡靠它定位/旋转的装饰一律停在基线态——`login-page` 页签蓝条
+（`left:50%` + `translateX(-50%)`）右偏半条宽、横幅两块圆角装饰件不转、`pricing-*` 的 `.qa.open .plus` 不转。
 
----
+**本波落地下来什么**（`Css/TransformParser.cs` + `Paint/TransformSpace.cs`）：
+
+- 函数集：`translate(X|Y|3d)` / `scale(X|Y)` / `rotate` / `rotateZ` / `skew(X|Y)` / `matrix`，
+  按书写顺序复合；`transform-origin` 支持 px/%/关键字（`left/center/right/top/bottom`），默认 50% 50%。
+- 三条不变量：① transform **不参与布局**（盒矩形与兄弟排布一律按未变换几何）；② 祖先链逐层后乘，
+  子盒各自算累计矩阵，绘制时不把父变换留在画布上下传（否则乘两次）；③ 溢出裁剪矩形同样被矩阵带走，
+  「圆角卡片旋转后裁剪跟着转」天然成立。
+- 3D 分两类：`translateZ`/`scaleZ`/`translate3d` 的 z 在**无透视时不改变外观**，按 2D 等价收下
+  （前端拿它们做图层提升是常态，判废反而离 Chrome 更远）；`rotateX/rotateY/rotate3d/scale3d/matrix3d/perspective`
+  会真改变形状 → **整条 transform 作废**（CSS 口径：列表里一个函数解析失败整条失效）。
+- 矩阵乘法自己实现（行向量约定）。踩过的坑：借 Skia 的 `PostConcat` 时 e/f 恰好是反的，
+  旋转后的方块整个飞出画布——**症状是「元素凭空消失」而不是「位置不对」**，最难查的一类。
+  另一处：`(p−o)·F+o` 展开时漏掉 F 自带平移 `t_F`，于是 rotate/scale/skew 全对而 `translate` 被吞成 0。
+
+**与 Chrome 的对账**（探针 `assets/_probe-tf.html`，7 个用例，逐色量外接矩形与面积）：
+`rotate(45deg)`、`transform-origin:0 0` + `rotate(90deg)`、`translateX(-50%)`、`scale(2)`、
+`skewX(45deg)`、**父旋转带动子条** —— 6 条与无头浏览器 2x 截图逐像素一致（面积差 ≤7 px 属 AA）；
+第 7 条 `rotateX(45deg) rotate(45deg)` 是有意不等（引擎整条不画，Chrome 做真 3D 投影）。
+回归钉在 `tests/PaperSharp.Tests/TransformTests.cs`（9 条，含「transform 不改布局」与两类 3D 判据）。
+
+**全样例影响**：26 张里只有 `login-page` 用到 transform（3 条规则），逐张对比 22 张逐字节不变、
+金标失败集合与改动前**逐条同名**（零新增红）。`login-page` 聚合指标只从 16.2% 降到 16.1%——
+这页的大头是字形栅格化与那块不执行 JS 的 canvas 二维码，装饰件旋转在面积上占比很小。
+
+**还没做的三件**：
+1. **SVG 导出旁路**（`Paint/SvgWriter.cs`）没接 transform → 同一段 HTML 走光栅/PDF 会转、走 SVG 不转。
+   接法是给每盒的 `<g>` 加 `transform="matrix(a b c d e f)"`（CSS matrix 与 SVG 的字段一一对应）。
+2. **`@keyframes` 里的 transform 仍不插值**（`Css/Animation.cs` 显式忽略）——m9 的 `spin` 关键帧现在
+   能取到静态 transform 了，但按 `animationTime` 逐帧插值还没接，动画样例仍停在基线态。
+3. **真 3D**（rotateX/Y/3d、perspective、matrix3d）不支持，且 `backdrop-filter` 与 transform 同盒时
+   毛玻璃取的是设备坐标的身后像素，变换后源矩形对不上。
 
 ## P1-4 · 对拍通道只量盒矩形，绘制层没有任何门 —— ✅ 已补门（波次4：`tools/pixelsweep.sh`）
 

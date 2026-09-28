@@ -93,7 +93,7 @@ public static class StyleResolver
     // overflow 三兄弟实测：hidden/auto/scroll/visible 正常，但 clip、overlay、以及两值简写
     // "visible hidden" 在 computed 与 GetDeclarations 里都是空串（解析阶段就被判非法丢弃），
     // 只能靠这张原始文本表捞回来（探针记录见 OverflowClipTests）。
-    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
+    static readonly string[] UnsupportedProps = { "flex", "text-overflow", "text-wrap", "vertical-align", "text-fit", "background-image", "background", "mix-blend-mode", "clip-path", "corner-shape", "filter", "mask-image", "background-clip", "backdrop-filter", "box-shadow", "transform", "transform-origin", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "counter-reset", "counter-increment", "animation", "overflow", "overflow-x", "overflow-y",
         // 盒对齐（Box Alignment）新写法的属性：AngleSharp 只认 flexbox 时代的关键字集，
         // align-self:start/end、justify-self、place-self/place-items 整条声明在解析期就被丢掉
         // （computed 与 GetDeclarations 都取不到空），grid 子项因此恒被当成 stretch 拉满轨道
@@ -1798,6 +1798,18 @@ public static class StyleResolver
         // 进阶视觉：blend / clip / mask / filter / squircle（AngleSharp 多不支持，走原始 CSS 兜底）
         s.MixBlendMode = CssValueParser.ParseKeyword(Lookup("mix-blend-mode", element, Raw("mix-blend-mode"), ctx, pseudo), "normal");
         s.CornerShape = CssValueParser.ParseKeyword(Lookup("corner-shape", element, Raw("corner-shape"), ctx, pseudo), "round");
+        // transform / transform-origin：一律吃作者原样串（同 border-radius 的口径）。
+        // AngleSharp 认得 transform，但会把 matrix()/多函数重序列化成小数串，且它认识的函数集与
+        // 我们支持的 2D 集合不同——「不认识就整条作废」的判定必须在我们这边做才与 Chrome 对齐。
+        var tfRaw = FirstNonEmpty(Inline("transform"), Lookup("transform", element, Raw("transform"), ctx, pseudo));
+        s.Transform = TransformParser.Parse(tfRaw);
+        if (s.Transform != null)
+        {
+            var origin = TransformParser.ParseOrigin(
+                FirstNonEmpty(Inline("transform-origin"), Lookup("transform-origin", element, Raw("transform-origin"), ctx, pseudo)),
+                s.FontSize);
+            if (origin is { } o) (s.TransformOriginX, s.TransformOriginY, s.TransformOriginXPct, s.TransformOriginYPct) = o;
+        }
         var cp = Lookup("clip-path", element, Raw("clip-path"), ctx, pseudo);
         s.ClipPath = string.IsNullOrWhiteSpace(cp) || cp == "none" ? null : cp;
         s.MaskImage = CssValueParser.ParseGradient(Lookup("mask-image", element, Raw("mask-image"), ctx, pseudo));

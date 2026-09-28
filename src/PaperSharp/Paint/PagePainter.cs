@@ -20,14 +20,18 @@ public static class PagePainter
 
     static void PaintItem(SKCanvas canvas, DrawItem it)
     {
+        // transform：与 PNG 路径同源（TransformSpace.Accumulated 沿父链累计）。
+        // 原点按**整盒**的边框盒算，不是本条 DrawItem 的片段矩形——片段只是同一盒被切开的一段。
+        int tf = TransformSpace.Apply(canvas, it.Box);
         // 祖先 overflow 裁剪：分页路径的条目已是拉平序列，逐条目各算一次裁剪链即可
         //（坐标天然同页——裁剪盒不参与碎片化，见 Paginator.Place）。
         var clip = it.Box.OverflowClip();
-        if (clip == null) { PaintItemContent(canvas, it); return; }
-        if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) return;   // 求交为空 → 整条不画
+        if (clip == null) { PaintItemContent(canvas, it); TransformSpace.Restore(canvas, tf); return; }
+        if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) { TransformSpace.Restore(canvas, tf); return; }   // 求交为空 → 整条不画
         int save = VisualEffects.ClipOverflow(canvas, clip.Value.Rect, clip.Value.RadiusOwner);
         PaintItemContent(canvas, it);
         canvas.Restore();
+        TransformSpace.Restore(canvas, tf);
     }
 
     static void PaintItemContent(SKCanvas canvas, DrawItem it)

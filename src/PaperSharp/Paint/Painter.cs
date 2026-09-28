@@ -66,6 +66,16 @@ public static class Painter
     /// </summary>
     static void PaintSelf(SKCanvas canvas, SKSurface? surface, BlockBox box)
     {
+        // transform：只罩本盒自身这一笔。子盒由 PaintFull 各自再走一遍 PaintSelf，
+        // 那时算的是「自己 + 全部祖先」的累计矩阵，所以这里不能把变换留在画布上往下传，
+        // 否则祖先会被乘两次（TransformSpace 的头注释记着这条）。
+        int tf = TransformSpace.Apply(canvas, box);
+        PaintSelfClipped(canvas, surface, box);
+        TransformSpace.Restore(canvas, tf);
+    }
+
+    static void PaintSelfClipped(SKCanvas canvas, SKSurface? surface, BlockBox box)
+    {
         var clip = box.OverflowClip();
         if (clip == null) { PaintBox(canvas, surface, box); return; }
         if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) return;   // 求交为空 → 完全不可见
