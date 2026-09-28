@@ -231,6 +231,36 @@ public class PseudoScopeTests
         Assert.Equal(2, after.Style.BorderRadiusTopLeft, 1);
     }
 
+    [Fact]
+    public void Host_box_sizing_does_not_leak_into_pseudo()
+    {
+        // AngleSharp 的伪元素视图会把宿主的盒尺寸声明原样漏进 computed 与 declared 两条路，
+        // 而 width/height/min-*/max-* 按 CSS 永不继承。pricing-page 的 .plan{min-height:574px}
+        // 漏给 .plan::before，把 200×200 的圆环撑成 148×522 的蛋（Playground 里四张卡各一颗）。
+        var cs = Build("<article class=plan>x</article>",
+            ".plan{position:relative;min-height:574px;box-sizing:border-box}" +
+            ".plan::before{content:\"\";position:absolute;top:-104px;right:-84px;width:200px;height:200px;" +
+            "border-radius:50%;border:26px solid rgba(0,0,0,.03)}");
+        var plan = First(cs, "article");
+        Assert.Equal(574, plan.MinHeight.Absolute, 1);          // 宿主自己的 min-height 不能被误伤
+        var before = plan.Before;
+        Assert.NotNull(before);
+        Assert.True(before!.Style.MinHeight.Absolute <= 0.01f); // 伪元素退回初值
+        Assert.Equal(200, before.Style.Width.Absolute, 1);
+        Assert.Equal(200, before.Style.Height.Absolute, 1);
+    }
+
+    [Fact]
+    public void Pseudo_own_min_height_is_kept()
+    {
+        // 反向对照：伪元素自己写了 min-height 时必须照用（判据不能只看「索引里没有」）
+        var cs = Build("<article class=plan>x</article>",
+            ".plan{position:relative;min-height:574px}.plan::before{content:\"\";min-height:120px;height:60px}");
+        var before = First(cs, "article").Before;
+        Assert.NotNull(before);
+        Assert.Equal(120, before!.Style.MinHeight.Absolute, 1);
+    }
+
     static ComputedStyle? FindByText(ComputedStyle n, string text)
     {
         if ((n.TextContent ?? "").Contains(text, StringComparison.Ordinal)) return n;

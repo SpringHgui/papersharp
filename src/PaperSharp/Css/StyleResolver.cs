@@ -132,6 +132,9 @@ public static class StyleResolver
         // 同表还捎带 "末token::placeholder" → color 声明：::placeholder 在 AngleSharp 里根本不是可解析的
         // 伪元素（实测 ComputeDeclarations(el,"::placeholder") 空），作者的占位符颜色只能这样兜回来。
         public Dictionary<string, string> PseudoDisplay = new(StringComparer.OrdinalIgnoreCase);
+        // 伪元素规则里**作者自己写过**的盒尺寸声明（键 = 末 token + "::before"/"::after" + "|" + 属性名）。
+        // 用来识破 AngleSharp 的宿主→伪元素漏值（见 ReadStyle 的 OwnSize）。
+        public HashSet<string> PseudoSizing = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>::marker 规则的原始索引（AngleSharp 不认这个伪元素，整条规则在解析期就被丢掉）。
         /// <paramref name="Last"/> = 末段简单选择器 token（tag/.class/#id），<paramref name="Ancestor"/>
         /// = 紧邻其上的那一段（<c>.mk li::marker</c> 的 <c>.mk</c>）——只按末段建键会把一条
@@ -1111,6 +1114,9 @@ public static class StyleResolver
                     foreach (var t in CompoundTokens(last)) ctx.PseudoScope.Add(t);
                 if (last.Length == 0) continue;
                 if (dm.Success) ctx.PseudoDisplay[last + suffix] = dm.Groups[1].Value.Trim().ToLowerInvariant();
+                foreach (var sp in SizeProps)
+                    if (Regex.IsMatch(body, @"(?:^|[;\s])" + sp + @"\s*:", RegexOptions.IgnoreCase))
+                        ctx.PseudoSizing.Add(last + suffix + "|" + sp);
             }
         }
     }
@@ -1124,6 +1130,26 @@ public static class StyleResolver
             yield return m.Value.ToLowerInvariant();
     }
 
+
+
+    /// <summary>受「宿主→伪元素漏值」之害的盒尺寸属性（全部是非继承属性）。</summary>
+    static readonly string[] SizeProps = { "width", "height", "min-width", "min-height", "max-width", "max-height" };
+
+    /// <summary>该伪元素规则里作者是否亲自写过这条尺寸属性（候选式与 <see cref="LookupPseudoMap"/> 同构）。</summary>
+    static bool PseudoDeclaresSize(DocContext ctx, IElement el, string pseudo, string prop)
+    {
+        var suffix = pseudo.Contains("before", StringComparison.OrdinalIgnoreCase) ? "::before"
+                   : pseudo.Contains("after", StringComparison.OrdinalIgnoreCase) ? "::after"
+                   : pseudo;
+        bool Hit(string tok) => ctx.PseudoSizing.Contains(tok + suffix + "|" + prop);
+        var cls = el.GetAttribute("class");
+        if (!string.IsNullOrWhiteSpace(cls))
+            foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                if (Hit("." + c)) return true;
+        var id = el.GetAttribute("id");
+        if (!string.IsNullOrWhiteSpace(id) && Hit("#" + id)) return true;
+        return Hit(el.TagName.ToLowerInvariant());
+    }
     /// <summary>
     /// 该元素是否可能命中某条伪元素规则：按「末段简单选择器 token」保守筛（class &gt; id &gt; tag 任一命中即放行）。
     /// ctx.PseudoScope 为 null（CSS 里有 :is()/[attr]/* 之类无法约成 token 的末段）时一律放行，保持旧行为。
@@ -1421,6 +1447,25 @@ public static class StyleResolver
         string PseudoEdge(string prop) => pseudo8?[Slot(prop)] is { Length: > 0 } pv
             ? ExpandVars(pv, element, ctx, pseudo)   // 作者源那条边的值里可以写 var()：宿主的变量对伪元素可见（继承），
             : "0px";                                  // 不展开的话 margin-left:var(--pad) 会被当非法值吃成 0
+        // AngleSharp 的伪元素视图会把宿主的盒尺寸声明原样漏进 computed **和** declared 两条路
+        // （实测 .plan{min-height:574px} 漏给 .plan::before，把 200×200 的圆环撑成 148×522 的蛋；
+        //  pricing-page 四张卡各一颗，Playground 里一眼可见）。而这些属性按 CSS 永不继承。
+        // 判据两条同时成立才动：作者没为该伪元素写过它（PseudoSizing 无记录）+ 取值与宿主逐字相同
+        // （漏值的签名）——只写「没记录」会把 token 索引没覆盖到的真声明（如 ul.tags li::after）误杀。
+        CssSize OwnSize(string prop, CssSize v)
+        {
+            if (!isPseudo || PseudoDeclaresSize(ctx, element, pseudo!, prop)) return v;
+            CssSize? host = prop switch
+            {
+                "width" => parent?.Width, "height" => parent?.Height,
+                "min-width" => parent?.MinWidth, "min-height" => parent?.MinHeight,
+                "max-width" => parent?.MaxWidth, "max-height" => parent?.MaxHeight,
+                _ => null,
+            };
+            if (host is not { } h) return v;
+            if (h.Kind != v.Kind || h.Value != v.Value || h.Offset != v.Offset) return v;   // 与宿主不同 → 不是漏值
+            return prop.StartsWith("min-") ? CssSize.Abs(0) : CssSize.Auto;                  // 初值：min-*=0，其余 auto
+        }
         static int Slot(string prop) => prop switch
         {
             "margin-top" => 0, "margin-right" => 1, "margin-bottom" => 2, "margin-left" => 3,
@@ -1489,8 +1534,8 @@ public static class StyleResolver
         s.BorderColorBottom = SideBorderColor("border-bottom-color", 2, s.BorderWidthBottom);
         s.BorderColorLeft = SideBorderColor("border-left-color", 3, s.BorderWidthLeft);
 
-        s.Width = CssValueParser.ParseSize(Val("width"), s.FontSize);
-        s.Height = CssValueParser.ParseSize(Val("height"), s.FontSize);
+        s.Width = OwnSize("width", CssValueParser.ParseSize(Val("width"), s.FontSize));
+        s.Height = OwnSize("height", CssValueParser.ParseSize(Val("height"), s.FontSize));
 
         // Flexbox
         s.FlexDirection = CssValueParser.ParseKeyword(Raw("flex-direction"), "row");
@@ -1562,10 +1607,10 @@ public static class StyleResolver
         s.GridRowStart = grs; s.GridRowEnd = gre; s.GridRowSpan = grspan;
 
         // 尺寸约束（支持 %）
-        s.MinWidth = CssValueParser.ParseSize(Val("min-width"), s.FontSize);
-        s.MaxWidth = CssValueParser.ParseSize(Val("max-width"), s.FontSize);
-        s.MinHeight = CssValueParser.ParseSize(Val("min-height"), s.FontSize);
-        s.MaxHeight = CssValueParser.ParseSize(Val("max-height"), s.FontSize);
+        s.MinWidth = OwnSize("min-width", CssValueParser.ParseSize(Val("min-width"), s.FontSize));
+        s.MaxWidth = OwnSize("max-width", CssValueParser.ParseSize(Val("max-width"), s.FontSize));
+        s.MinHeight = OwnSize("min-height", CssValueParser.ParseSize(Val("min-height"), s.FontSize));
+        s.MaxHeight = OwnSize("max-height", CssValueParser.ParseSize(Val("max-height"), s.FontSize));
 
         // 定位 + 偏移
         s.Position = CssValueParser.ParseKeyword(Raw("position"), "static");
