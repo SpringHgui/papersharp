@@ -118,9 +118,6 @@ public class PseudoScopeTests
         var cs = Build("<div class=a>x</div><div class=b>y</div>", ".a::before,.b{border-radius:9px}");
         var divs = cs.Children.Where(c => c.Tag == "div").ToList();
         Assert.Equal(0, divs[0].BorderRadiusTopLeft);   // .a 什么都没写
-        Assert.Equal(9, divs[1].BorderRadiusTopLeft);   // .b 拿到属于它自己的 9
-        // 已知边界（docs/chrome-parity-todo.md P1-7）：兜底表只索引整条选择器串的末段，
-        // 反过来的 ".a,.b::after{…}" 会丢掉 .a —— 本波刻意不扩面，先钉住现状别退步。
     }
 
     [Fact]
@@ -267,5 +264,34 @@ public class PseudoScopeTests
         foreach (var c in n.Children)
             if (FindByText(c, text) is { } h) return h;
         return null;
+    }
+
+    [Fact]
+    public void Grouped_selector_indexes_every_part()
+    {
+        // 原始 CSS 兜底表旧口径只取整条选择器串的末段建键：".a,.b{…}" 没有空白可切，
+        // 末段就是带逗号的整串 ".a,.b" → 这把键谁都命不上，于是**两段一起丢**（不是只丢前面那段）。
+        // 用 overflow:clip 断言而不是 border-radius：AngleSharp 认得 "0 0 0 2px" 之外的长写圆角，
+        // 键丢了还能从 computed 兜回来；而 clip / overlay / mix-blend-mode 这类它整条判非法丢弃，
+        // 这张表是唯一的值来源，最能暴露键丢失的后果（同 OverflowClipTests 的实测口径）。
+        var cs = Build("<div class=a>x</div><div class=b>y</div>", ".a,.b{overflow:clip}");
+        var divs = cs.Children.Where(c => c.Tag == "div").ToList();
+        Assert.True(divs[0].ClipsOverflow, ".a 该被 .a,.b{overflow:clip} 命中");
+        Assert.True(divs[1].ClipsOverflow, ".b 该被 .a,.b{overflow:clip} 命中");
+
+        var blend = Build("<div class=a>x</div><div class=b>y</div>", ".a,.b{mix-blend-mode:multiply}");
+        var bdivs = blend.Children.Where(c => c.Tag == "div").ToList();
+        Assert.Equal("multiply", bdivs[0].MixBlendMode);
+        Assert.Equal("multiply", bdivs[1].MixBlendMode);
+    }
+    [Fact]
+    public void Grouped_parts_keep_their_own_pseudo_scopes()
+    {
+        // 逐段建键之后两段各归各：.a::after 的 40px 只能落在 .a 的伪元素上，
+        // 既不能漏给 .a 宿主，也不能横跳到 .b
+        var cs = Build("<div class=a>x</div><div class=b>y</div>", ".a::after,.b{border-radius:40px}");
+        var divs = cs.Children.Where(c => c.Tag == "div").ToList();
+        Assert.Equal(0, divs[0].BorderRadiusTopLeft);
+        Assert.Equal(40, divs[1].BorderRadiusTopLeft);
     }
 }

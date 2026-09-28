@@ -249,10 +249,15 @@ public static class StyleResolver
                 var mm = Regex.Match(body, @"(?<![\w-])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
                 if (!mm.Success) continue;
                 var val = mm.Groups[1].Value.Trim().ToLowerInvariant();
-                var parts = Regex.Split(sel, @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
-                var last = parts.Length > 0 ? parts[^1] : sel;
-                var (baseTok, ps) = SplitSelectorScope(last);
-                if (baseTok.Length > 0) map[prop][baseTok + ps] = val;
+                // 逗号分开的选择器组逐段建键（P1-7）：只取整串末段时，".a,.b{overflow:clip}" 这种
+                // 没有空白的组会把带逗号的整串当键 → 谁都命不上，两段一起丢。
+                foreach (var selPart in sel.Split(','))
+                {
+                    var parts = Regex.Split(selPart.Trim(), @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
+                    var last = parts.Length > 0 ? parts[^1] : selPart;
+                    var (baseTok, ps) = SplitSelectorScope(last);
+                    if (baseTok.Length > 0) map[prop][baseTok + ps] = val;
+                }
             }
         }
     }
