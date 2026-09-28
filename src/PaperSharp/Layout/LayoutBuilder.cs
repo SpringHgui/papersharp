@@ -915,7 +915,11 @@ public static class LayoutBuilder
             using var font = new SKFont(box.Typeface, s.FontSize);
             box.WrappedLines = TextMeasurer.Wrap(s.TextContent, box.ContentWidth, font, s, ambient, contentTopY, out var lefts);
             box.LineLefts = lefts;
-            if (s.TextOverflow == "ellipsis" && s.WhiteSpace == "nowrap" && !s.Width.IsAuto)
+            // text-overflow:ellipsis 的生效闸门是**本盒自己裁不裁溢出**，不是宽度写没写死：
+            // CSS Overflow 3 只在「行盒在行尾方向被裁剪」时才让 ellipsis 生效，Chrome 实测
+            // overflow:visible + nowrap + ellipsis 整行原样溢出、不加省略号（探针 _ell A/D 行），
+            // 而 max-width 撑出的 auto 宽盒照样截（探针 F 行）——旧条件 !Width.IsAuto 两头都是错的。
+            if (s.TextOverflow == "ellipsis" && s.WhiteSpace == "nowrap" && s.ClipsOverflow)
                 box.WrappedLines = TruncateEllipsis(box.WrappedLines, box.ContentWidth, font, s.LetterSpacing);
             h += box.WrappedLines.Length * s.LineHeightPx();
 

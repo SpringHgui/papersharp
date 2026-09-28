@@ -64,10 +64,13 @@ h1 {
 .u { text-decoration: underline; }
 .s { text-decoration: line-through; color: #dc2626; }
 
-/* nowrap + ellipsis（截断） */
+/* nowrap + ellipsis（截断）
+   overflow:hidden 是必需的：text-overflow 只在行尾方向被裁剪时才生效，Chrome 实测
+   overflow:visible（默认）下整行原样溢出、不加省略号（探针 assets/_ell.html 的 A/D 两行）。 */
 .trunc {
   white-space: nowrap;
   text-overflow: ellipsis;
+  overflow: hidden;
   width: 150px;
   background-color: #f3f4f6;
   padding: 4px 8px;
