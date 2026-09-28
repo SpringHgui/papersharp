@@ -62,15 +62,25 @@
 
 ---
 
-## P1-9 · 多类名伪元素选择器被伪元素闸门整条挡掉（波次2 中发现，未动）
+## P1-9 · 多类名 / 带 transform 的伪元素规则整条消失 —— ✅ 已修（波次3，实为两个独立根因）
 
-**症状**：`login-page` 的选中页签蓝条 `.tab.active::after{content:"";position:absolute;left:50%;bottom:0;width:104px;height:4px;border-radius:2px;background:#1a5cf0}` 在 Chrome 里画得出来，引擎里**整条伪元素规则压根没进 `BuildPseudoGen`**（盒树里 `.tab` 无伪元素子盒），蓝条缺失。
+**症状**：`login-page` 选中页签那条蓝条 `.tab.active::after{content:"";position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:104px;height:4px;border-radius:2px;background:#1a5cf0}` 在 Chrome 里画得出来，引擎里整条规则当它不存在。
 
-**根因**：`ScanPseudoDisplay` 建 `ctx.PseudoScope` 时把末段冒号后剥掉 → 存的是 **`.tab.active`**（多类名整串）；而 `PseudoMayMatch` 的候选是按元素的 class 列表逐个拼的 **`.tab`** / **`.active`** → 两边永不同名 → 闸门按「这个元素不可能有伪元素」把它跳过了。同一个 token 口径也用于 `LookupPseudoMap`（伪元素显式 display / `::placeholder` 颜色 / `::marker`），所以带叠加类名的伪元素规则整体处于「看不见」状态。
+**根因 A（闸门 token 不同名）**：`ScanPseudoDisplay` 建 `ctx.PseudoScope` 存的是末段整串 **`.tab.active`**，而 `PseudoMayMatch` 的探测式是按元素 class 列表逐个拼的 **`.tab`** / **`.active`** → 永不同名 → 闸门按「这个元素不可能有伪元素」直接跳过（闸门确实生效：`StyleResolver.cs:922` `if (ctx.HasPseudoRules && PseudoMayMatch(...))`）。同一个 token 口径也用于 `LookupPseudoMap`（伪元素显式 display、`::placeholder` 颜色、`::marker`），所以带叠加类名的伪元素规则整体处于「看不见」状态。
+修法：闸门候选摊成末段复合里的**每个**简单 token（tag / 每个 `.class` / `#id`）——闸门只做「宁可多放行」的超集筛选；**取值键仍按整串存**，不会因此把 A 规则的 display 发给 B 元素（那正是 P0-1 那类串味）。
 
-**为什么没跟着波次2 一起改**：闸门是**性能**闸门（每元素多跑一轮层叠实测 ~5ms），放宽它要走「多类名逐个登记」的超集路线——对闸门是安全的（宁可多放行），但 `PseudoDisplay` 那张表不能同样放宽（会把 A 规则的 display 发给 B 元素，正是 P0-1 那类串味）。要改就得把「闸门候选」与「取值键」拆成两套匹配，属独立一波。
+**根因 B（AngleSharp computed 抛异常把伪元素判成「没写 content」）**：`BuildPseudoGen.Content()` 用 `ComputeDeclarations(el, "::after")` 取 content，而 AngleSharp 在解析该伪元素规则的 computed 时，值里带 `transform: translateX(-50%)` **必抛 NullReferenceException**（`transform:none`、未知属性、只写 content 都不抛，declared 那条路也不抛——实测钉住）。旧写法 `catch { return ""; }` 把异常咽成空串，于是「一条无关声明」判掉「整个伪元素」。
+修法：computed 抛了退到 declared（同样做真选择器匹配，只是取作者原样值，而 content 本来就由 `PseudoContent.Parse` 自己解析）。
 
-**验收（修时）**：上述蓝条在引擎里出现且落位/尺寸与 Chrome 一致；`PseudoScope` 命中数不劣化（跑 `dotnet run -- pgstyle` 对账层叠次数）。
+**修后实测**：蓝条画出来了（2x 光栅上 207×7 设备 px = 104×4 CSS px，落在页签下方）。
+
+**残留（另立一条，见 P1-10）**：蓝条的**水平落位**仍与 Chrome 差半个条宽——`left:50%` 生效而 `transform: translateX(-50%)` 未实现，条子右偏 52px。
+
+---
+
+## P1-10 · `transform` 未实现，凡靠它定位/旋转的装饰都偏位
+
+`translateX(-50%)`（居中）、`rotate(24deg)` / `rotate(-18deg)`（login-page 横幅那两块圆角装饰件的角度）在引擎里一律忽略：盒出现、尺寸对，但角度与位移与 Chrome 有差。ROADMAP 早已把 `transform` 列为未做项（依赖它的动画停在基线态），本条只是把它在**静态装饰**上的可见后果点名归档：P1-3 / P1-9 修完后，剩下的差异全部落在这一条上。
 
 ---
 

@@ -999,16 +999,25 @@ public static class StyleResolver
         string Content()
         {
             // 展平快照：content 就在 .ps-N::before 那条规则里，直接取。
-            if (fp != null) return ExpandVars(fp.Get("content"), element, ctx);
+            if (fp != null) return ExpandVars(fp.Get("content"), element, ctx, pseudo);
             // 用 AngleSharp computed 判定伪元素是否成盒并取串：它做真正的选择器匹配（避免按 token 兜底把
             // `ul.tags li::after` 泄漏到 `ol.outline li`）。counters(a,',') 会被它重序列化成 counters(a ,)
             // （吞逗号），交由 PseudoContent.Parse 的空格/逗号双兼容解析还原。
+            //
+            // computed 这条路会**整棵抛异常**：实测 AngleSharp 在解析某条声明的计算值时 NRE
+            // （`transform: translateX(-50%)` 必炸，`transform:none` 与未知属性都不炸），而它抛在
+            // 「取这条规则的 content」这一步——等于一条无关声明把整个伪元素判成「没写 content」而消失
+            // （login-page 的页签蓝条 `.tab.active::after` 就是这么整条没的）。故异常时退到 declared：
+            // 同样做真正的选择器匹配，只是取作者原样值，而 content 我们自己解析，不需要 computed 的归一。
             try
             {
-                var c = ctx.Styles.ComputeDeclarations(element, pseudo).GetPropertyValue("content");
-                return ExpandVars(c ?? "", element, ctx);
+                return ExpandVars(ctx.Styles.ComputeDeclarations(element, pseudo).GetPropertyValue("content") ?? "", element, ctx, pseudo);
             }
-            catch { return ""; }
+            catch
+            {
+                try { return ExpandVars(ctx.Styles.GetDeclarations(element, pseudo).GetPropertyValue("content") ?? "", element, ctx, pseudo); }
+                catch { return ""; }
+            }
         }
         var runs = PseudoContent.Parse(Content(), name => element.GetAttribute(name));
         if (runs == null) return null;   // none / normal / 未设 → 不生成盒
@@ -1093,11 +1102,26 @@ public static class StyleResolver
                     continue;
                 }
                 var last = Regex.Replace(rawLast, @"[:\[].*$", "");   // 去伪类/属性段
-                if (ctx.PseudoScope != null && last.Length > 0) ctx.PseudoScope.Add(last.ToLowerInvariant());
+                // 闸门候选要摊到末段复合选择器里的**每一个**简单 token：<c>PseudoMayMatch</c> 是按元素
+                // 的 class 列表逐个拼 ".tab"/".active" 来问的，而多类名复合的末段是 ".tab.active" 整串——
+                // 两边永不同名，于是 `.tab.active::after` 这类规则被闸门整条跳过（login-page 的页签蓝条
+                // 就是这么没的）。闸门只做「宁可多放行」的超集筛选，取值键仍按整串 last 存（见下一行），
+                // 不会因此把 A 规则的 display 发给 B 元素。
+                if (ctx.PseudoScope != null)
+                    foreach (var t in CompoundTokens(last)) ctx.PseudoScope.Add(t);
                 if (last.Length == 0) continue;
                 if (dm.Success) ctx.PseudoDisplay[last + suffix] = dm.Groups[1].Value.Trim().ToLowerInvariant();
             }
         }
+    }
+
+    /// <summary>末段复合选择器（已去伪元素/伪类/属性段）摊成闸门候选：tag、每个 <c>.class</c>、<c>#id</c>、<c>*</c>。
+    /// 与 <see cref="PseudoMayMatch"/> 的探测式一一对应；只用于「可能命中」的超集闸门。</summary>
+    static IEnumerable<string> CompoundTokens(string compound)
+    {
+        if (compound.Length == 0) yield break;
+        foreach (Match m in Regex.Matches(compound, @"[*]|[#.]?[A-Za-z][\w-]*"))
+            yield return m.Value.ToLowerInvariant();
     }
 
     /// <summary>

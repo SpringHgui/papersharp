@@ -187,4 +187,55 @@ public class PseudoScopeTests
         Assert.Equal("block", hero.Before!.Style.Display);
         Assert.Equal("block", hero.After!.Style.Display);
     }
+
+    // ── 波次3：多类名闸门 + AngleSharp computed 抛异常时的 declared 回落 ──────────────
+
+    [Fact]
+    public void MultiClass_pseudo_selector_passes_the_gate()
+    {
+        // 闸门候选必须摊到末段复合选择器里的每个简单 token：PseudoMayMatch 按元素的 class 列表
+        // 逐个拼 ".tab"/".active" 来问，而旧口径存的是 ".tab.active" 整串 → 永不同名 → 整条规则被跳过。
+        var cs = Build("<div class=\"a b\">x</div>",
+            ".a{position:relative}.a.b::after{content:\"\";position:absolute;width:20px;height:4px;background:#1a5cf0}");
+        var after = First(cs, "div").After;
+        Assert.NotNull(after);
+        Assert.Equal("block", after!.Style.Display);
+    }
+
+    [Fact]
+    public void Transform_declaration_does_not_kill_the_pseudo_box()
+    {
+        // AngleSharp 取 ::after 的 computed 时，值里带 translateX(-50%) 这类 transform 会抛 NRE；
+        // 旧写法 catch 后返回空串 = 「没写 content」，整条伪元素规则连同它的装饰一起消失。
+        var cs = Build("<div class=a>x</div>",
+            ".a{position:relative}.a::after{content:\"\";position:absolute;left:50%;bottom:0;transform:translateX(-50%);" +
+            "width:104px;height:4px;border-radius:2px;background:#1a5cf0}");
+        var after = First(cs, "div").After;
+        Assert.NotNull(after);
+        Assert.Equal("block", after!.Style.Display);
+        Assert.Equal(104, after.Style.Width.Absolute, 1);
+    }
+
+    [Fact]
+    public void LoginPage_active_tab_underline_is_boxed()
+    {
+        // 现场回归：登录页选中页签那条 104×4 蓝条（.tab.active::after，多类名 + transform 两个坑叠在一起）
+        var html = File.ReadAllText(Path.Combine(Fixture.AssetsDir, "login-page.html"));
+        var cs = StyleResolver.BuildDocument(html, "", viewportWidth: 1284);
+        var tab = FindByText(cs, "手机号登录");
+        Assert.NotNull(tab);
+        var after = tab!.After;
+        Assert.NotNull(after);
+        Assert.Equal("block", after!.Style.Display);
+        Assert.Equal(104, after.Style.Width.Absolute, 1);
+        Assert.Equal(2, after.Style.BorderRadiusTopLeft, 1);
+    }
+
+    static ComputedStyle? FindByText(ComputedStyle n, string text)
+    {
+        if ((n.TextContent ?? "").Contains(text, StringComparison.Ordinal)) return n;
+        foreach (var c in n.Children)
+            if (FindByText(c, text) is { } h) return h;
+        return null;
+    }
 }
