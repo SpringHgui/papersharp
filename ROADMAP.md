@@ -3,7 +3,7 @@
 > 对标：**takumi**（<https://github.com/kane50613/takumi>，Rust，JSX/HTML → OG 图 + 分页 PDF，多运行时）。
 > 我们的定位：**.NET 库，HTML/CSS → 文档（发票/报表/合同）+ 图卡**，不做多运行时与前端构建期能力。
 >
-> M1–M4 全部完成、M5 完成前半、M7（复杂文字）与并发安全化已完成；M8（伪元素 `::before/::after` + 计数器、`background-clip: text` 渐变文字、`backdrop-filter` 毛玻璃）与 M9（`@keyframes`/`animation` 确定性取帧）已交付（验收样例 `assets/m1–m5/m7–m9.html`，全清单见 README「能力速览」）。本文只记录**剩余差距与下一步**。
+> M1–M4 全部完成、M5 完成前半、M7（复杂文字）与并发安全化已完成；M8（伪元素 `::before/::after` + 计数器、`background-clip: text` 渐变文字、`backdrop-filter` 毛玻璃）与 M9（`@keyframes`/`animation` 确定性取帧）已交付（验收样例 `assets/m1–m5/m7–m9.html`，全清单见 README「能力速览」）。本文只记录**剩余差距与下一步**。与 Chrome 的**渲染差异待修复台账**（与上面 takumi 功能差距无关）：[`docs/chrome-parity-todo.md`](docs/chrome-parity-todo.md)。
 
 ## 差距清单（takumi 有 / 我们没有的，全量）
 

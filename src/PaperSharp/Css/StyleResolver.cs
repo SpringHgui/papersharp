@@ -248,8 +248,8 @@ public static class StyleResolver
                 var val = mm.Groups[1].Value.Trim().ToLowerInvariant();
                 var parts = Regex.Split(sel, @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
                 var last = parts.Length > 0 ? parts[^1] : sel;
-                last = Regex.Replace(last, @"[:\[].*$", ""); // 去掉伪类/属性选择器
-                if (last.Length > 0) map[prop][last] = val;
+                var (baseTok, ps) = SplitSelectorScope(last);
+                if (baseTok.Length > 0) map[prop][baseTok + ps] = val;
             }
         }
     }
@@ -263,23 +263,73 @@ public static class StyleResolver
         _ => null,
     };
 
-    static string Lookup(string prop, IElement element, string current, DocContext ctx)
+    static string Lookup(string prop, IElement element, string current, DocContext ctx, string? pseudo = null)
     {
         if (string.IsNullOrWhiteSpace(current))
         {
             if (ctx.UnsupportedMap.TryGetValue(prop, out var map) && map.Count > 0)
             {
+                var suf = PseudoKeySuffix(pseudo);
                 var cls = element.GetAttribute("class");
                 if (!string.IsNullOrWhiteSpace(cls))
                     foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                        if (map.TryGetValue("." + c, out var v)) return ExpandVars(v, element, ctx);
+                        if (map.TryGetValue("." + c + suf, out var v)) return ExpandVars(v, element, ctx, pseudo);
                 var id = element.GetAttribute("id");
-                if (!string.IsNullOrWhiteSpace(id) && map.TryGetValue("#" + id, out var iv)) return ExpandVars(iv, element, ctx);
-                if (map.TryGetValue(element.TagName.ToLowerInvariant(), out var tv)) return ExpandVars(tv, element, ctx);
+                if (!string.IsNullOrWhiteSpace(id) && map.TryGetValue("#" + id + suf, out var iv)) return ExpandVars(iv, element, ctx, pseudo);
+                if (map.TryGetValue(element.TagName.ToLowerInvariant() + suf, out var tv)) return ExpandVars(tv, element, ctx, pseudo);
             }
             return current;
         }
-        return ExpandVars(current, element, ctx);
+        return ExpandVars(current, element, ctx, pseudo);
+    }
+
+    /// <summary>
+    /// 末段复合选择器 → (基 token, 伪元素后缀)。基 token 沿用历史口径：从第一个 <c>:</c> 或 <c>[</c>
+    /// 起全剥（伪类与属性选择器不进键）。伪元素后缀单独留进键，于是 <c>.hero::after</c> 与 <c>.hero</c>
+    /// 是两把键——旧口径把冒号后一律剥掉，伪元素声明会冒充宿主声明画到宿主身上
+    /// （login-page 的 <c>.hero</c> 因此吃了 <c>::after</c> 的 64px 圆角与白色内描边，Chrome 里两者都没有；
+    /// pricing-page 的 <c>.plan</c> 更是被 <c>.plan::before</c> 的 50% 挤掉了自己的 12px）。
+    /// 遗留单冒号写法 <c>:before/:after/:first-line/:first-letter</c> 同算伪元素。
+    /// </summary>
+    static (string Base, string Pseudo) SplitSelectorScope(string compound)
+    {
+        var ps = new StringBuilder();
+        for (int i = 0; i < compound.Length - 1; i++)
+        {
+            if (compound[i] != ':') continue;
+            bool dbl = compound[i + 1] == ':';
+            int from = dbl ? i + 2 : i + 1;
+            int end = from;
+            while (end < compound.Length && (char.IsLetterOrDigit(compound[end]) || compound[end] == '-')) end++;
+            string n = compound[from..end].ToLowerInvariant();
+            if (n.Length > 0 && (dbl || n is "before" or "after" or "first-line" or "first-letter"))
+                ps.Append("::").Append(n);
+            i = end - 1;
+        }
+        int cut = compound.IndexOfAny(':', '[');
+        return (cut < 0 ? compound : compound[..cut], ps.ToString());
+    }
+
+    /// <summary>ReadStyle 的 pseudo 实参（<c>"::before"</c> 等）→ 键后缀；宿主（null/空）→ 空串。
+    /// 与 <see cref="LookupPseudoMap"/> 同一套归一口径：只认 before/after/placeholder/marker，
+    /// 纯伪类与不认识的伪元素按宿主处理（宁可退回旧行为，也不要把键空间炸开）。</summary>
+    static string PseudoKeySuffix(string? pseudo)
+    {
+        if (string.IsNullOrWhiteSpace(pseudo)) return "";
+        var s = pseudo.Trim().ToLowerInvariant();
+        if (s.Contains("before", StringComparison.Ordinal)) return "::before";
+        if (s.Contains("after", StringComparison.Ordinal)) return "::after";
+        if (s.Contains("placeholder", StringComparison.Ordinal)) return "::placeholder";
+        if (s.Contains("marker", StringComparison.Ordinal)) return "::marker";
+        return "";
+    }
+
+    /// <summary>选择器组（逗号分隔）里是否有任何一段带伪元素——用于把伪元素作用域的声明挡在「全局索引」之外。</summary>
+    static bool HasPseudoElementScope(string sel)
+    {
+        foreach (var part in sel.Split(','))
+            if (SplitSelectorScope(part.Trim()).Pseudo.Length > 0) return true;
+        return false;
     }
 
     /// <summary>
@@ -328,8 +378,8 @@ public static class StyleResolver
         if (sel == "*") return "*";
         var parts = Regex.Split(sel, @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
         var last = parts.Length > 0 ? parts[^1] : sel;
-        last = Regex.Replace(last, @"[:\[].*$", ""); // 去掉伪类/属性选择器
-        return last.Length > 0 ? last.ToLowerInvariant() : null;
+        var (baseTok, ps) = SplitSelectorScope(last);
+        return baseTok.Length > 0 ? (baseTok + ps).ToLowerInvariant() : null;
     }
 
     /// <summary>
@@ -457,6 +507,10 @@ public static class StyleResolver
         var defs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (Match block in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
+        {
+            // 带伪元素的那段规则不算「全局唯一定值」：<c>.a::after{--pad:30px}</c> 只有该伪元素自己看得见，
+            // 内联进别处的 var(--pad) 等于把声明泄给兄弟元素（Chrome 取不到 → 该走回退值）。
+            if (HasPseudoElementScope(block.Groups[1].Value)) continue;
             foreach (Match d in Regex.Matches(block.Groups[2].Value, @"(--[A-Za-z][\w-]*)\s*:\s*([^;}]+)"))
             {
                 var name = d.Groups[1].Value;
@@ -469,6 +523,7 @@ public static class StyleResolver
                 }
                 defs[name] = val;
             }
+        }
         if (defs.Count == 0) return css;
 
         // 值本身可能再引用别的变量（变量链）：先把可内联的名字解析到底，成环的退出
@@ -575,7 +630,7 @@ public static class StyleResolver
     }
 
     /// <summary>把值里的 var(--x[, 兜底]) 按元素作用域展开；支持嵌套与变量链，环/超深在 16 轮后放弃。</summary>
-    static string ExpandVars(string value, IElement element, DocContext ctx)
+    static string ExpandVars(string value, IElement element, DocContext ctx, string? pseudo = null)
     {
         if (string.IsNullOrEmpty(value) || !value.Contains("var(", StringComparison.OrdinalIgnoreCase)) return value;
         for (int guard = 0; guard < 16; guard++)
@@ -600,7 +655,7 @@ public static class StyleResolver
             }
             var name = (comma < 0 ? inner : inner[..comma]).Trim();
             var fallback = comma < 0 ? "" : inner[(comma + 1)..].Trim();
-            var def = name.StartsWith("--") ? FindVar(element, name, ctx) : null;
+            var def = name.StartsWith("--") ? FindVar(element, name, ctx, pseudo) : null;
             value = value[..at] + (def ?? fallback) + value[j..];
         }
         return value;
@@ -651,9 +706,10 @@ public static class StyleResolver
     }
 
     /// <summary>按 CSS 继承语义查变量：从元素自身向上走，同级内联 style &gt; class &gt; id &gt; tag &gt; *。</summary>
-    static string? FindVar(IElement el, string name, DocContext ctx)
+    static string? FindVar(IElement el, string name, DocContext ctx, string? pseudo = null)
     {
         var varMap = ctx.VarMap;
+        var suf = PseudoKeySuffix(pseudo);
         for (IElement? e = el; e != null; e = e.ParentElement)
         {
             var inline = e.GetAttribute("style");
@@ -663,6 +719,10 @@ public static class StyleResolver
                 if (m.Success) return m.Groups[1].Value.Trim();
             }
             var cls = e.GetAttribute("class");
+            // 伪元素自己声明的变量：键 = 末 token + "::before"/"::after"，只在起始元素这一跳有效
+            if (suf.Length > 0 && ReferenceEquals(e, el) && !string.IsNullOrWhiteSpace(cls))
+                foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    if (varMap.TryGetValue("." + c + suf, out var pcm) && pcm.TryGetValue(name, out var pv)) return pv;
             if (!string.IsNullOrWhiteSpace(cls))
                 foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                     if (varMap.TryGetValue("." + c, out var cm) && cm.TryGetValue(name, out var v)) return v;
@@ -1395,7 +1455,7 @@ public static class StyleResolver
         // align-items:normal ≡ stretch（布局只认 stretch，LayoutBuilder 的 stretchDefault 否则失效），
         // justify-content:normal ≡ flex-start。
         // 对齐属性一律走 Lookup：AngleSharp 丢掉的那批（start/end/justify-self/place-*）由原始 CSS 兜底表补回。
-        string Aln(string prop, string dflt) => CssValueParser.ParseKeyword(Lookup(prop, element, Raw(prop), ctx), dflt);
+        string Aln(string prop, string dflt) => CssValueParser.ParseKeyword(Lookup(prop, element, Raw(prop), ctx, pseudo), dflt);
         s.JustifyContent = Aln("justify-content", "flex-start");
         if (s.JustifyContent == "normal") s.JustifyContent = "flex-start";
         s.AlignItems = Aln("align-items", "stretch");
@@ -1406,12 +1466,12 @@ public static class StyleResolver
         s.JustifySelf = Aln("justify-self", "auto");
         s.JustifyItems = Aln("justify-items", "stretch");
         s.AlignContent = Aln("align-content", "normal");
-        if (CssValueParser.TryParsePositional2(Lookup("place-self", element, Raw("place-self"), ctx), out var psA, out var psJ))
+        if (CssValueParser.TryParsePositional2(Lookup("place-self", element, Raw("place-self"), ctx, pseudo), out var psA, out var psJ))
         {
             if (string.IsNullOrWhiteSpace(Raw("align-self"))) s.AlignSelf = psA;
             if (string.IsNullOrWhiteSpace(Raw("justify-self"))) s.JustifySelf = psJ;
         }
-        if (CssValueParser.TryParsePositional2(Lookup("place-items", element, Raw("place-items"), ctx), out var piA, out var piJ))
+        if (CssValueParser.TryParsePositional2(Lookup("place-items", element, Raw("place-items"), ctx, pseudo), out var piA, out var piJ))
         {
             if (string.IsNullOrWhiteSpace(Raw("align-items"))) s.AlignItems = piA == "auto" ? "stretch" : piA;
             if (string.IsNullOrWhiteSpace(Raw("justify-items"))) s.JustifyItems = piJ == "auto" ? "stretch" : piJ;
@@ -1430,7 +1490,7 @@ public static class StyleResolver
         // ⚠️ AngleSharp 在**声明阶段**就丢弃 `flex: none`（实测 decls 里没有 flex、computed 三长写全空，
         // 于是 FlexShrink 停在初始值 1，`flex:none` 项照被收缩——Edge 实测 [100,186] 不缩 / 引擎 50.89）。
         // 故简写串走 Lookup：computed/declared 都为空时，从作者 CSS 的自扫描表（UnsupportedProps）兜底取回。
-        if (CssValueParser.TryParseFlexShorthand(Lookup("flex", element, Raw("flex"), ctx), s.FontSize, out var fxG, out var fxS, out var fxB))
+        if (CssValueParser.TryParseFlexShorthand(Lookup("flex", element, Raw("flex"), ctx, pseudo), s.FontSize, out var fxG, out var fxS, out var fxB))
         {
             if (string.IsNullOrWhiteSpace(Raw("flex-grow"))) s.FlexGrow = fxG;
             if (string.IsNullOrWhiteSpace(Raw("flex-shrink"))) s.FlexShrink = fxS;
@@ -1497,9 +1557,9 @@ public static class StyleResolver
 
         // 溢出裁剪：简写与两个长写里任一轴给出裁剪关键字即整盒裁剪（折算规则见 ComputedStyle.ClipsOverflow）。
         // 走 Lookup 而不是只信 Raw：AngleSharp 若不实现 overflow，computed 为空，需要从原始 CSS 兜底表命中。
-        s.ClipsOverflow = AnyClips(Lookup("overflow", element, Raw("overflow"), ctx))
-                       || AnyClips(Lookup("overflow-x", element, Raw("overflow-x"), ctx))
-                       || AnyClips(Lookup("overflow-y", element, Raw("overflow-y"), ctx));
+        s.ClipsOverflow = AnyClips(Lookup("overflow", element, Raw("overflow"), ctx, pseudo))
+                       || AnyClips(Lookup("overflow-x", element, Raw("overflow-x"), ctx, pseudo))
+                       || AnyClips(Lookup("overflow-y", element, Raw("overflow-y"), ctx, pseudo));
 
         // 文本高级：vertical-align / text-wrap / text-fit（非标准，走属性兜底 + HTML 属性）
         // Chrome UA 表给 sub/sup 的 vertical-align，本引擎 UA 表里没有（AngleSharp 的层叠视图读不到注入表
@@ -1513,10 +1573,10 @@ public static class StyleResolver
         // span 同样是 baseline）。AngleSharp 按 CSS 规范把它当继承属性，于是 UA 表那条
         // td, th{vertical-align:middle} 会漏进单元格里的每一段文字，table 样例整表每行虚高 2.2px。
         // 展平快照路径无需补救：那份 px 本就是浏览器按正确基准折的，而 Spec 在该路径就是它。
-        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Spec("vertical-align"), ctx),
+        s.VerticalAlign = FirstNonEmpty(Lookup("vertical-align", element, Spec("vertical-align"), ctx, pseudo),
                                         TagDefaultVerticalAlign(element), "baseline")!;
-        s.TextWrap = CssValueParser.ParseKeyword(Lookup("text-wrap", element, Raw("text-wrap"), ctx), "wrap");
-        var tf = Lookup("text-fit", element, Raw("text-fit"), ctx);
+        s.TextWrap = CssValueParser.ParseKeyword(Lookup("text-wrap", element, Raw("text-wrap"), ctx, pseudo), "wrap");
+        var tf = Lookup("text-fit", element, Raw("text-fit"), ctx, pseudo);
         if (string.IsNullOrWhiteSpace(tf)) tf = element.GetAttribute("text-fit") ?? "";
         s.TextFit = CssValueParser.ParseKeyword(tf, "none");
 
@@ -1529,15 +1589,15 @@ public static class StyleResolver
         // font-variant-caps 可继承；AngleSharp 是否把 font-variant 简写拆成长写随版本而变，两处都问一遍，
         // 并且都要过 Lookup——长写属性名与 petite-caps 这类值它压根不认，声明在解析期就被丢了。
         s.FontVariantCaps = CssValueParser.ParseFontVariantCaps(
-                                Lookup("font-variant-caps", element, Raw("font-variant-caps"), ctx),
-                                Lookup("font-variant", element, Raw("font-variant"), ctx))
+                                Lookup("font-variant-caps", element, Raw("font-variant-caps"), ctx, pseudo),
+                                Lookup("font-variant", element, Raw("font-variant"), ctx, pseudo))
                             ?? parent?.FontVariantCaps ?? "normal";
-        s.TextOverflow = CssValueParser.ParseKeyword(Lookup("text-overflow", element, Raw("text-overflow"), ctx), "clip");
+        s.TextOverflow = CssValueParser.ParseKeyword(Lookup("text-overflow", element, Raw("text-overflow"), ctx, pseudo), "clip");
         s.WordBreak = CssValueParser.ParseKeyword(Raw("word-break"), "normal");
         // overflow-wrap 的旧名 word-wrap 仍常见于老样式表，读不到 overflow-wrap 时退回去看它。
         // 过 Lookup：AngleSharp 的值表只到 normal|break-word|break-all，`anywhere` 整条声明在解析期
         // 就被判非法丢弃（computed 与 declared 皆空），只能由原始 CSS 兜底表捞回来。
-        var ow = Lookup("overflow-wrap", element, Raw("overflow-wrap"), ctx);
+        var ow = Lookup("overflow-wrap", element, Raw("overflow-wrap"), ctx, pseudo);
         if (string.IsNullOrWhiteSpace(ow)) ow = Raw("word-wrap");
         s.OverflowWrap = ow.Trim().ToLowerInvariant() switch
         {
@@ -1607,7 +1667,7 @@ public static class StyleResolver
         };
         // 简写先铺、长写后覆盖：AngleSharp 的声明表里同条规则内后写的简写会抹掉先写的长写，
         // 所以两者同时取得到作者串的情形只可能是「长写写在后面」——按 CSS 正是长写胜。
-        var radiusShorthand = FirstNonEmpty(Inline("border-radius"), Lookup("border-radius", element, "", ctx));
+        var radiusShorthand = FirstNonEmpty(Inline("border-radius"), Lookup("border-radius", element, "", ctx, pseudo));
         var radiusShorthandParsed = ParseRadii(radiusShorthand, s.FontSize);
         bool hasRadiusShorthand = radiusShorthandParsed is not null;
         if (radiusShorthandParsed is { } ra)
@@ -1617,7 +1677,7 @@ public static class StyleResolver
         }
         for (int c = 0; c < 4; c++)
         {
-            var authored = FirstNonEmpty(Inline(radiusProps[c]), Lookup(radiusProps[c], element, "", ctx));
+            var authored = FirstNonEmpty(Inline(radiusProps[c]), Lookup(radiusProps[c], element, "", ctx, pseudo));
             if (authored.Length == 0 && hasRadiusShorthand) continue;   // 该角没写长写，沿用简写铺的值
             var (ax, ay, px, py) = ReadRadius(authored.Length > 0 ? authored : Raw(radiusProps[c]), s.FontSize);
             radAbs[c * 2] = ax; radAbs[c * 2 + 1] = ay;
@@ -1631,7 +1691,7 @@ public static class StyleResolver
         // AngleSharp 会把 `0 0 0 2px` 重序列化成 `0 0 2px`（blur 与 spread 串位，实测三重阴影那格的
         // 2px 外环被当成 2px 模糊），声明值视图同样中招。故一律取作者原样串：内联 style 属性 >
         // 原始 CSS 兜底表 > 声明值。em 也按本元素字号折算。
-        var shadowDecl = FirstNonEmpty(Inline("box-shadow"), Lookup("box-shadow", element, "", ctx), Spec("box-shadow"));
+        var shadowDecl = FirstNonEmpty(Inline("box-shadow"), Lookup("box-shadow", element, "", ctx, pseudo), Spec("box-shadow"));
         s.Shadows = CssValueParser.ParseShadowLayers(shadowDecl, s.FontSize);
         // background-image/background 一律不读 computed：值里只要含 repeating-* 渐变，
         // AngleSharp 的 CssPeriodicValue.CssText 必抛 NRE（其解析也不完整，渐变串本就走 Spec/Lookup 自解析）。
@@ -1639,38 +1699,35 @@ public static class StyleResolver
         if (string.IsNullOrEmpty(bgi)) bgi = Spec("background");
         // conic-gradient 等 AngleSharp 不认识的写法：从原始 CSS 兜底
         s.Background = CssValueParser.ParseGradient(
-            Lookup("background-image", element, Lookup("background", element, bgi, ctx), ctx));
+            Lookup("background-image", element, Lookup("background", element, bgi, ctx, pseudo), ctx, pseudo));
         // background-clip: text（渐变文字）——AngleSharp 会把 computed 判成 "border-box"（吞掉作者的 text），
         // 故只信原始 CSS 兜底表（传空 current 强制走 UnsupportedMap 的 class/id/tag 命中）。
-        s.BackgroundClip = FirstNonEmpty(FirstToken(Lookup("background-clip", element, "", ctx)), "border-box");
+        s.BackgroundClip = FirstNonEmpty(FirstToken(Lookup("background-clip", element, "", ctx, pseudo)), "border-box");
 
         // 进阶视觉：blend / clip / mask / filter / squircle（AngleSharp 多不支持，走原始 CSS 兜底）
-        s.MixBlendMode = CssValueParser.ParseKeyword(Lookup("mix-blend-mode", element, Raw("mix-blend-mode"), ctx), "normal");
-        s.CornerShape = CssValueParser.ParseKeyword(Lookup("corner-shape", element, Raw("corner-shape"), ctx), "round");
-        var cp = Lookup("clip-path", element, Raw("clip-path"), ctx);
+        s.MixBlendMode = CssValueParser.ParseKeyword(Lookup("mix-blend-mode", element, Raw("mix-blend-mode"), ctx, pseudo), "normal");
+        s.CornerShape = CssValueParser.ParseKeyword(Lookup("corner-shape", element, Raw("corner-shape"), ctx, pseudo), "round");
+        var cp = Lookup("clip-path", element, Raw("clip-path"), ctx, pseudo);
         s.ClipPath = string.IsNullOrWhiteSpace(cp) || cp == "none" ? null : cp;
-        s.MaskImage = CssValueParser.ParseGradient(Lookup("mask-image", element, Raw("mask-image"), ctx));
-        s.Filter = CssValueParser.ParseFilter(Lookup("filter", element, Raw("filter"), ctx));
+        s.MaskImage = CssValueParser.ParseGradient(Lookup("mask-image", element, Raw("mask-image"), ctx, pseudo));
+        s.Filter = CssValueParser.ParseFilter(Lookup("filter", element, Raw("filter"), ctx, pseudo));
         // backdrop-filter：AngleSharp 不认，走原始 CSS 兜底（传空 current 强制查表）
-        s.BackdropFilter = CssValueParser.ParseFilter(Lookup("backdrop-filter", element, "", ctx));
+        s.BackdropFilter = CssValueParser.ParseFilter(Lookup("backdrop-filter", element, "", ctx, pseudo));
 
         // CSS 计数器声明：AngleSharp 常把未实现的 counter-* computed 成 "none"，令 Lookup 兜底失效；
         // 故把 none/空视为「无声明」，强制走原始 CSS 兜底（按 class>id>tag 命中）。
-        s.CounterReset = Lookup("counter-reset", element, CleanCounter(Raw("counter-reset")), ctx) ?? "";
-        s.CounterIncrement = Lookup("counter-increment", element, CleanCounter(Raw("counter-increment")), ctx) ?? "";
+        s.CounterReset = Lookup("counter-reset", element, CleanCounter(Raw("counter-reset")), ctx, pseudo) ?? "";
+        s.CounterIncrement = Lookup("counter-increment", element, CleanCounter(Raw("counter-increment")), ctx, pseudo) ?? "";
 
         // animation 简写（AngleSharp 不实现，走原始 CSS 兜底表）：解析进样式字段，渲染传 animationTime 时按时刻取帧
-        Animation.ParseShorthand(Lookup("animation", element, "", ctx) ?? "", s);
+        Animation.ParseShorthand(Lookup("animation", element, "", ctx, pseudo) ?? "", s);
 
         return s;
     }
 
     /// <summary>
     /// 每元素的属性读记忆化视图：同一个声明集合上每条属性**至多问 AngleSharp 一次**，
-    /// 结果（含 ExpandVars 后的串、空串、以及「读取抛异常」= null）都进字典。
-    /// 动机（pgbuild §5.7 实测）：ReadStyle 的包装函数彼此不缓存——<c>Val</c> 恒先 Spec 再 Get
-    /// （2 次读）、<c>Raw</c>/Lookup 在 computed 为空时还会再 Spec 一遍，每元素实际发生 ~130 次
-    /// <c>GetPropertyValue</c>（去重后唯一属性只有 ~94 个），是 buildDoc 里最大的单一开销。
+    /// 结果（含 ExpandVars 后的Doc 里最大的单一开销。
     /// 缓存安全的前提与 EagerStyleCollection 相同：渲染期间文档静态，同一声明的同一属性取值恒定。
     /// 单条读失败退回空串（下游都有 fallback），不让整个渲染崩。
     /// </summary>
