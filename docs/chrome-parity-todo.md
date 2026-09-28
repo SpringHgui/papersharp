@@ -211,6 +211,38 @@ margin 版是三者里唯一「有改善、零回退」的形状，与机制自�
 
 ---
 
+## P1-11 · `white-space:nowrap` 在含元素子的行内通路里失效，且 ellipsis 只接纯文本块
+
+**症状**：`assets/_ell.html` L 行：`width:150px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden` 的 div 里写 `前面 <b>粗体片段</b> 后面还有很长一段文字要截断看看`。Chrome 一行、尾部省略号；引擎折成 3 行（盒高 66.5 vs 27.5），省略号没有。
+
+**实测**（2026-09-28）：`dotnet run --project src/PaperSharpSamples -c Release --no-build -- boxes _ell 1284` 出引擎 2x 光栅 + 盒表；`node tools/boxdiff.mjs _ell --port <每次换号> --shot .scratch/ell_browser.png --dsf 2` 出浏览器侧；`.scratch/ell_crop.py` 按引擎盒表裁「上=浏览器 下=引擎」成对图（`.scratch/ell_pairs.png`）。判据用盒高（27.5 vs 66.5）即可，无需像素。
+
+**根因**：两处，都在行内通路。① `Layout/InlineLayout.cs` 约 330 行 `if (curW + pl + tw + pr0 > avail && cur.Frags.Count > 0 …) Roll(...)`——token 放不下就换行，**不看有没有断点**；`Tokenize` 收了 `WhiteSpace` 但「nowrap/pre 不得产生断点」没人执行，每个元素子边界都成了潜在断点。② `text-overflow` 的生效闸门只接在 `LayoutBuilder.MeasureBlock` 的纯文本通路上（约 928 行，2026-09-28 已改成本盒 `s.ClipsOverflow` 才截，见 `TextOverflowTests`）；`MeasureInline → BreakIntoLines` 的 IFC 通路没有这一步——Chrome 按**行**截，行内混排（b/i/a…）不影响。
+
+**波及面**：任何「元素子 + nowrap/pre」的组合（单行省略的徽标行、面包屑、跑马灯文本），以及 IFC 里声明 ellipsis 的盒全部静默失效。已入库样例无一命中（唯一用 nowrap 的 polish `.trunc` 是纯文本块），金标零回归——也意味着这条目前没有任何门守着。
+
+**修复方向**：① 断点模型补齐：Roll 前先判「自上一断点积累的不可断段」，nowrap/pre 下整行不可断，放不下就溢出、交给裁剪；② ellipsis 按 Chrome 语义落到 IFC 行尾：对超宽行做「按字素收缩 + …」时把行内各 frag 一并计宽，不挑纯文本串。
+
+**验收**：L 行引擎盒高 27.5、行尾带 `…`；`TextOverflowTests` 增补混排用例（IFC 通路断言走盒树 `Lines`/行高而非 `WrappedLines`）。
+
+---
+
+## P1-12 · 原始 CSS 兜底表按 class 书写序取胜：源码序与特异性都不看
+
+**症状**：`assets/_ell.html` E/N 两行：`.v{text-overflow:ellipsis}` 写在前、`.clip{text-overflow:clip}` 写在后（同特异性，源码序后者胜），元素 `class="v ovh clip"`。Chrome computed 是 `clip`（硬裁、无省略号）；引擎算出 `ellipsis`。**CSS 一字不动，只把 class 属性改写成 `class="clip ovh v"`，引擎立刻翻成 `clip`**——胜负由 class 的书写序决定，与层叠无关。
+
+**实测**（2026-09-28）：E 行引擎加省略号、N 行引擎硬裁（`.scratch/ell_N_engine.png`，同一份 CSS 只换 class 序）；Chrome 两侧 computed 均为 `clip`（`node tools/boxdiff.mjs _ell --probe` 读 computed）。
+
+**根因**：`Css/StyleResolver.cs` 的 `Lookup`（约 329 行起，P0-1/P0-2 改动后行号有漂移）：AngleSharp 值为空时按元素 `class` 属性的**书写序**逐个试键、返回**第一条命中**（约 338 行 `foreach (var c in cls.Split(...))`）。① 同特异性规则的源码序进不了这张表——`ScanUnsupported` 按键覆盖写，`.v`/`.clip` 各存各的，谁后声明无关；② 特异性是反的：class 先试、id 再试、tag 最后，代码上可读出 `#id{…}` 会被任意 `.cls{…}` 压住（这条未单独实测）。
+
+**波及面**：`UnsupportedProps` 全部 30+ 属性（overflow / box-shadow / border-radius / flex / align-* / text-*…）凡「同一元素被 ≥2 条不同值规则命中」的写法都会取错——错不错取决于作者把类名排在第几位，是不可复现的外观错误。与 P0-1/P0-2 是**同一张表、不同的轴**：他们是键错（伪元素并进宿主），这条是多键命中时的**取值序**错；P0-1 的键方案落地后这条不会顺带好。
+
+**修复方向**：表值改存 (值， 规则序号， 特异性)，`Lookup` 在元素命中的多个键里按「特异性 → 源码序」取最优，不再按 class 书写序取首个。改动集中在 `ScanUnsupported` 建键与 `Lookup` 取值两处，不动 AngleSharp 通路。
+
+**验收**：E 行引擎 computed `clip`（硬裁不加省略号）且 N 行不再随 class 序翻转；补 `#id` vs `.class` 特异性用例的 xunit 断言；`tools/sweep.sh` 与金标零回归。
+
+---
+
 ## 取证脚本与复现约定
 
 - 本轮所有数值来自：逐行扫描截图蓝区（`B−R ≥ 15 且 B > 200`）左右边界求弧长，2x 设备 px ÷ 实测比例 1.986 折 CSS px；引擎侧同法量 `dotnet run -- html login-page` 的 2x 光栅。
