@@ -166,9 +166,10 @@
 
 结论：**不能在全局长度折算口子上统一 snap**。floor 能把 challenge 的累积漂移基本消掉（位移带 6→1），代价是 fluent-docs +8.2、framer-motion +4.1、m1 +3.3；round 保住 m1 却把 challenge 的位移带顶到 14。Chrome 的 LayoutUnit 是**在具体换算点**（margin/border-box 宽度等）折的，不是每个长度都折，且不同属性用的换算站点不同。
 
-**下一步的正确形状**（留给修的人，别重复试全局版）：只在「块间距的生成处」折——即 margin 折叠结果与 `AuthorBoxSpacing` 折出的 px 值，而不是 `ToPixels` 通用出口；改完用 `node tools/boxdiff.mjs challenge --tol 0.05 --json` 看累积 `dy` 是否归零，再用 `tools/pixelsweep.sh` 逐张确认 fluent-docs/framer-motion/m1 不回退。
+**已试过的三种落点（全样例 2x 强差实测）**：
 
----
+| 落点 | challenge | m7 | m1 | framer-motion | fluent-docs | 其余 21 张 | 结论 |
+|---
 
 ## P2-8 · `m9` / `m2` 的「位移带」是测量口径问题，不是布局 bug（已给门加两面旗）
 
