@@ -1245,7 +1245,8 @@ public static class StyleResolver
                     case "color": if (CssValueParser.ParseColor(v) is { } c) o.Color = c; break;
                     case "font-family": o.FontFamily = v; break;
                     // em/% 按**继承来的**字号（= 宿主 li 的）折算，不是 marker 自己改后的字号
-                    case "font-size": o.FontSize = CssValueParser.ToPixels(v, s.FontSize); break;
+                    // 字号一律按「round 到 1/64」折（Chrome 口径与几何长度不同，见 CssValueParser.SnapRound）
+                    case "font-size": o.FontSize = CssValueParser.FontToPixels(v, s.FontSize); break;
                     case "font-weight": o.FontWeight = CssValueParser.ParseFontWeight(v, s.FontWeight); break;
                     case "letter-spacing": o.LetterSpacing = v.Equals("normal", StringComparison.OrdinalIgnoreCase) ? 0 : CssValueParser.ToPixels(v, s.FontSize); break;
                     case "text-transform": o.TextTransform = v.ToLowerInvariant(); break;
@@ -1398,7 +1399,8 @@ public static class StyleResolver
         else
             fsText = Val("font-size");
         s.FontSizeSpec = fsSpec;
-        s.FontSize = ParseFontSize(fsText, parent?.FontSize ?? 16f);
+        // 字号落到 1/64 网格用 round（父字号已是折过的值，em/% 都基于它算，链式口径与 Chrome 一致）
+        s.FontSize = CssValueParser.SnapRound(ParseFontSize(fsText, parent?.FontSize ?? 16f));
 
         s.FontFamily = FirstNonEmpty(CssValueParser.ParseFirstFontFamily(Raw("font-family")), parent?.FontFamily, "sans-serif")!;
         s.FontWeight = CssValueParser.ParseFontWeight(Raw("font-weight"), parent?.FontWeight ?? 400);
@@ -1988,7 +1990,9 @@ public static class StyleResolver
                 return parentFontSize * pct / 100f;
             return parentFontSize;
         }
-        var px = CssValueParser.ToPixels(v, parentFontSize);
+        // 必须走 FontToPixels：这里若用 ToPixels，字号会先被**截断**到 1/64，
+        // 调用侧再 round 也救不回来（11pt → 14.65625，Chrome 是 14.671875）。
+        var px = CssValueParser.FontToPixels(v, parentFontSize);
         return px > 0 ? px : parentFontSize;
     }
 

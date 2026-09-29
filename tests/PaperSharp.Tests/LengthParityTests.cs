@@ -86,6 +86,35 @@ public class LengthParityTests
         Assert.Equal(0.9375f, bs.Last(x => x.Tag == "div").H, 5);
     }
 
+    /// <summary>
+    /// 字号是**另一套折法**：round 到 1/64（几何长度是截断）。Chrome 真值来自
+    /// <c>assets/_probe-fs.html</c>（<c>line-height:1</c> 让块高 = N × 用值字号）：
+    ///   11pt = 14.666667px → 14.671875（=939/64；截断会给 938/64 = 14.65625）
+    ///   9.9999px → 10.000000；10.4921876px → 10.5（×64 = 671.5 平局**进位**）
+    /// 这条是 m1 那 496 个漂移盒的根：pt 制式文档里每个字号都差 1/64，乘上行数就是文末的 +58/64。
+    /// </summary>
+    [Theory]
+    [InlineData("11pt", 14.671875f)]
+    [InlineData("9.9999px", 10f)]
+    [InlineData("10.4921876px", 10.5f)]
+    [InlineData("10pt", 13.328125f)]
+    [InlineData("22pt", 29.328125f)]
+    public void Font_size_rounds_to_the_64th(string authored, float want)
+    {
+        var bs = Boxes($"<div class=t style='font-size:{authored};line-height:1'>x</div>");
+        Assert.Equal(want, bs.Last(x => x.Tag == "div").H, 5);
+    }
+
+    /// <summary>行高 = **round 过的字号** × 系数，再 floor 到 1/64（<c>_probe-lhrule.html</c> 六个
+    /// (字号×行高) 组合唯一全中的口径）。11pt×1.6 用未折字号乘会得 23.453125，
+    /// 用截断后的字号乘会得 23.4375，Chrome 是 23.46875。</summary>
+    [Fact]
+    public void Line_height_multiplies_the_rounded_font_size_then_floors()
+    {
+        var bs = Boxes("<div class=t style='font-size:11pt;line-height:1.6'>a<br>a<br>a</div>");
+        Assert.Equal(3 * 23.46875f, bs.Last(x => x.Tag == "div").H, 5);
+    }
+
     /// <summary>负长度向**零**截断（−600.75 → −600，不是 −601）。Chrome 实测六档负值全是这个方向。</summary>
     [Theory]
     [InlineData("-9.38671875px", -9.375f)]   // ×64 = −600.75
