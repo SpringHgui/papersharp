@@ -301,6 +301,35 @@ Windows 上 Chrome/Edge 默认按 LCD 子像素排布渲染文字，字干两侧
 
 ---
 
+## P1-16 · `monospace` 解析到只含 ASCII 的打包子集，非 ASCII 码位整条列表走空 —— ✅ 根因定位 + 修法已验证，**只能随 LineBoxes 那批落地**
+
+**症状**：复核时 m7 是唯一还有 ≥0.5px 位移带的页（16 盒、最坏 2.00px）：表头行引擎 30、Chrome 28，表体两行跟着整体下移 2px。
+
+**根因（逐层实证，不是推的）**：m7 的 `.num{font-family:"Consolas",monospace}` 格子里是中文。
+
+1. Chrome 侧 `tools/platfonts.mjs`（CDP `CSS.getPlatformFontsForNode`）回的是 **NSimSun×12 + Consolas×3** —— 即 Blink 把 `monospace` 落到真宋体（覆盖汉字），用值行盒 **15**（= 主字体 Consolas 的 normal 行高，没被撑）。
+2. 引擎侧 `lines` 探针：主面 Consolas 的 `ext=12/3`=15 ✓ 对，但 `lb=15/4`=19 ✗ —— `TextShaper.FaceFromList` 逐项问覆盖时，`Get("monospace")` 拿到的是 **只含 96 个 ASCII 字面的打包子集**（为压 PDF 体积而裁，见 P1-13），汉字判不覆盖 → 整条列表走空 → 掉到 generic 系统回退（Noto 15/4=19）→ 行盒并集被撑到 19 → 行高 30。
+3. 关键：**撑行盒这条机制本身是对的**，只是选错了字面。矩阵探针 `_probe-mono.html` 五档实测（13px，`<br>` 钉死 3 行，块高÷3 = 用值行高）：
+
+| 声明 | Chrome 用的字面 | Chrome | 引擎（修前） | 引擎（修后） |
+|---|---|---|---|---|
+| `Consolas, monospace` | NSimSun | 15 | **19** ✗ | 15 ✓ |
+| `Consolas, NSimSun` | NSimSun | 15 | 15 ✓ | 15 ✓ |
+| `Consolas`（无第二项） | Noto Sans SC | 19 | 19 ✓ | 19 ✓ |
+| `monospace` 纯 generic | NSimSun | 15 | **19** ✗ | 15 ✓ |
+
+第 3 行是反证：声明里**没有** monospace 时，Chrome 也走 generic 回退到 Noto、也撑到 19，引擎逐位一致 —— 所以「回退字面参与撑行盒」没错，错在**有 `monospace` 这一项时引擎没能沿它自己的候选链找到真宋体**。
+
+**修法（已验证，两处）**：`FontManager` 把私有候选表 `Fallbacks` 开一个 `CandidatesOf(family)` 出口；`FaceFromList` 对声明列表里的**每一项**沿其候选链找第一个覆盖该码位的字面（`monospace` → NSimSun 链首即覆盖），并去掉「单项列表直接 return null」的短路（纯 `font-family: monospace` 同样要展开）。连带效果：这些汉字的**绘制字面**也从 Noto 换成了真宋体，与 Chrome 同一张面。
+
+**实测净影响**：m7 几何门 **16 盒 → 2 盒、最坏 2.00px → 0.07px**；像素门 m7 的 1x 可见重影 34.13% → 30.62%；**其余 25 张几何与像素逐位不动**（全 26 张合计漂移 282 → 268，均值 vis 10.79 → 10.65），全量测试红数不变（48）。
+
+**为什么没提交**：`FaceFromList` / `LineExtents` / `BlockBox.LineBoxes` 整套机制在 HEAD 里**不存在**（`git show HEAD:src/PaperSharp/Layout/TextShaper.cs | grep -c FaceFromList` = 0），是主树里并行会话未提交的「回退字面撑行盒」工作的一部分——锚点都不在提交态，这个修法只能随那批一起落。补丁存 `.scratch/apply-monofallback.py`（幂等、`--revert` 可撤、锚没命中会直接报「依赖 LineBoxes 那批工作」而不是硬打），改动当前留在工作树里。**那批落地后请先跑 `TOL=0.05 bash tools/sweep.sh m7` 复验 2 盒/0.07px，再决定收不收。**
+
+**顺带**：复核过程中我误覆盖了 `tools/platfonts.mjs`（未跟踪、但被 `FontManager.cs:426` 当标定依据引用），已从 `.mb-wt` 里的副本逐字节恢复。教训：动 `tools/` 下同名文件前先 `git status` 看它是不是别人的未跟踪脚本。
+
+---
+
 ## P1-15 · 绝对定位盒没写 `top`/`left` 时静态位置算成 0
 
 `_probe-lu` 里三条 `width:2.5mm|w` 一类**只给 width 不给 top** 的绝对定位盒：Chrome 落在文档流该在的位置（实测 75.0625），引擎一律给 **0**。CSS 口径是「`top:auto` 时用静态位置」，引擎直接当 0 处理。爆炸半径：任何 `position:absolute` 只定一个轴（另一个留 auto）的写法——徽标、下拉菜单的锚定、`left:50%` 只定横轴的居中件——另一个轴会全部贴到包含块顶边。修前对这些页的像素差会一直误判成「说不清的位移带」。
