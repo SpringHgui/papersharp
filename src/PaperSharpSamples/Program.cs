@@ -2,6 +2,7 @@ using SkiaSharp;
 using PaperSharp;
 using PaperSharpSamples;
 
+Console.OutputEncoding = new System.Text.UTF8Encoding(false);   // 重定向到文件/管道时默认按 OEM 码页(GBK)写，bash 侧 grep 中文模式永远匹配不上
 Console.WriteLine("PaperSharp · minimal HTML/CSS → PDF + PNG via SkiaSharp");
 Console.WriteLine("=====================================================");
 Console.WriteLine();
@@ -54,6 +55,36 @@ if (args.Length > 1 && args[0] == "html")
 
     Console.WriteLine($"[{name}]  PDF {pdf.Length / 1024:N0} KB  ·  PNG {png.Length / 1024:N0} KB (2x, w={pageW:0})");
     Console.WriteLine($"  → {pdfPath}\n  → {pngPath}");
+    return;
+}
+// 像素级重影对拍：dotnet run -- pixdiff <name> <browser2x.png> [width]
+// 浏览器侧截图由 tools/boxdiff.mjs --dsf 2 --shot 产出（含 .meta.json 的 body 原点）。
+if (args.Length > 2 && args[0] == "pixdiff")
+{
+    float pdW = args.Length > 3 && float.TryParse(args[3], out var pdw) ? pdw : 1284;
+    PixelDiff.Run(assets, outDir, args[1], Path.GetFullPath(args[2]), pdW);
+    return;
+}
+// 基线落位探针：dotnet run -- snap <name> <browser2x.png> [width]（逐行墨迹纵向质心，量两层各落在哪条设备行）
+if (args.Length > 2 && args[0] == "snap")
+{
+    float snW = args.Length > 3 && float.TryParse(args[3], out var snw) ? snw : 1284;
+    SnapProbe.Run(assets, outDir, args[1], Path.GetFullPath(args[2]), snW);
+    return;
+}
+// 像素级重影对拍：dotnet run -- pixdiff <name> <browser2x.png> [width]
+// 浏览器侧截图由 tools/boxdiff.mjs --dsf 2 --shot 产出（含 .meta.json 的 body 原点）。
+if (args.Length > 2 && args[0] == "pixdiff")
+{
+    float pdW = args.Length > 3 && float.TryParse(args[3], out var pdw) ? pdw : 1284;
+    PixelDiff.Run(assets, outDir, args[1], Path.GetFullPath(args[2]), pdW);
+    return;
+}
+// 基线落位探针：dotnet run -- snap <name> <browser2x.png> [width]（逐行墨迹纵向质心，量两层各落在哪条设备行）
+if (args.Length > 2 && args[0] == "snap")
+{
+    float snW = args.Length > 3 && float.TryParse(args[3], out var snw) ? snw : 1284;
+    SnapProbe.Run(assets, outDir, args[1], Path.GetFullPath(args[2]), snW);
     return;
 }
 // 换 PNG 编码器前的一次性迁移取证：与已提交基准逐像素对账（跑完即可删除本模式）

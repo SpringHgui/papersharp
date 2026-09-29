@@ -22,6 +22,8 @@ const NAME = process.argv[2] || "img";
 const WIDTH = Number(arg("width", 1284));
 const TOL = Number(arg("tol", 0.5));
 const PORT = Number(arg("port", 9411));
+// 截图用的设备像素比：pixdiff 要和引擎的 2x 光栅逐像素对，dsf 必须同为 2。
+const DSF = Number(arg("dsf", 1));
 const BROWSERS = {
   edge: ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe"],
   chrome: ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"],
@@ -76,9 +78,17 @@ async function measureInBrowser(docPath, vw) {
   const browser = BROWSERS[arg("browser", "edge")]?.find(existsSync);
   if (!browser) throw new Error("找不到 Edge/Chrome 可执行文件");
   const profile = mkdtempSync(join(tmpdir(), "papersharp-boxdiff-"));
+  // NO_LCD=1：关掉 ClearType 次像素着色，让参照物用灰度 AA 出图。
+  // 为什么要这个开关（2026-09-29 取证）：Windows 上 Chrome/Edge 默认按 LCD 子像素排布渲染文字，
+  // 每个字干左右带 R≠B 的彩边——实测 shot-long.png 的墨像素里 **51.5% 满足 |R−B|>24**，而引擎那张
+  // 只有 16.0%（且那部分是页面本身的颜色）。pixdiff 的差取三通道最大值，于是每一根字干边缘都被记成
+  // 强差，「1x 可见重影 44.8%」里到底有多少是引擎画错、多少是参照物的显示口径，量不出来。
+  // 关掉之后剩下的差才是可比的（PDF/打印输出本来就没有次像素彩边，那才是本引擎的目标介质）。
   const proc = spawn(browser, [
     "--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars",
+    ...(process.env.NO_LCD === "1" ? ["--disable-lcd-text"] : []),
+    ...(process.env.HINTNONE === "1" ? ["--font-render-hinting=none"] : []),
     `--window-size=${WIDTH},1200`, "about:blank",
   ], { stdio: "ignore" });
 
@@ -92,7 +102,7 @@ async function measureInBrowser(docPath, vw) {
     await cdp.send("Page.enable", {}, sessionId);
     // 钉死布局视口：headless=new 的 --window-size 会受系统 DPI 影响（实测 200% 下 body 凭空窄 34px），
     // 与 Playground 的 iframe 定宽不等价，会造出一整类假宽度漂移。
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: 1000, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: 1000, deviceScaleFactor: DSF, mobile: false }, sessionId);
     for (let i = 0; i < 60; i++) {
       const ready = await evalIn(cdp, sessionId, `document.readyState`);
       if (ready === "complete") break;
@@ -111,7 +121,12 @@ async function measureInBrowser(docPath, vw) {
     if (arg("shot", "")) {
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }, sessionId);
       writeFileSync(arg("shot"), Buffer.from(data, "base64"));
-      console.log(`浏览器截图：${arg("shot")}`);
+      // 截图原点 = 文档 (0,0)。pixdiff 要把两层对齐到 body 边框盒原点，就得知道 body 在文档里的位置。
+      const meta = await evalIn(cdp, sessionId, `(() => { const r = document.body.getBoundingClientRect();
+        return { vw: innerWidth, dsf: ${DSF}, bodyX: r.left + scrollX, bodyY: r.top + scrollY,
+                 docW: document.documentElement.scrollWidth, docH: document.documentElement.scrollHeight }; })()`);
+      writeFileSync(arg("shot") + ".meta.json", JSON.stringify({ ...meta, name: NAME, width: WIDTH }));
+      console.log(`浏览器截图：${arg("shot")} (${JSON.stringify(meta)})`);
     }
     return await evalIn(cdp, sessionId, MEASURE_SNIPPET, true);
   } finally {

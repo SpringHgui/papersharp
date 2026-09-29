@@ -23,6 +23,13 @@ OUTDIR=.scratch/pixelsweep
 mkdir -p "$OUTDIR"
 SAMPLES=${*:-$(ls src/PaperSharpSamples/assets/*.html | xargs -n1 basename | sed 's/\.html//' | grep -v '^_')}
 
+# 参照物默认关掉 LCD 次像素着色（NO_LCD=0 可恢复原口径）。
+# 为什么（2026-09-29 取证）：Windows 上 Chrome/Edge 给屏幕文字默认走 ClearType，字干两侧带 R≠B 彩边，
+# 而引擎（以及任何 PDF/打印输出）是灰度 AA。pixdiff 取三通道最大差，于是每根字干边缘都被记成强差：
+# long 一页实测 彩边率 浏览器 51.5% / 引擎 16.0%，关掉之后 1x 可见重影 44.8% → 24.4%（彩边率两边 16.3% 对齐）。
+# 本引擎的目标介质是 PDF/PNG，那里根本没有次像素彩边，所以参照物也不该带它。
+export NO_LCD=${NO_LCD:-1}
+
 for s in $SAMPLES; do
   dotnet run --project src/PaperSharpSamples -c Release --no-build -- boxes "$s" "$WIDTH" >/dev/null 2>&1
   node tools/boxdiff.mjs "$s" --dsf 2 --port "$CDPPORT" --shot "$OUTDIR/shot-$s.png" >/dev/null 2>&1

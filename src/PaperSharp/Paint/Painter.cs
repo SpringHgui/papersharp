@@ -70,7 +70,9 @@ public static class Painter
         // 那时算的是「自己 + 全部祖先」的累计矩阵，所以这里不能把变换留在画布上往下传，
         // 否则祖先会被乘两次（TransformSpace 的头注释记着这条）。
         int tf = TransformSpace.Apply(canvas, box);
+        int snap = PaintSnap.Begin(canvas, box);
         PaintSelfClipped(canvas, surface, box);
+        PaintSnap.End(canvas, snap);
         TransformSpace.Restore(canvas, tf);
     }
 

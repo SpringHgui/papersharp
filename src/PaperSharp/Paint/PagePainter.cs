@@ -23,14 +23,18 @@ public static class PagePainter
         // transform：与 PNG 路径同源（TransformSpace.Accumulated 沿父链累计）。
         // 原点按**整盒**的边框盒算，不是本条 DrawItem 的片段矩形——片段只是同一盒被切开的一段。
         int tf = TransformSpace.Apply(canvas, it.Box);
+        // 绘制原点折整：与光栅路径同源（见 <see cref="PaintSnap"/>）。这里折的是**本条目在页内**的
+        // 落笔原点——碎片化后同一盒在不同页的页内原点不同，浏览器也是各碎片各折一次。
+        int snap = PaintSnap.BeginAt(canvas, it.X, it.Y);
         // 祖先 overflow 裁剪：分页路径的条目已是拉平序列，逐条目各算一次裁剪链即可
         //（坐标天然同页——裁剪盒不参与碎片化，见 Paginator.Place）。
         var clip = it.Box.OverflowClip();
-        if (clip == null) { PaintItemContent(canvas, it); TransformSpace.Restore(canvas, tf); return; }
-        if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) { TransformSpace.Restore(canvas, tf); return; }   // 求交为空 → 整条不画
+        if (clip == null) { PaintItemContent(canvas, it); PaintSnap.End(canvas, snap); TransformSpace.Restore(canvas, tf); return; }
+        if (clip.Value.Rect.Width <= 0 || clip.Value.Rect.Height <= 0) { PaintSnap.End(canvas, snap); TransformSpace.Restore(canvas, tf); return; }   // 求交为空 → 整条不画
         int save = VisualEffects.ClipOverflow(canvas, clip.Value.Rect, clip.Value.RadiusOwner);
         PaintItemContent(canvas, it);
         canvas.Restore();
+        PaintSnap.End(canvas, snap);
         TransformSpace.Restore(canvas, tf);
     }
 
