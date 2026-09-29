@@ -89,7 +89,10 @@ public class AuthorMarginCascadeTests
         // 没写重置时 h2 的内建默认须在；写了 `*{margin:0}` 就必须被压掉（AngleSharp 会反，故有本类）。
         // 默认值现在是 **em**（Chrome UA：h2 { margin: .83em }），按 h2 自己的字号折算而不是 16px 根字号，
         // 所以 14px 的 h2 是 .83×14=11.62 而不是 20（_probe-ua2 实测 headless Chrome 同值）。
-        Assert.Equal(11.62f, H2Margins("<h2>x</h2>", "h2{font-size:14px}").Top, 2);
+        // 11.609375 = 743/64：P2-10 之后长度落到 Blink 的 LayoutUnit 网格（1px = 1/64，向零截断）。
+        // Chrome 的 getComputedStyle 仍报 11.62（那是**计算值**），但布局用的是 743/64——
+        // 本类量的是 StyleResolver 交给布局的那个数，所以钉用值。网格规则本身由 LengthParityTests 钉。
+        Assert.Equal(11.609375f, H2Margins("<h2>x</h2>", "h2{font-size:14px}").Top, 5);
         Assert.Equal(0, H2Margins("<h2>x</h2>", $"{Reset} h2{{font-size:14px}}").Top);
     }
 

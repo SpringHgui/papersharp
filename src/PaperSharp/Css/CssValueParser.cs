@@ -27,7 +27,9 @@ public static class CssValueParser
         "cm" => PxPerCm,
         "in" => 96f,
         "pc" => 16f,
-        "q" => PxPerCm / 4f,
+        // 1q = ¼ **毫米**（不是厘米）：Chrome 实测 top:1q → 0.9375 = 60/64 = PxPerMm/4 折网格。
+        // 原来写成 PxPerCm/4 = 9.4488px，整整大 10 倍（padding-top:1q 引擎 9.4375 / Chrome 0.9375）。
+        "q" => PxPerMm / 4f,
         _ => null,
     };
 
@@ -50,6 +52,23 @@ public static class CssValueParser
     // 顺序重要：先长的单位，避免 "mm" 被 "m" 之类的短前缀截走。
     static readonly string[] AbsoluteUnits = { "px", "pt", "mm", "cm", "in", "pc", "q" };
 
+    /// <summary>
+    /// 把一条长度折到 Blink 的 <c>LayoutUnit</c> 网格（1 CSS px = 1/64），**向零截断**。
+    /// 规则是量出来的（探针 <c>assets/_probe-lu.html</c>，读 <c>getBoundingClientRect</c> 的 used 值，
+    /// 取 ×64 小数部分为 .25/.5/.75 的作者值让 floor 与 round 必然分道）：
+    ///   9.3828125(=600.5/64) → 9.375 ；9.38671875(=600.75/64) → 9.375 ；
+    ///   −9.38671875(=−600.75/64) → −9.375（向零，不是 −∞）；2.5mm → 9.4375 ；1q → 0.9375 ；
+    ///   33.333% of 1200 → 399.984375(=25599/64)。
+    /// 链式口径：<c>font-size:9.3828125px</c> 上的 <c>top:1.5em</c> Chrome 给 14.0625 = 1.5 × **9.375**
+    /// —— em 拿**已经折过的**字号乘，所以折点必须在字号换算之后。
+    /// 不动字体度量：Chrome 的 <c>line-height:normal</c> 行盒高实测在 13 个字号上全是整数，
+    /// 与引擎「ascent/descent 各自取整到整像素」逐位吻合（<c>assets/_probe-lh.html</c>）。
+    /// <c>PS_LU=0</c> 整体关掉做 A/B。
+    /// </summary>
+    public static float Snap(float px) => SnapLens ? (float)Math.Truncate((double)px * 64d) / 64f : px;
+
+    static readonly bool SnapLens = System.Environment.GetEnvironmentVariable("PS_LU") != "0";
+
     /// <summary>px / pt / mm / cm / in / pc / q / em / rem / % → 像素。% 这里只返回数值比例（layout 层自己乘可用宽度）。</summary>
     public static float ToPixels(string value, float parentFontSize, float rootFontSize = 16f)
     {
@@ -62,13 +81,13 @@ public static class CssValueParser
         if (v.IndexOf("calc(", StringComparison.OrdinalIgnoreCase) >= 0)
         {
             var ev = EvalCalc(value, parentFontSize, rootFontSize);
-            return ev.HasValue ? ev.Value.abs : 0;   // 无包含块基准，百分比项忽略
+            return ev.HasValue ? Snap(ev.Value.abs) : 0;   // 无包含块基准，百分比项忽略
         }
-        if (TryAbsoluteLength(v, out float num, out float factor)) return num * factor;
-        if (v.EndsWith("rem", StringComparison.Ordinal)) return ParseFloat(v[..^3]) * rootFontSize;
-        if (v.EndsWith("em", StringComparison.Ordinal)) return ParseFloat(v[..^2]) * parentFontSize;
+        if (TryAbsoluteLength(v, out float num, out float factor)) return Snap(num * factor);
+        if (v.EndsWith("rem", StringComparison.Ordinal)) return Snap(ParseFloat(v[..^3]) * rootFontSize);
+        if (v.EndsWith("em", StringComparison.Ordinal)) return Snap(ParseFloat(v[..^2]) * parentFontSize);
         if (v.EndsWith("%", StringComparison.Ordinal)) return -1f; // 百分比不在这里折算（需包含块尺寸），由 ParseSize 走 CssSize
-        return ParseFloat(v);
+        return Snap(ParseFloat(v));
     }
 
     /// <summary>解析 width/height/flex-basis/偏移：auto→Auto；%→Percent；px/pt/em/rem→Absolute（含负值，供 top/left 偏移）；calc()→Calc/Absolute。</summary>

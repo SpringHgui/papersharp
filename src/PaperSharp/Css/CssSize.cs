@@ -33,12 +33,14 @@ public readonly struct CssSize
         _ => float.NaN,
     };
 
-    /// <summary>解析成布局单位。auto → NaN；percent/calc 且 base 为 NaN → NaN（无法解析）。</summary>
+    /// <summary>解析成布局单位。auto → NaN；percent/calc 且 base 为 NaN → NaN（无法解析）。
+    /// 百分比/calc 的结果同样折到 1/64 网格（Chrome 实测 <c>33.333%</c> of 1200 → 25599/64，见
+    /// <see cref="CssValueParser.Snap"/>）；绝对项在 <c>ToPixels</c> 里已经折过，这里不再折第二次。</summary>
     public float Resolve(float basePx) => Kind switch
     {
         CssSizeKind.Absolute => Value,
-        CssSizeKind.Percent => float.IsNaN(basePx) ? float.NaN : Value / 100f * basePx,
-        CssSizeKind.Calc => float.IsNaN(basePx) ? float.NaN : Value / 100f * basePx + Offset,
+        CssSizeKind.Percent => float.IsNaN(basePx) ? float.NaN : CssValueParser.Snap(Value / 100f * basePx),
+        CssSizeKind.Calc => float.IsNaN(basePx) ? float.NaN : CssValueParser.Snap(Value / 100f * basePx + Offset),
         _ => float.NaN,
     };
 
@@ -49,8 +51,8 @@ public readonly struct CssSize
     public float ResolveEdge(float basePx) => Kind switch
     {
         CssSizeKind.Absolute => Value,
-        CssSizeKind.Percent => float.IsNaN(basePx) ? 0 : Value / 100f * basePx,
-        CssSizeKind.Calc => (float.IsNaN(basePx) ? 0 : Value / 100f * basePx) + Offset,
+        CssSizeKind.Percent => float.IsNaN(basePx) ? 0 : CssValueParser.Snap(Value / 100f * basePx),
+        CssSizeKind.Calc => (float.IsNaN(basePx) ? 0 : CssValueParser.Snap(Value / 100f * basePx + Offset)),
         _ => 0,
     };
 }

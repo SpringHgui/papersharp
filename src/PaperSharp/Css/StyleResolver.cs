@@ -1319,8 +1319,24 @@ public static class StyleResolver
         {
             var sp = Spec(prop);
             if (sp.EndsWith("%") || sp.Contains("calc(", StringComparison.OrdinalIgnoreCase)) return sp;
+            // em 例外（2026-09-29 探针 assets/_probe-em2.html 实测）：AngleSharp 的 computed 把
+            // top/left/width/height/border-*-width 上的 em 按**父字号**折，CSS 规定按**元素自己的**
+            // computed font-size。父 16px / 本元素 20px 的盒里：top:1.5em Chrome 30 / 引擎 24、
+            // width:2em Chrome 40 / 引擎 32、border-top:1em Chrome 20 / 引擎 16、top:5em Chrome 100 / 引擎 80。
+            // 差的是整像素（最大 20px），不是亚像素。这些属性一律改用声明值，交引擎按 s.FontSize
+            // （此时已是本元素自己的计算字号）折算。
+            // font-size 自己排除：它的 em 恰恰必须按**父**字号折。rem 排除：走根字号且 AngleSharp 算对了
+            // （引擎的 rootFontSize 是写死的 16）。ex/ch 排除：引擎的 ToPixels 不认，退回声明值会把对的换成 0。
+            if (prop != "font-size" && UsesOwnEm(sp)) return sp;
             var g = Get(prop);
             return string.IsNullOrEmpty(g) ? sp : g;
+        }
+        // 含 em（但不是 rem）的长度——大小写都算（CSS 单位不区分大小写）。
+        static bool UsesOwnEm(string v)
+        {
+            if (v.Length == 0) return false;
+            var s = v.Replace("rem", "", StringComparison.OrdinalIgnoreCase);
+            return s.Contains("em", StringComparison.OrdinalIgnoreCase);
         }
         // 关键字/一般值：优先 computed，空则退回声明值（应对 computed 整体不可用的元素）。
         string Raw(string prop)
@@ -1494,15 +1510,13 @@ public static class StyleResolver
             if (AuthorEdge(prop) is { Length: > 0 } pv) return ExpandVars(pv, element, ctx);
             return Size0(prop);
         }
-        // 块间距折到 Chrome 的 1/64 px 网格（Blink LayoutUnit）：Chrome 把 margin 折到该网格，
-        // 引擎留 float 全精度 → 每跳一个兄弟多约 0.011-0.014px，沿文档序累积到页尾差 0.226px
-        // （challenge 实测，四条物理单位间距逐一对上 floor(px×64)/64）。取整方向只在正数上验过。
-        static CssSize SnapM(CssSize v) =>
-            v.Kind == CssSizeKind.Absolute ? CssSize.Abs(MathF.Floor(v.Value * 64f) / 64f) : v;
-        s.MarginTopCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize));
-        s.MarginRightCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-right"), s.FontSize));
-        s.MarginBottomCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-bottom"), s.FontSize));
-        s.MarginLeftCss = SnapM(CssValueParser.ParseSize(MarginVal("margin-left"), s.FontSize));
+        // margin 不再单独折网格：P2-10 把「作者长度折到 Blink 的 1/64」统一放进
+        // <see cref="CssValueParser.Snap"/>（ParseSize → ToPixels 一条路全覆盖）。
+        // 这里原先那份 SnapM 用 MathF.Floor，负 margin 上方向就错了（Chrome 实测向零截断）。
+        s.MarginTopCss = CssValueParser.ParseSize(MarginVal("margin-top"), s.FontSize);
+        s.MarginRightCss = CssValueParser.ParseSize(MarginVal("margin-right"), s.FontSize);
+        s.MarginBottomCss = CssValueParser.ParseSize(MarginVal("margin-bottom"), s.FontSize);
+        s.MarginLeftCss = CssValueParser.ParseSize(MarginVal("margin-left"), s.FontSize);
         // 作者是否真的写了 auto：AngleSharp 对未声明的 margin 也返回空串，令 CssSize.IsAuto 无法区分
         // "auto" 与 "没设"。computed 值里 "auto" 才是真自动边距（快照路径浏览器已折成解析后 px，恒非 auto）。
         // 伪元素仍走 computed 会把宿主的 `margin:0 auto` 当成自己的自动边距，只认它自己的裁决结果。
