@@ -79,6 +79,21 @@ public static class PixelDiff
         }
         int Strong2() { int n = 0; for (int i = 0; i < d.Length; i++) if (d[i] > 96) n++; return n; }
 
+        // 墨尽行：各自层里最后一条有墨的设备行（÷2 折 CSS px）。判「两层是不是同一份文档」用它，
+        // 不用位图总高——引擎的长图带 @page 上下边距（report/m1 因此凭空多 80~160 CSS px），
+        // 浏览器的截图带视口留白（body{min-height:100vh} 那类凭空多到 1000），两边都是空白，
+        // 拿总高比会把一大批可比页误标成「高度不可比」（2026-09-29 复核 report/m1 时撞见）。
+        int lastE = -1, lastB = -1;
+        for (int y = h - 1; y >= 0 && (lastE < 0 || lastB < 0); y--)
+            for (int x = 0; x < w; x++)
+            {
+                int k = y * w + x;
+                if (lastE < 0 && ie[k] > 24) lastE = y;
+                if (lastB < 0 && ib[k] > 24) lastB = y;
+                if (lastE >= 0 && lastB >= 0) break;
+            }
+        Console.WriteLine($"墨尽行 引擎 {lastE / Scale:0.#} vs 浏览器 {lastB / Scale:0.#} CSSpx（重叠 {w / Scale:0.#}x{h / Scale:0.#}）");
+
         // 1x 可见重影：两层各自 2x2 均值降采样到 1x 再求差——Playground 就是按 1x 显示引擎图的，
         // 只有降采样后仍然看得见的差，才是用户嘴里的「重影」。
         int w1 = w / 2, h1 = h / 2, ink1 = 0, vis = 0, mild = 0;

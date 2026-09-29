@@ -41,14 +41,15 @@ for s in $SAMPLES; do
   verdict=$(grep -oE "→ (干净|轻微|可接受|偏重|严重)" "$raw" | tail -1 | sed 's/→ //')
   bands=$(grep -oE "bands=[0-9]+/[0-9]+" "$raw" | tail -1 | cut -d= -f2)     # 真位移带（可修的那类）
   # 两条「不可比」判定，先于位移带读：pixdiff 的位移带是在**对齐之后**数的，
-  # ① 两层文档高不同（浏览器截图含视口留白 body{min-height:100vh} 之类）→ 比的是两份不同高度的文档；
+  # ① 两层**墨尽行**差 >2 CSS px → 比的不是同一份文档（一边多画/少画了一截）。
+  #    注意别拿位图总高判：引擎长图含 @page 上下边距、浏览器截图含视口留白，两边都是空白，
+  #    总高差会把一大批其实可比的页误标成「高度不可比」（report / m1 就是这么被误伤的）。
   # ② 全局整数平移没收敛（SAD 明显 <100%）→ 残余的整体 1px 偏移会被逐条边重复计成「位移带」。
-  # 这两种情况下的 bands>0 不是布局 bug，先标出来再谈修（m9 / m2 实测各中一条）。
-  hh=$(grep -oE "总高 引擎 [0-9.]+ vs 浏览器 [0-9.]+" "$raw" | tail -1)
+  hh=$(grep -oE "墨尽行 引擎 [0-9.]+ vs 浏览器 [0-9.]+" "$raw" | tail -1)
   eh=$(echo "$hh" | grep -oE "引擎 [0-9.]+" | cut -d' ' -f2); bh=$(echo "$hh" | grep -oE "浏览器 [0-9.]+" | cut -d' ' -f2)
   sad=$(grep -oE "全局补偿 dx[+-]?[0-9.]* dy[+-]?[0-9.]* \(SAD [0-9]+%\)" "$raw" | tail -1 | grep -oE "SAD [0-9]+" | grep -oE "[0-9]+")
   flag=""
-  [ -n "$eh" ] && [ -n "$bh" ] && [ "$(python -c "print(int(abs($eh-$bh)>2))")" = "1" ] && flag="高度不可比(${eh}vs${bh})"
+  [ -n "$eh" ] && [ -n "$bh" ] && [ "$(python -c "print(int(abs($eh-$bh)>2))")" = "1" ] && flag="墨尽不齐(${eh}vs${bh})"
   [ -n "$sad" ] && [ "$sad" -lt 95 ] && flag="$flag 对齐未收敛(SAD${sad}%)"
   printf '%-16s 2x强差 %-6s%%  1x可见 %-6s%%  位移带 %-8s %-10s %s\n' "$s" "${strong:-?}" "${vis:-?}" "${bands:-?}" "${verdict:-未判定}" "$flag"
 done
