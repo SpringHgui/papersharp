@@ -54,3 +54,46 @@ src/PaperSharpSamples/wt_pg*.csv
 
 # VS / MSBuild 本地用户设置
 *.user
+
+# 排查用的本地 git worktree（-*-wt 约定）与探针/对拍的一次性落盘
+# 注意：gitignore 的 * 不匹配开头的点，故 worktree 目录逐个点名
+/.fonts-wt/
+/.mb-wt/
+/.p27-wt/
+/.parity-wt/
+/.perf-base-wt/
+/.relcheck-wt/
+/.shaped-wt/
+/.subset-wt/
+/.gateout/
+/.fontbak/
+/.qoder-b/
+/.probe-*/
+/.ghost-head/
+.probe-cur.txt
+.bl-*.txt
+.br-lw*.txt
+.buildtry.txt
+.gateout_*.txt
+.ghost-*.txt
+.lh-tab.txt
+.m1lines.txt
+.m2lines.txt
+.msg_*.txt
+.pdiff_*.txt
+.rects.mjs
+.rows*.py
+.snap-rects.txt
+.sr_*.diff
+.sweep_*.txt
+.crop.png
+.hint*.png
+.m2band.png
+.playrun.log
+
+# 本地发布配置与 Python 缓存（含机器路径，不入库）
+src/PaperSharpBlazorApp/Properties/PublishProfiles/
+__pycache__/
+
+/.gate-va/
+/.crop.py
