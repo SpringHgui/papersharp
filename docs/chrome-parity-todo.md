@@ -4,6 +4,33 @@
 >
 > 分级口径：**爆炸半径 × 可逆性**。P0 = 真实页面上肉眼可见且会算错外观/几何；P1 = 特定写法下丢内容或丢装饰；P2 = 观测盲区与亚像素残差。
 
+## 2026-09-30 全量复核（「检查所有样例，解决文字重影」这一波之后）
+
+两条根修各带一段数：**P0-6**（`@page` 边距两边各算一套）把均值 1x 可见重影 10.73%→**9.98%**、几何门 670 个漂移盒→**7 个**；**P0-7**（文字横向不该折整 + 折整口径改绝对）再降到 **7.82%**。当前两道门的均值：**2x 强差 4.91% · 1x 可见 7.82%**（P0-4 落地后定的 6.51%/10.95% 那份基线至此下掉一格，此后以这份为准）。
+
+几何门 `bash tools/sweep.sh` @1284（26 张 2487 盒）：**24 张 0 漂移**，只剩 `inline` 3 盒（0.8px）与 `table` 4 盒（0.5px，列 x）。
+
+**⚠️ 这两道门都看不见「纯底色偏差」**：1x 可见重影的分母是**有墨**像素，几何门只量盒矩形。P0-8（m1 的 thead 背景整条不落地）就是躲在这两道门后面的——它占 m1 全图差像素的 **25.1%**，而 1x 可见重影只从 21.36% 动到 21.14%。所以「门没动」**不等于**画面没差：判据要另开一条逐像素、含背景的全图差计数（`.scratch` 里的量法：引擎 `boxes-<名>.png` vs 浏览器 `shot-<名>.png`，|Δ|>12）。
+
+**像素门残余的归因（逐张看过带签名，别再当同一类猜）**：
+
+| 页 | 1x 可见 | 真位移带 | 归因 | 归属 |
+|---|---|---|---|---|
+| m7 | 30.22% | 0/13 | 表头行盒 30 vs 28（`monospace` 落到只含 ASCII 的子集）——不是落位问题 | P1-16，只能随 LineBoxes 那批落地 |
+| m9 | 22.40% | 0/1 | **一整条满宽背景带**，不是文字 | 待查（着色侧） |
+| m1 | 21.36% | 2/104 | 分数行高逐行累加 → 亚 0.5px 相位；「对齐未收敛 SAD90%」 | P2-6 / P2-12 |
+| login-page | 17.08% | 0/32 | QR 码区域（32 条带全不是真位移），挪不动 | 待查（图像采样侧） |
+| challenge | 15.47% | 2/114 | **定性完成（2026-10-02）**：引擎 PDF 与 Chrome PDF **逐位相同**，重影是 Playground 把打印口径(Skia 27)压到有头屏显(DirectWrite 26.5)上的**幻影**；有头屏显行盒非字体表可推（五规则全否）。**已交付 Playground「打印对拍」视图**（无头参照，逐盒 0 漂移），不动引擎 | P0-10 ✅ |
+| table | 13.57% | 9/18 | 9 条**真**位移带 + 列 x 的 4 个 0.5px 盒差 | P2-6 |
+| pricing-foot | 18.35% | 0/27 | 社交图标画成纯黑、Chrome 是中灰（墨量比 1.82、dx0dy0 SAD 100%） | P1-14，可修但与重影无关 |
+| pricing-mid / page / top | 12.40 / 9.75 / 6.56% | 0/N | 位移带全是「光栅差」，挪不动 | 地板 |
+
+**Playground 侧实测（2026-09-30，Development 起在 :5000）**：`report` 125 盒 **0 漂移 / 最坏 0.0px**，叠加视图里 iframe 的 `transform:translate(-60px,-76px)` 与引擎 PNG 的 `left/top` 同格、`clip-path:inset` 同样折整，iframe 里 `html` 的 used padding = **75.5781px / 56.6875px**（= 4837/64 与 3628/64，正是 P0-6 折过的那两个数）。**一个坑记下来**：同一份 **m1** 在 browser-use 那颗 Chromium 里量出 `code` 宽 131.99，而 headless Edge 与引擎都是 144——它的 `monospace` 落到 0.6em 的字面（Courier New 一路），Edge/引擎走的是 8.00px 等宽。**Playground 里 m1 那 438 个漂移盒、Δw 最大 24px 全是这个**，不是引擎回退；对拍门仍以 headless Edge 为准（P1-16 同族）。
+
+**金标门现状（别在混合态上重录）**：HEAD 快照上 `PngGoldenTests`+`BoxGoldenTests` 已经是 **32/42 红**（17 张 PNG 金标全红），工作树是 21/43 红、且红的集合不同（`m1/m4/m7/challenge` 那几条 box 金标在 HEAD 是绿的）。也就是说金标从 P0-4 起就一直没重录过，红是并行在途那批字距/行盒工作 + 本波绘制改动一起造成的混合结果。**等那批落地后按提交态一次性 `UPDATE_GOLDENS=1` 重定**（本仓那条随机 IOException 的老坑仍在，重录后要逐张看一眼别收进半张）。
+
+---
+
 ## 2026-09-29 全量复核（提交 2d45d0e 之后）：残余漂移只剩 42 个 ≥0.5px 的盒，且逐条有主
 
 `bash tools/sweep.sh`（tol 0.05，26 张 2487 盒）：**22 张 0 漂移**，其余 4 张：
@@ -19,7 +46,7 @@
 
 **本轮复核修掉的两个门口径**（都是门自己造的假账，不是引擎错）：
 
-1. **两侧排版宽不同**：`boxdiff.mjs:45` 把 `contentWidth` 用 `Math.round` 折成整数才交给 CDP（CDP 的 `width` 只能是整数），而引擎按分数宽排（16mm 边距 → 1163.0552）。差的那 δ 让 mm 边距页**每一个块级盒**都差一点宽——占当时残余漂移的 **35%**（232/670）：`report` 35/35、`pct` 24/24、`polish` 15/17、`m1` 158/501。`tools/sweep.sh` / `tools/pixelsweep.sh` 现在先按 `WIDTH` 排一遍、读出 δ、再按 `WIDTH−δ` 重排，让两侧的 contentWidth 落到同一个数：修后 **report/pct/polish 直接 0 漂移**，m1 的 `dw` 全部归零。
+1. **两侧排版宽不同**：`boxdiff.mjs:45` 把 `contentWidth` 用 `Math.round` 折成整数才交给 CDP（CDP 的 `width` 只能是整数），而引擎按分数宽排（16mm 边距 → 1163.0552）。差的那 δ 让 mm 边距页**每一个块级盒**都差一点宽——占当时残余漂移的 **35%**（232/670）：`report` 35/35、`pct` 24/24、`polish` 15/17、`m1` 158/501。`tools/sweep.sh` / `tools/pixelsweep.sh` 现在先按 `WIDTH` 排一遍、读出 δ、再按 `WIDTH−δ` 重排，让两侧的 contentWidth 落到同一个数：修后 **report/pct/polish 直接 0 漂移**，m1 的 `dw` 全部归零。**（2026-09-30 更新：这套 δ 重排是治标，已删——根修在 P0-6：边距折进 1/64、预览文档自己带 `html{padding}`、CDP 视口取整页宽。）**
 2. `sweep.sh` 顺手补了 `--no-build`（原来每样例过一次编译器）与按进程号错开的 CDP 端口（P2-5 那条教训以前只落在 pixelsweep 里）。
 
 **复核时踩到的一个坑（别再犯）**：批量跑 26 张时 boxdiff 有 14 张写出**空 json**（浏览器被打断），而 `m1` 在批里报出「21 漂移」这种好看得不合理的数——单独复验是 496。**凡是好到超出预期的复核数字，必须单跑一遍再采信**；`tools/sweep.sh` 现在对空输出重试三次。
@@ -267,12 +294,12 @@ Windows 上 Chrome/Edge 默认按 LCD 子像素排布渲染文字，字干两侧
 
 上一段落地后复核 m1，发现残余 496 个漂移盒全是 `dy` 为 1/64 整数倍的逐级累加（文末 +58/64）。追下去根在字号：**m1 通篇用 pt**（`font-size:11pt` = 14.666667px），Chrome 把字号折成 **939/64 = 14.671875（四舍五入）**，而按本条规则截断成 938/64 = 14.65625 —— 每个字号差 1/64，乘上行数就是每行差 1~2/64，60 个块累加到文末正好 58/64。
 
-规则分两张探针量死（都是把 `line-height` 定死后用「块高 ÷ 行数 = 用值」的量法）：
+规则分两张探针量死（都是 `line-height` 定死后「块高 ÷ 行数 = 用值」的量法）：
 
 - `assets/_probe-fs.html`（`line-height:1`）：11pt → **14.671875**；9.9999px → **10.000000**；10.4921876px（×64 = 671.5 平局）→ **10.5（进位）**；13.328125px → 13.328125。
-- `assets/_probe-lhrule.html`（8 组字号×行高，每块行数由 `<br>` 钉死）：六个可分辨组合里，只有「**字号 round、行高 = round 后的字号 × 系数再 floor**」6/6 全中。用未折字号乘会得 23.453125、用截断字号乘会得 23.4375，Chrome 是 **23.46875**。
+- `assets/_probe-lhrule.html`（8 组字号×行高，每块 N 行由 `<br>` 钉死）：六个可分辨组合里，只有「**字号 round、行高 = round 后的字号 × 系数再 floor**」6/6 全中。用未折字号乘会得 23.453125、用截断字号乘会得 23.4375，Chrome 是 **23.46875**。
 
-所以几何长度截断、字号四舍五入 —— 同一套 LayoutUnit，不同换算点方向不同，正是 P2-7 结尾警告过的「不是一个 `SnapM` 包打天下」。改法：`CssValueParser` 拆成 `ToPixelsRaw` + 两个包装 `ToPixels`(trunc) / `FontToPixels`(round)，字号三处（层叠里的 `font-size`、`ParseFontSize` **内部**那一次换算、`@page` 边距盒字号）改走 round 口径。踩过的坑：第一次只在 `ParseFontSize` 的**调用侧**包了 `SnapRound`，它内部那次 `ToPixels` 已经截断过了 —— 截断在前、round 在后救不回来，值一动不动；这类「外面补 round」的假修复只有拿探针复验才看得出来。
+所以几何长度截断、字号四舍五入 —— 同一套 LayoutUnit，不同换算点方向不同，正是 P2-7 结尾警告过的「不是一个 `SnapM` 包打天下」。改法：`CssValueParser` 拆成 `ToPixelsRaw` + 两个包装 `ToPixels`(trunc) / `FontToPixels`(round)，字号三处（层叠里的 `font-size`、`ParseFontSize` **内部**那一次换算、`@page` 边距盒字号）改走 round 口径。踩过的坑：第一次只在 `ParseFontSize` 的**调用侧**包了 `SnapRound`，没用它内部已经截断过的结果 —— 截断在前、round 在后救不回来，值一动不动；这类「外面补round」的假修复要靠探针复验才看得出来。
 
 **修后（同一套门）**：`_probe-fs` 5/5、`_probe-lhrule` 9/9 全绿；**m1 漂移盒 496 → 189、最坏 0.91px → 0.27px**，像素门 m1 的 1x 可见重影 23.72% → **19.97%**。全 26 张几何门合计漂移 282/2487 盒，其中 ≥0.5px 的只剩 `m7`(2.00) · `inline`(0.77) · `table`(0.53) 三张。新增 6 条字号/行高哨兵（`PS_LU=0` 下连同原有 3 条一起变红，共 9 条，非空跑）；全量测试零金标足迹（唯一变红的是并行会话那条已知 order-dependent flaky `LegacyKernTableTests`）。
 
@@ -298,6 +325,240 @@ Windows 上 Chrome/Edge 默认按 LCD 子像素排布渲染文字，字干两侧
 **改法**：`Val` 加一条例外——声明值里含 em（剥掉 `rem` 再找，大小写都算）且属性不是 `font-size` 时，改用**声明值**，交引擎按 `s.FontSize`（此时已是本元素自己的计算字号）折算。`rem` 不路由（AngleSharp 算对了，而引擎的 `rootFontSize` 是写死的 16）；`ex/ch/cap/ic/lh` 不路由（引擎 `ToPixels` 根本不认，路由会把对的换成 0，另记 P2-11）。`font-size` 自己必须排除：它的 em 恰恰按父字号折——这条由 `Font_size_em_uses_parent_but_later_em_uses_own` 反向钉住（16 → `font-size:1.5em`=24 → `top:1em`=24）。
 
 **验证**：`_probe-em` 7/7、`_probe-em2` 13/13 全绿（修前分别 3 条 / 6 条漂移，最差 20px）；`LengthParityTests` 18 条。**26 张样例零变化**（几何门与像素门逐张相同）——现有样例没有一个在字号不同的元素上用 em 偏移，所以这条门抓不到它，只有断言抓得住。这正是「样例集不等于覆盖面」的又一例。
+
+---
+
+## P0-6 · `@page` 边距在这条比对通道里两边各算一套（预览整条丢 + 边距没折 1/64）—— ✅ 已修（2026-09-30）
+
+**症状**：mm 边距那几页（polish / pct / report / m1 / m2 / m3 / m4）像素重影下不去，而几何门同时报出一大批 `dw` 假差——9-29 复核数过：**670 个漂移盒里 232 个（35%）是这一类**（report 35/35、pct 24/24、polish 15/17、m1 158/501）。
+
+**根因 1 · 通道：Blink 的屏幕渲染整条丢掉 `@page{margin}`**（它只作用于打印介质），预览文档里也就没有那圈边距。于是**引擎把正文摆在页边距内侧、浏览器从 (0,0) 排**，两边比的压根不是同一份几何。实测 m1/m2 的 `@page{margin:20mm 15mm}`：引擎正文原点 (56.7, 42.5)，浏览器 (0,0)。P0-4 的绘制折整把这件事放大成整格——两侧各自的绝对落笔坐标差一个小数相位（14mm = 52.9133858，小数部 .9134），**每个盒、每行字各翻一格**，polish/pct/report 因此凭空多出 4~11% 的「文字重影」。
+
+**根因 2 · 几何：`@page` 边距的 mm→px 没进 Blink 的 1/64 网格**（`PageSpec` 走的是裸 `ToCssPx`，P2-10 那一波没覆盖到它）。Chrome 的 用值是 14mm→**52.90625**（=3386/64）、15mm→**56.6875**（=3628/64）、20mm→**75.578125**（=4837/64），引擎给 52.9133858 / 56.6929134 / 75.5905512 → 两侧的**排版宽本身**就不同，mm 页每个块级盒都差一点宽（那 232 个假漂移盒的另一半）。
+
+**改了什么**（四处必须一起改，少一处就是把假差换个地方冒出来）：
+
+| 处 | 改法 |
+|---|---|
+| `Css/PageSpec.cs` | 新增 `ToMarginPx = CssValueParser.Snap(ToCssPx(…))`，接在 `margin-top/right/bottom/left` 与四值简写上（作者长度口径 = **截断**，与 P2-10 一致） |
+| `PaperSharpSamples/Program.cs`（`boxes`） | 预览文档补 `<style>html{padding:mt mr mb ml}</style>`，`boxes-<名>.json` 带 `margin{top,right,bottom,left}` |
+| `tools/boxdiff.mjs` | 交给 CDP 的视口宽从 `round(contentWidth)` 改成**整页宽**（`engine.width`）——CDP 的 `width` 只能是整数，视口取整数就不必有舍入误差；边距由预览文档的 padding 承担 |
+| `tools/sweep.sh` / `pixelsweep.sh` | **删掉 δ 重排**（`W = WIDTH − δ` 那一轮 `boxes` 重排）。它是 2e2b95c 的治标：改了页宽却没改边距，只在边距为 0 或整数时成立，且每样例多跑一次引擎 |
+
+Playground 侧同源落地：`PlaygroundService.BuildPreviewDoc` 收一个 `pageMargin` 参数（同一句 `html{padding}`，数字用**不带格式串**的 InvariantCulture——`"0.##"` 会把 60.46875 打成 60.47，等于把相位差又请回来），`Playground.razor` 的 `ShotStyle` 把叠加平移与 `clip-path` 裁切都改成 `MathF.Round`，与绘制层的折整同口径。
+
+**数（同一批浏览器真值，只切这两处）**：
+
+| | 修前 | 修后 |
+|---|---|---|
+| 像素门均值 1x 可见重影 | 10.73% | **9.98%** |
+| polish | 6.33% | **2.81%** · pct 14.98→**6.29** · report 19.09→**11.67** |
+| 几何门合计漂移盒 | 670（其中 mm 边距页 232） | **7**（inline 3 / 最坏 0.8 · table 4 / 最坏 0.5），其余 24 张全 0 |
+
+**验收**：几何门 `tools/sweep.sh` @1284；像素门 `tools/pixelsweep.sh`；`PlaygroundTests` 里 `BuildPreviewDoc` 的默认参数保住了旧调用（不传边距 = 行为不变）。
+
+---
+
+## P0-7 · 文字横向**不该**折整（Blink 走次像素定位）+ 折整口径是**绝对位置**（行内原子那一支）—— ✅ 已修（2026-09-30）
+
+**症状**：P0-6 之后仍然有一类「盒逐位全对、字却整条错一格」：report 11.67 / pct 6.29 / table 13.66 / m1 21.36 / framer-motion 10.06。`PGHOST=1` 的分数平移扫描里，这些页的文本带是 **`dy≈0` 而 `dx=±0.5~1.0` 设备像素**——与 P0-4 当初那个「dx=0、dy=±1」的签名正交，所以整类落在旧判据之外。
+
+**浏览器真值**（探针 `assets/_probe-phase.html`：10 行、每行文本完全相同，用嵌套分数 padding 把字的**绝对 x 小数部**从 0.1 扫到 0.9；`node tools/boxdiff.mjs _probe-phase --dsf 2 --shot …` 出 2x 图、`dotnet run -- snap _probe-phase …` 逐行量墨质心）：几何逐盒 0.0px 全等，而浏览器侧相对引擎的 dx 随小数部**连续**走 −0.8 → +1.0 设备像素（= 小数部 × 2），dy **恒为 0**。结论：**Blink 只把绘制原点折在纵轴上，横轴留给字形的次像素定位**。
+
+**为什么引擎一直折着**：P0-4 把 `PaintSnap.Begin` 当成「本盒的绘制原点」，字跟着盒走。修法是加一对 `BeginText/EndText`：画字前把**本层以上累计的横向折整量退回**，纵向留着。两条通路各接一处——光栅 `Painter.PaintBox`（`DrawLines` / `DrawInlineLines`）与分页 `PagePainter.PaintItemContent`。`PaintInlineAtoms` 刻意留在纠正**之外**：inline-block / 行内 img 是**盒**，各自的背景该跟着自己的原点折。
+
+**顺带把折整口径改成绝对**（这条只影响真正嵌套的一支——行内原子画在祖先的折整作用域里；块级流里 `PaintSelf` 的 `End` 在递归之前，祖先的折整压根传不下去）：栈里存「到该层为止的累计值」，每盒 `dx = round(绝对) − 绝对 − 祖先累计`。证据两条：① P0-4 的 `_probe-snap2` 嵌套链探针——k=4 的 120+0.9 浏览器给设备行 **242**，「逐层各自折」会给 240；② 本轮全 26 张 A/B（`.scratch/ghost-sweep/after-textx.txt` vs `after-abssnap.txt`）**零回退**，11 张改善，其中 img 1.38→**0.00**、m8 3.84→**2.16**、inline 4.42→**3.53**、fluent-docs 7.83→**7.23**、polish 2.65→**2.34**。
+
+**数（同一批浏览器真值，只切引擎）**：
+
+| 口径 | 均值 1x 可见 | 均值 2x 强差 |
+|---|---|---|
+| P0-6 之后（盒折 x+y、字跟盒） | 9.98% | 5.95% |
+| + 文字不折 x（逐层累计） | 8.02% | 5.00% |
+| + 折整改绝对口径（**当前**） | **7.82%** | **4.91%** |
+
+逐张（P0-6 后 → 现在）：report 11.67→**1.17** · pct 6.29→**1.01** · framer-motion 10.06→**0.58** · fontvs 0.74→**0.16** · img 1.38→**0.00** · m8 4.36→**2.16** · inline 4.60→**3.53** · m2 1.00→**0.65** · pricing-foot 28.37→**18.35** · pricing-mid 15.38→**12.40** · pricing-page 12.67→**9.75** · table 16.55→**13.57**（真位移带 10/22→**9/18**）· m1 22.07→**21.36** · m7 30.62→**30.22** · challenge 16.17→**15.47** · m4 7.87→**7.52** · fluent-docs 8.68→**7.23** · m3 8.18→**8.11**。**一张没回退。**
+
+**验收**：`tests/PaperSharp.Tests/PaintSnapTests.cs` 6 条（`PS_SNAP=0` 下 5 红、第 6 条「布局不动」两边都绿）。新增两条钉住边界：`Solid_bar_forgets_the_fraction_that_text_keeps`（同一对小数 40.2/40.4：实心条两张光栅**逐像素全等**、文字两张**必须不同**；纵向相反，120.2/120.4 的文字两张全等）与 `Nested_inline_block_snaps_at_its_own_absolute_y`（内层绝对 y 40.6 → 首墨行必须是 82，落回 80.6 = 逐层折整复发）。
+
+**踩到的坑（写下来免得下次又按线性断言）**：整串字的**墨质心对次像素偏移的响应是非线性的**——Skia 让每个字形从整数设备列起笔、零头用次像素覆盖补。实测左移 0.2 CSS px 只让质心走 0.155 设备像素，而左移 0.5 CSS px 恰好走整整一列（且两张图的总墨量逐像素相等）。所以那条断言只取「同向、不足一列」。
+
+---
+
+## P0-8 · 行组（thead/tbody/tfoot）自己的背景整条不落地 —— ✅ 已修（2026-09-30）
+
+**症状**：Playground 叠加视图里 m1 的**整条表头**与 Chrome 对不上（用户截图）。先定性：把引擎 2x 长图与 Chrome 2x 截图按 0.5/0.5 合成，与那张截图的互相关 **0.9894**、逐列位移搜到 dy=−2 —— 确认截图就是叠加视图，「重影即偏差」，不是绘制层把字画了两遍。
+
+**偏差拆块**（口径：`boxes <名>` 的引擎 2x 长图 vs `shot-<名>.png` 的浏览器 2x 截图，逐像素 |Δ|>12）：m1 全图差 **1,610,977** 个像素，其中两条 thead 带（y 714-799 / 1638-1723）就占 **403,653 = 25.1%**——单块最大的一项。引擎那两条带里是**纯白**，Chrome 是 `#e8f0f8`。
+
+**根因**：行组盒在引擎里是透传容器——`Renderer.CollectBoxes` 里明写着「行组盒自己从不被定位，几何恒 0」。而光栅那趟画师按**盒树遍历**（`Painter.PaintFlow` 先画自己再画子），一个 0×0 的盒自然什么底色都画不出来。CSS 的表格绘制顺序是 table 底 → **行组底** → 行底 → 格底，所以 `tbody tr:nth-child(even)` 的斑马纹（挂在行盒上）一直是好的，只有挂在行组上的底色丢——这也是为什么它躲过了前面几轮全量复核。
+
+**修法（两条路各修各的）**：
+- 光栅路：`LayoutBuilder.PositionTable` 末尾给行组盒铺上「它那一段行的并集」矩形（左右沿用行盒口径 `originX .. gridW−insetL−insetR−2·spacingX`，纵向合并同组连续行，末行照旧扣掉 `clipLast`）。树遍历随即按正确顺序画出来，不用碰画师。
+- 分页路：`Paginator.EmitRowGroupBands` 在每页的表格装饰带之后、行内容之前插同一条带——因为续页顶部要**重复表头**，带子必须跟着这一页的那几行走，不能一次定死。`border-collapse:collapse` 时只铺底色、四边全跳（`BorderSkipSides=15`），框线交给格子那圈统一描。
+
+**净足迹**（17 张样例逐字节对撞，`.scratch/foot1a` vs `foot1b`）：**只有 `m1.png` 变**，其余 16 张逐字节不变。语料里只有 m1.css 给行组设了背景（`table.css` 的 `thead th{background}` 挂在格子上，不受影响）。
+
+**门**：`tests/PaperSharp.Tests/TableSectionPaintTests.cs` 2 条，光栅路数底色像素数（修前实测 **0**，断言 >10 万）、分页路在解开的内容流里数 `.9098 .9412 .9725 rg` 出现次数（断言 ≥2，因为续页重复表头）。**退回改动两条一起红**，已实测。
+
+**数字**：m1 全图 2x 差像素 1,610,977 → **1,236,990（−23.2%）**。⚠️ pixdiff 的「1x 可见重影」只从 21.36% 动到 **21.14%**——那个指标的分母是**有墨**像素，纯底色压根不进分子，所以**别拿它当这条修复的证据**（这也是它当时能骗过复核的原因）。
+
+**顺带查出、没在本波动的**：修后引擎的表头带落在 y 716-800，Chrome 是 714-799，还差 1 CSS px，且 th 的底边线颜色也不对——见 P1-17。
+
+---
+
+## P0-10 · 对拍参照用错了浏览器模式：headless 与 headed 给出两套字体度量 —— 🔴 元凶级，刚定位，参照物待全面切换
+
+**症状**：Playground 叠加视图里 m1 表 2 整张表糊，而 `tools/sweep.sh` / `boxdiff` 报「501 盒 0 漂移、最坏 0.3px」、`pixelsweep` 也说干净。**门全绿、用户满屏重影**，且改宽度没用（用户原话：「跟宽度没关系，不管什么宽度下都要与浏览器保持一致」）。
+
+**根因**：整套参照物（`shot-<名>.png`、盒级基准、`boxdiff`）都由 **headless** Edge 出，而用户屏幕上是 **headed** Edge。同一份文档、同一个 Edge 154、同一组开关（只差 `--headless=new`），两边给出的度量不同：
+
+| 量（`boxes-m1.html` @1284） | headless | headed |
+|---|---|---|
+| 表 2 第 2 列左缘 | 162.52 | **156.76** |
+| `序号` bold 10pt `Consolas,monospace` 宽 | **30.000** | **27.188** |
+| 同左 @13.328125px | 30.000 | 27.172 |
+| `华东电子` YaHei | 53.328 | 53.32 |
+| `10,000` | 43.984 | 43.977 |
+
+无头对等宽链里的中文套 **legacy 等宽半格网格**（`2×⌈fs/2⌉ + 粗体1` = 15/字），有头走**真实字面 + 合成粗体加宽**（13.586/字 = 1em × 1.0194）。引擎的 `MonoGridWidth` 是照无头标定的，于是「引擎 ≡ 参照」而「引擎 ≠ 用户浏览器」，差 2.83px 的序号列最大内容宽，被自动表格分配放大成 **5.78px 的列错位** —— 用户截图里那条「左半糊、右半锐」的斜线。
+
+**已做**：`tools/boxdiff.mjs` 加 `HEADED=1` 开关（默认仍无头，不破现有 sweep）。切到有头参照后立刻照出真漂移（1284px，tol 0.5）：
+
+| 样例 | 有头参照漂移盒 | 最坏 | 样例 | 有头参照漂移盒 | 最坏 |
+|---|---|---|---|---|---|
+| m1 | **361 / 501** | 4.3px | m4 | 8 / 39 | 0.7px |
+| m3 | **62 / 66** | 4.7px | m7 | 6 / 41 | 1.5px |
+| table | 33 / 66 | 2.0px | m8 | 6 / 32 | 1.0px |
+| inline | 23 / 39 | 1.2px | m5 | 2 / 21 | 0.5px |
+| invoice long flex img report pct polish m2 m9 | **0** | 0.0px | | | |
+
+**待做（两件，都要按有头真值重标）**：
+1. **等宽链中文的度量**（已修，见 P0-9 追加段）—— 修后 m1 表 2 列缘与有头浏览器逐位吻合（差 ≤0.01px）。
+2. **回退字面的行盒高度**：m1 的 361 漂移几乎全是**纵向累积**（dx=0，dy 越往下越大，文档总高引擎 3997.0 vs 有头 4001.3）。台阶定位清楚：每个含 `<code>` 的行 +0.47px（共约 2.4px）、表格每行 +0.024px（49 行 1.17px）。根因是引擎 `FontManager.ExtentsAt` 给 NSimSun 的 `asc+desc = 1.0em`（0.8594+0.1406），而浏览器给 ~1.14em。**标定数据已采齐**（`.scratch/hb-headed.json` / `hb-headless.json`，10 档字号 × 4 字面，节选）：
+
+| 字面 | 11px | 13.328 | 14.667 | 18.667 | 24px | em 比 |
+|---|---|---|---|---|---|---|
+| NSimSun / SimSun（有头） | 12.5 | 15.5 | 16.5 | 21.0 | 27.5 | ~1.125–1.19 |
+| NSimSun / SimSun（无头） | 13.0 | 15.0 | 17.0 | 22.0 | 27.0 | 同上 ±1 |
+| Microsoft YaHei（有头） | 14.5 | 17.5 | 19.5 | 24.5 | 32.0 | ~1.31 |
+| Consolas（有头） | 16.0 | 19.5 | 21.0 | 27.0 | 35.0 | ~1.45 |
+
+注意有头/无头之差是 **±0.5~1px 的非单调量化差**（同一字面在 13.328 有头大、在 14.667 有头小），不是系统性的 em 比不同 —— 所以重标时要按**设备像素量化**建模，别去拟合一个比例。
+
+**机制已确定（不是"口径差"，是漏项）**：上面那张表量的其实是**字体的 normal 行距**（`line-height: normal` 时 span 的内容盒高度）。宋体/楷体 hhea 是 `asc 220 / desc 36 / lineGap 36`，upm 256 → `asc+desc+gap = 292/256 = 1.1406em`，正中有头实测的 1.125~1.19；而引擎撑行盒只用 `asc+desc = 256/256 = 1.0em`，**把 lineGap 漏了**。`FontManager.Of` 里已经算了这个 `lh = a+d+g`（函数注释还专门记过「剔掉 gap 后 20px 行盒 20 而浏览器 23」），**只是 inline 字盒那条取用的路没走它**。
+所以修法是一句：`line-height: normal` 的 inline 盒，对父行盒的贡献取**字体 normal 行距**（`VertMetrics.LineHeight`，即 a+d+gap）而不是 `asc+desc`。接完要按有头参照重跑 17 张并重建纵向金标 —— 它会动所有含中文回退的行的 y，爆炸半径大，**必须在参照切到有头之后做**，否则拿错参照物重标会把基准越修越歪。
+
+**执行顺序（别倒过来）**：① 把 `pixelsweep`/`sweep`/金标全面切到有头参照并重建一轮 → ② 接上面那句 lineGap 修复 → ③ 按新参照重跑门。先做 ② 会拿无头基准去判一个有头行为，改对也会被判成改坏。
+
+**②已被实测否证（2026-10-01，别再照这个做）**：把 hhea lineGap 当 half-leading 加进 inline 盒
+（`InlineLayout.Place` 的 `asc/desc` 改走含 gap 的口径）之后，m1 有头几何门最坏漂移从 4.3px **涨到 5.1px**，已撤回。
+反证就在同一份漂移明细里：`code` 盒高**浏览器 14.5 / 引擎 15.0**（`dh −0.5`）—— 浏览器的**行内盒不含 gap**，
+被撑高的是**行盒**。上面那张 span 高度表量到的是 `line-height: normal` 时的**行盒**，不是行内盒，
+两者不能混用（m1 的 body 是显式 `line-height: 1.6`，`LineExtents` 那条 normal 专用分支根本不走，
+所以第一版只改 `LineExtents` 时数字一位没动 —— 那是"没生效"，不是"生效但无害"）。
+**下一步该量的对象是行盒**：在 iframe 里用 `Range.getClientRects()` 逐行量浏览器行盒的 top/bottom，
+与引擎 `BlockBox.LineBoxes` 逐行对，而不是再去动 inline 盒的 asc/desc。
+
+**⛔ 方向纠正（2026-10-02 取证，`challenge` 重影这一波）——「切到有头参照」这条路对打印引擎是错的**：
+上面把有头当成目标参照，但**有头/无头那 ±0.5px/行的行盒差只在「屏幕渲染」里存在，打印渲染根本没有它**。三条实测（探针已挪 `.scratch/_lhprobe.mjs` / `_cvlh.mjs` / `_pdfmetric.mjs`）：
+
+1. **有头 DOM 屏显**用 DirectWrite 度量：YaHei 链 20px 行盒 **26.5**、14px **18.5**、13px **17.5**；**无头 DOM 屏显**用 Skia 度量给 **27 / 19 / 17**，与引擎 `NormalLineHeightPx` 逐位吻合（`challenge` 无头几何门 ≈1 漂移盒）。canvas `measureText.fontBoundingBox` 两模式都是整数 27——即 Skia 那套。
+2. **`Page.printToPDF` 与模式无关**：同一份预览文档，有头 PDF 与无头 PDF 的 h1/h2 文本坐标**逐字节相同**（`top=65.878pt base=81.75pt size=15pt`，h1→h2 基线间距 **33.000 CSSpx**）。也就是**连 Chrome 自己的打印输出都不匹配它的有头屏显**。
+3. **引擎 PDF == Chrome PDF**：`pgpdf challenge` 产物的 h1/h2 坐标与上面 Chrome PDF **完全一致**（33.000 CSSpx，逐位）。
+
+**结论**：引擎对它的**目标介质（PDF/打印）已与 Chrome 逐位对齐**，`challenge` 在 Playground 叠加里看到的重影，是**「引擎=打印口径(Skia 27)」压到「有头 iframe=屏幕口径(DirectWrite 26.5)」上**造出来的**幻影**，不是引擎缺陷。把行盒再往有头屏显标（②）会**破坏这份已经成立的打印对齐**，且下面这条已证它**无法从字体表推出**。
+
+**「按设备像素量化建模」也推不出（把 10-01 的猜测钉死为否）**：拿 hhea `asc+desc+gap` 的原始行盒去试 `ceil/round/floor` 到 0.5px 或 1px **五种量化规则 × YaHei/NSimSun/SimSun × 10 档字号**（`.scratch/hb-headed.json`），**没有一条规则全绿**——YaHei `@20→26` 但 `@24→32`、NSimSun `@16→19` 但 `@18.667→21`，非单调。有头屏显的行盒吃的是 **DirectWrite 内部逐字号 hinting**，字体表里没有这组数。要匹配只能：① 引擎改问 DirectWrite（**平台锁死 Windows、毁掉跨端确定性 PDF**，与引擎立身之本冲突）或 ② 逐 (face,size) 硬编码（**不可移植、且正是「不硬编码」禁止的**）。**两者都不做。**
+
+**所以 `challenge` 重影的「解决」= 修 Playground 的参照介质，不动引擎**：让叠加/Δ 表吃**打印口径**（无头屏显或 printToPDF 栅格）而非有头 iframe；无头 CLI 门（`sweep`/`pixelsweep` 默认无头）本就与引擎同源、已 ≈0，只有交互式 Playground 的有头 iframe 会露出幻影。
+
+**✅ 已交付（2026-10-02）：叠加视图直接吃打印口径参照**——不再另开「打印对拍」模式，而是把**叠加/盒级差异**的浏览器参照从有头 iframe 换成无头(Skia)出图（`tools/pgshot.mjs`，与 `boxdiff.mjs` 无头参照同源），与引擎同为打印口径。**并排**仍看有头 iframe 实时渲染（编辑手感，不做度量）。`PlaygroundService.PrintParityAsync` 拉起无头 Edge（串行闸门、45s 超时、临时目录用完即删），参照 PNG 借 `/api/playground/image/{token}` 出图、矩形喂 Δ 表。实机验证：challenge 叠加 **盒 257 / 漂移 0 / 最坏 0.1px**（有头 iframe 那条路会漂 196，正是要照出的对比）。**自证**：`PP_E2E=1 dotnet test --filter PrintParity`（默认跳过、不拖常规 CI）钉住「无头参照 == 引擎金标 `boxes-challenge.json` 逐盒 0 漂移」。⚠️ harness 坑记一笔：测试里手搭的 `PlaygroundSamples` 从 test bin 上溯到 **src** 资产，而真机 Playground/CLI 用 **bin** 资产（`AppContext.BaseDirectory/assets` 存在）；src/bin 的字体注册态会让含 light/small-caps 的行内 run 漂 ~18px——所以判据对齐**金标**而非 `render.Token`，真机两侧同为 bin 口径不受影响。
+
+## P1-18 · 泛型 `sans-serif` 的行内文字重影 = PRKT 过字距（非子集 hmtx、非 DirectWrite 幻影）—— ✅ 本波已修
+
+**症状**：Playground 叠加（无头参照）里，只写 `font-family: sans-serif` 的文档（占位示例 "Edit the code."、inline/table/m3 这些不设 font-family、吃 UA 默认 Noto 的样例）文字**从左到右越来越糊**——是**逐字累积的行内宽度差**，不是整体平移。
+
+**定位（三处实测，全部对齐无头/Skia）**：
+- 子集 hmtx 无辜：`NotoSansSCSub` 与系统 `NotoSansSC-VF` **同版本 2.04**，"Edit the code." 的 VF@400 前进宽 = 子集 = Chrome 逐字累加 = **410.56，diff 0.00**。→ **重裁子集是空操作**（差点白改还churn金标）。
+- 差在**字距**：Chrome canvas 实测带字距 407.96（kern −2.60）；引擎 hmtx+PRKT = 405.6（kern **−4.93**）。引擎**多压 ~2.3px** → 行尾偏 ~2 设备像素 → 重影。
+- PRKT 里作用到这行的对：`E→d −0.90 / i→t −1.15 / ' '→t −1.15 / c→o −1.73`。最刺眼的是**空格对 `' '→t`**——排版引擎/浏览器一律不跨空格配对字距，是 `_gpos_pairs` 的 GPOS 类别式 pair-pos 把空格卷进 ClassDef2 的 class 0（「未列的任意字形」全字集展开）多烤进来的。
+
+**修复**：`subset-font.py` 的 `bake_kern` 行过滤加 `WORD_SEP`（空格/NBSP/制表/换行/全角空格等，任一侧命中即丢该对），`python subset-font.py bake NotoSansSCSub-{Regular,Bold}.ttf` 重烤。⚠️ 顺带发现**已发布的子集 PRKT 是旧脚本烤的**（30136 对，未含脚本里早已存在的 class-0 Coverage 修正）——重烤一并生效，PRKT 掉到 7412 对，净效果更贴 Chrome。
+
+**自证**：重烤后 `_probe-sans` 五种声明（sans-serif/Arial/Segoe UI/sans-serif+ls/Noto）引擎 vs 无头墨宽**全部 Δ=0**（sans-serif 从 −4→0）；几何门 `inline` **3→0**；Yahei 对照组 challenge/m2/long 仍 0（Noto 重烤不碰雅黑，无 collateral）。退回必红：旧子集下 inline=3、探针 Δ=−4。
+
+**金标影响（待重录）**：font-default 样例（inline/table/m3）的 box/png 金标是旧子集录的，重烤后引擎已挪向 Chrome——实测 `inline` 当前引擎 vs 金标 **14 盒 / 最坏 2.52px**。这些金标**必须 `UPDATE_GOLDENS=1` 重录**，但按台账规矩**不在混合工作树（178 个未提交在途改动）上重录**，等并行批次落地后随全量重定一并做。
+
+**门现状（有头参照，1284px，tol 0.5）**：m1 361/501 最坏 4.3 · m3 62/66 最坏 4.7 · table 33/66 最坏 2.0 ·inline 23/39 最坏 1.2 · m4 8/39 · m7 6/41 · m8 6/32 · m5 2/21 · 其余 9 张 0。
+
+**流程坑（同批踩到，写下来）**：`boxdiff` 优先读 `bin/Release` 的 `boxes-<名>.json`，只跑 Debug 会拿**过期 Release 产物**去比，凭空报出 438 漂移 / 最坏 24px 这种假数。跑 `boxdiff` 前必须先 `dotnet run -c Release -- boxes <名> <宽>`。本轮一度被它带偏过一次结论。
+
+---
+
+## P1-17 · collapse 表的共享网格线：内容内缩已按半条落，**描边落点与颜色归属**待做
+
+**已做（2026-09-30/10-01 这一波，横向那一半）**：`ApplyCollapseBorders` 以前只有「内部格的右边/底边清零、线整条落在右/下那格头上」这一半，于是**格内文字按整条边框内缩**，而 Blink 按半条 ——
+**整张表每一格的所有文字统一比浏览器靠右 0.5 CSS px**（2x 光栅 = 1 设备像素）。这就是叠加视图里「整张表在糊、表外标题一点不糊」的根因：逐格水平相关扫描，m1 的 td[2]/td[3] 各 13 格修前最优位移全是 +1 设备像素、修后全是 0，而表外 h2 一直是 0。Chrome 真值（CDP 量 `getBoundingClientRect` 与 `Range` 文本盒）：th2/th3/th4 的 `textL − boxL` 一律 **8.5** = 半条线 0.5 + padding 8。
+修法：描边归属照旧走 `Style.BorderWidth*`，内容内缩另记在 `BlockBox.CellBwL/R`，由 `EdgeL/EdgeR` 供盒宽、内容原点与三处绘制取用。
+数字（1x 可见重影）：table 13.57→**10.80** · m7 30.16→**29.57** · m3 8.11→**7.88** · m1 21.02→20.96 · m2/m4/m5/m9 逐位不动。门：`CollapseBorderInsetTests`（同一字分别放 collapse 与 separate 的格，断言两者内缩差 1 设备像素——与字体/字号/侧余量无关；撤改动实测红）。
+**两个否掉的版本**：① 真把 Style 边框折半、相邻两格各画半条——m1 13.77/m7 22.92 看着更好，但两半各自抗锯齿让线变软，边框占比高的 table 回退到 15.50，且「外圈整条 + 内部半条」混用会让 `TotalWidth`（读 Style）与 `ResolveWidth`（读 Edge）口径分家、定宽列 200 掉到 199.5（`TableSpecifiedColumnTests` 红）。② 纵向一起折半——m1 反而涨到 **26.44%**：格底/行高随之差 1px，整张表行线上下错位，比横向 0.5px 伤得多。所以 `EdgeT/EdgeB` 明确回落 Style。
+
+**已做（第二刀：描边骑跨，2026-10-01）**：`BlockBox.CollapsedBorderRect` 把描边矩形沿「本格拥有的线」各外扩半条，
+`BoxPainter.PaintDecor` 多收一个 `borderRect`（背景仍铺边框盒，只有边框用扩出去的矩形），
+光栅（`Painter.PaintBox`）与分页（`PagePainter.PaintItemContent`）两条路各传一次。
+宽度仍传整条，于是斜接梯形的内外缘正好对称压在中线两侧 —— 与 Blink 的画法一致。
+**干净 A/B**（只切 `CollapsedBorderRect` 那一行返回，其余同码；口径 = 全图 |Δ|>12 差像素 vs Chrome 真值）：
+m1 1,119,868 → **1,069,541（−50,327）** · m7 129,599 → **119,318（−10,281）** · table 159,242 → **123,582（−22.4%）** ·
+m3 230,012 → 230,387（+375，噪声级）· 其余 8 张逐字节不变。
+像素门（1x 可见重影）：m1 20.96 → **18.62%** · m7 29.57 → **21.42%** · table 10.80 → 11.51% · m3 7.88 → 8.43%。
+内部竖线实测：不骑跨 326.5/832.5/1568.5 → 骑跨 325.5/831.5/1567.5，Chrome 324.5/830.5/1566.5（偏右从 1 CSS px 收到 0.5）。
+**这条没有单元哨兵**：试过用同一份探针断言「collapse 的左边线比 separate 早一个设备像素出现」，在测试进程里量不出来
+（测试不跑 `RegisterFontDirectory(assets/fonts)`，字面与 CLI 不同、落点跟着不稳），所以只留上面那组 A/B 数字当证据。
+**下次动这块前先补上哨兵**，否则骑跨被回退也不会红。
+
+**没做（剩下的两条，仍要共享边表）**：
+- **纵向骑跨**：表头带引擎 y 716-800 / Chrome 714-799，还差 1 CSS px。且表 1 的底边线只有约 72% 宽度连在同一个设备行上，另约 28% 掉到下一行 —— rowspan 格与同行普通格的底边不在一处。要连着行高分配一起改（见上面否掉的版本 ②）。
+- **颜色归属**：th 与 td 都是 `1px solid`，Chrome 在接缝处描 `#b0c4de`（th 赢），引擎描 `#d0d0d0`（td 赢）。CSS 2.1 §17.6.2：宽度相等时按 `border-style` 优先级，全相等时按表格结构里靠前的那个，即上一行的下边框赢下一行的上边框。
+
+
+**要补的东西**：`ApplyCollapseBorders` 只记了「谁清零」，没记**每条线由谁描、颜色取谁、中心摆在哪**。要建一张共享边表：每条网格线一个 `(胜出边框, 中心坐标)`，描边、内容内缩、行高三处都只从它取数。爆炸半径：所有 collapse 表（table / m1 / m2 / m3 / m4 / m7 / report / polish）。
+
+---
+
+## P1-19 · generic `sans-serif` 引擎落到 Noto Sans SC、Blink 落 Arial，拉丁文本整行 advance 差 2~3 设备像素
+
+**症状**：做 P1-17 横向那一半时，`table` 样例的 pixdiff 一度从 13.57% 涨到 15.50%，而逐格扫描显示它的文字**本来就**比 Chrome 偏 2~3 设备像素（远大于 collapse 内缩那 0.5px），所以任何 0.5px 级的改动都会和它互相抵消、把指标带偏。
+
+**证据**：`table.css` 的 `body { font-family: sans-serif }`。引擎侧 `face sans-serif 400 14` 回 `Noto Sans SC glyphs=7817`；Blink 在 Windows 上把 generic `sans-serif` 落到 **Arial**。两张面的拉丁 advance 不同 → 整行逐字累积。
+
+**为什么单独列一条**：`table` 的 6 条「真位移带」、以及 P1-17 横向修复在它身上的表观回退，主因都是这条。不先钉死它，`table` 的任何像素数字都不可信。
+
+**待查方向**：`FontManager.Fallbacks["sans-serif"]` 的链首（现在是 `Segoe UI`）要按「Blink 把 generic 关键字落到哪张物理字面」重新标定——`tools/_genfonts.mjs` 走 CDP `CSS.getPlatformFontsForNode` 问真值，别拿 `getComputedStyle` 的 `font-family`（它原样吐回关键字）。注意 `FontManager.cs` 上方已有的标定注释写的是「本机装了 Noto Sans/Serif SC VF」，要先确认这台机器的 Blink 默认 sans 字体设置到底是什么。
+
+---
+
+## P0-9 · 等宽链里汉字的**绘制**字面走系统回退（黑体），推进也没走半格网格 —— ✅ 已修（2026-09-30）
+
+**症状**：Playground 叠加视图里 m1/m7 的 `.num` 那几列（序号 / 数量 / 单价 / 10,000 / ¥0.02）重影最响，同页非 `.num` 的文字却基本干净。逐格量墨迹范围：`序号` 那格引擎 50 设备像素、Chrome 54（**Δw +4**），是 m1 里唯一 Δw 上 2 的格。
+
+**根因（两张面，肉眼可辨）**：`.num{font-family:"Consolas",monospace}` 里放中文。**度量端**一直沿声明列表找（`TextShaper.LineExtents → FaceFromList` → `CandidatesOf("monospace")` 链首 = 真 NSimSun，覆盖汉字），所以行盒/列宽是对的；**绘制端**却只拿主面去问系统：`TextPainter.DrawPlainRun` 逐字素调 `TextShaper.ResolveTypeface(g, tf)`，`tf` 是 Consolas，它不覆盖 → 掉到 `SKFontManager.MatchCharacter` → 拿回一张**黑体**。同一段字两张面，位置还各自错开——叠加视图里就是双倍浓淡的糊。裁图对照 `.scratch/face-num.png`（修前）vs `.scratch/face-num-after.png`（修后）：修前引擎是黑体粗、修后与 Chrome 同为宋体细。
+
+**推进是另一半**：Chrome 把 generic monospace 落到 NSimSun 后**不按线性缩放 advance**，而是网格对齐到整半格（`TextShaper.MonoGridWidth`：全宽粗体汉字 = ⌈fs/2⌉×2+1 = 13.328125px 下 **15px**）。布局端早就算成 15，绘制端仍吃字面自己的 hmtx（1em = 13.328）→ 布局以为 30px 的一格只画 26.66px，右对齐时逐字素往左累积。
+
+**修法（两处，都在绘制侧）**：
+- `TextShaper` 开一个带声明列表的重载 `ResolveTypeface(text, current, familyList, weight, style)`：先沿列表问 `FaceFromList`，整条列表都不覆盖才交给系统 generic 回退——与度量端同一条链。
+- `TextPainter` 把 `s.FontFamilyList` / `s.FontWeight` 从四个入口（`DrawRun` / `DrawLines` / `DrawTextShadow` → `DrawVisualLine` → `DrawSpaced` → `DrawPlainRun`）贯下去，吃新重载；`DrawPlainRun` 的推进改成 `MonoGridWidth(g, tf, size, 0)` 优先、不适用时才回落到 `paint.MeasureText(g)`。
+
+**数字**：`序号` 那格 Δw **+4 → 0**（引擎 54 vs Chrome 54），数量/单价/10,000 各剩 Δw 0~1；PDF 里相邻汉字的落点间隔 **13.3281 → 15.0**；m1 全图 2x 差像素 1,236,990 → **1,232,726**。
+
+**净足迹**：17 张样例逐字节对撞，只有 **`m1.png` 与 `m7.png`** 变（就是两份把中文放进 `"Consolas",monospace` 的样例），其余 15 张逐字节不变。
+
+**门**：`tests/PaperSharp.Tests/TableSectionPaintTests.cs` 里 `Monospace_cjk_*` 三条——单测钉解析函数、探针页钉 PDF 字体字典里嵌的是不是 `NSimSun`、探针页钉相邻汉字落点间隔 >14.9。**只撤绘制层接线（保留 `TextShaper` 重载）时后两条一起红**（实测：间隔回落到 13.3281、`NSimSun` Not found），第一条仍绿——它只钉解析，不钉接线，别把它当这条修复的证据。
+
+**与 P1-16 的关系**：P1-16 修的是**度量/行盒**那一半（`FaceFromList` 展开 generic 候选链），本条补的是**绘制**那一半（同一条链接到 `DrawPlainRun`）+ 推进口径。P1-16 说「连带效果：这些汉字的绘制字面也从 Noto 换成了真宋体」——那句话当时不成立，绘制端根本没走列表；现在才真的成立。
+
+**踩到的坑**：像素级判据（那格墨量）在测试进程里**不可用**——`boxes`/Playground 那条 CLI 路会 `FontManager.RegisterFontDirectory(assets/fonts)`，测试进程不注册，同一张声明解析出的面不同，实测墨量 24 万（注册）vs 32 万（未注册），阈值就成了口径函数。改成钉 PDF 字体字典与落点间隔，两边都跟注册态无关。
 
 ---
 
@@ -475,11 +736,59 @@ Blink 的 LayoutRect 整体是 LayoutUnit，所以**算术出来的**用值也�
 
 ---
 
+## P2-9 · SVG 导出的贴右落点比光栅靠左：量宽 paint 没开文本旗 —— ✅ 已修
+
+**症状**：同一份文档里同一串写两遍（一遍 `text-align:right`、一遍 `left`），把 SVG 里两个 `<text x>` 之差与 2x 光栅上两行**墨迹左端**之差相对账（首字形左侧 bearing 两边同量、天然抵消），SVG 侧恒偏左。对照串 `nnnn nnnn` 一个字体字距对都没有，所以与字距无关。
+
+**实测**（2026-09-28，`font:20px/1.6 "Segoe UI"`，`p{width:400px}`，测试宿主内 2x 光栅）：
+
+| 串 | SVG 反推 textW（修前） | 光栅反推 textW |
+|---|---|---|
+| `n` | **11** | 11.5 |
+| `nn` | **22** | 22.5 |
+| `nnnn nnnn` | **93** | 96.03 |
+| `AV To Ty Ta Wa Ye` | 152.791 | 156.5 |
+
+关键形状：SVG 侧那三个零配对串反推出来的宽度**全是整数**，真实推进是分数 → 不是"两条公式"，是同一个宽度在 SVG 通路上被**整像素化**了。
+
+**排除过程（都做了反证实验）**：① 字距（对照串 `kern=0`）；② `letter-spacing`（作者没写）；③ **路径分叉**——在 `TextPainter.MeasureWidth` 的简单分支加 `+777` 哨兵，SVG 的 `x` 与光栅的墨迹**同时**挪走（光栅那行直接被推出画布），两边本来就共用这一个函数、这一个分支；④ **族名/字号**——把 `FamilyName=="Segoe UI"` 与 `TextSize==20` 编进哨兵，两边都不动；⑤ **字面实例不同**——在 `MeasureWidth` 里落诊断，两边 `tf.Handle` 与 `GlyphCount` 完全相同（`Segoe UI/400/5/Upright glyphs=5395`）；⑥ 只开 `SubpixelText`——事后赋值与另建一张只开该旗的 paint，都仍是 11（无效）。
+
+**根因**：Skia 是否把字形推进折成整像素，取决于**量宽那张 paint 的文本渲染旗**，而不是字面、不是公式。同一次调用里三种旗实测：`AA+subpixel 全开 = 11.318`、`只开 subpixel = 11`、`全关 = 11`。光栅侧 `TextPainter.DrawLines` 的 paint 两旗都开（`SubpixelText = true, IsAntialias = true`），SVG 侧 `SvgWriter.EmitBlockText` 那张只用来量宽的 paint 两旗都没开 → 每个字面丢 0.2~0.5 px，9 个字偏 3 px，一行 80 字偏 20~40 px。
+**版本这一层要看清**：这个取整只在 **SkiaSharp 4.x** 上成立。测试工程经 `Svg.Skia 2.0.0` 抬到 4.150.1（`PaperSharp.Tests/bin/…/*.deps.json` 里同时列着 2.88.9 与 4.150.1，运行期绑到后者），而 exe 侧纯 2.88.9，同一个不带任何旗的 `MeasureText` 直接给分数（`kern "nnnn nnnn" "Segoe UI"` → `bare=67.218@14` = 96.03@20）。所以**线上（2.88）本来就不裂，裂的是 4.x 宿主**——但类库一旦升 SkiaSharp 就会立刻踩到，且"量宽随调用方的 paint 旗走"本身就是错的设计。
+
+**修复（两步）**：① `MeasureWidth` 不再看调用方的旗——发现 `!SubpixelText || !IsAntialias` 就自造一张两旗齐备（并沿用调用方 `TextSkewX`）的 paint 量，谁调都是同一个数；② 追根究底，旗就不该各处手抄——新增 **`TextPainter.NewTextPaint(typeface, size, fontStyle, color?)`** 作为**唯一的文本 paint 构造入口**（AA + subpixel + Fill + 合成 skew 一次带齐），五个构造点全部改走它：`DrawRun`、`DrawTextShadow`、`DrawLines`、`MarginBoxRenderer`、`SvgWriter.EmitBlockText`。此前 SvgWriter 那张是手搓的 `new SKPaint { TextSize, Typeface }`，两旗全无。修后同一组串：SVG 11.318 / 22.637 / **96.025** / 156.885，与光栅的 11.5 / 22.5 / 96 / 156.5 全部落在墨迹量法本身的 ±0.5 CSS px 内。2.88 下这些改动等值（本来就给分数），只多一次 per-line 的 paint 构造。
+
+**哨兵**：`tests/PaperSharp.Tests/KernDrawSiteTests.cs` 的 `Svg_text_align_lands_where_the_raster_puts_the_ink`，四条 = 两把串 × `normal`/`italic`。`nnnn nnnn` 零配对，只可能栽在旗上；`AV To Ty Ta Wa Ye` 顺带钉字距。阈值 0.6 CSS px。反证过：把 `IsAntialias = true` 摘掉，正常体那两条立刻变红（误差 3.0 / 3.7 px）。
+**踩到的量法坑（别再犯）**：斜体的合成错切会让首字形的墨迹探到落点左边一小截，段落贴着画布左沿时那截被裁掉，于是「两行墨迹之差」不再等于「两行落点之差」——表现为 italic 恒差约 1 px 的**假缺陷**。哨兵里给段落留 `padding-left:24px` 就是为了这个。
+
+**已排除的假残留**：本条一度记着「`TextSkewX` 没统一，斜体还差 1.08px」。**那就是上面那个裁切假象**，不是 skew 进了 advance——把 skew 一并纳入构造入口后，italic 两条的数值分毫未动（241.582 → 241.582），证实 Skia 的错切只动落笔矩阵、不改 `MeasureText`（`DrawRun` 原来那句注释是对的）。
+
+**已落（同轮晚些；实测推翻了当初的顾虑）**：`MarginBoxRenderer` 的居中/贴右宽度换成 `TextPainter.MeasureWidth(text, paint, 0f)`。当初我判它「会挪 m1/pct/report 页脚、全量红数 41→45，要等金标收敛」——**那是假归因**：主树里并行会话同时在改引擎，红数本来就在漂。真实足迹在快照工作树（`.mb-wt` = HEAD + 当前在途源码）上逐张 md5 量出来：26 张样例里只有 **challenge / framer-motion** 变，**m1/pct/report 三张纹丝不动**——它们页脚是雅黑覆盖得到的中文+计数器，`NeedsSpecial` 为假，走的就是原来那条公式；只有那两张的边距串会拐进 `WidthOf` 的按字面切段分支。而 challenge / framer-motion **没有像素金标**（只有 `goldens/boxes/*.json` 的盒矩形，边距盒不进盒树）→ **本改动零金标足迹**。双跑复核：同一快照带刀/不带刀各跑一遍 `Golden|Raster`，两次都是 43 红 37 绿、逐条相同；渲染确定性也验了（同一份代码连跑两次 26 张 md5 零差异）。补丁：`.scratch/apply-marginbox-measurewidth.py`（幂等，`--revert` 撤、`--root` 可指快照；打→打 / 撤→撤 / 打→撤→打 三种次序都验过编译干净，round-trip 逐字节一致）。
+
+**顺带收口（同轮）**：字距这块账的三处绘制/量宽漏付——① `@page` 边距盒（居中宽度与落笔都不付字距）；② 混合方向行的拉丁段（`TextShaper.SegWidths` 不付字距，实测量宽比浏览器多 3.6 / 2.8 px，m7 那类 bidi 样例）；③ `SvgWriter` 的字距项（已由并行会话并入 `MeasureWidth`）。①② 已修并各钉一条哨兵（逐行退回即变红），都在同一个哨兵文件里。
+
+---
+
+## P1-13 · `font-family:"NSimSun"` 画成黑体：打包的 ASCII 等宽子集被目录注册抢走了族名 —— ✅ 已修
+
+**现象**（2026-09-28，Playground 的 `fontvs` 样例第 11 格）：同一份 CSS `font-family:"NSimSun", monospace`，浏览器画宋体（衬线），引擎画成黑体。逐像素看 `测试字体` 四个字，横竖笔画末端差得很远。
+
+**根因**：`assets/fonts/NSimSunSub-Regular.ttf` 是从 `simsun.ttc` 第 1 号字面裁出来的**等宽子集**，只保留 ASCII（96 字面），存在的意义是给 generic `monospace` 压 PDF 体积（`FontManager.MonoSubsetFamilies` 那条分派）。但它的**真实 family name 就是 `NSimSun`**，而 Playground（`PlaygroundSamples.cs:40`）、`pixdiff`、`lines`、`pgpdf` 都调 `RegisterFontDirectory(assets/fonts)`——该 helper 按真实族名登记，于是 `NSimSun` 进了全局注册表，在 `FontManager.Get` 里**抢在**按族分派表前面命中，返回这张只有 ASCII 的字面。中文逐字形回退到打包 Noto（`SubsetIfCovers`）→ 宋体整族变黑体。雅黑/Noto 那两族同样被登记，但它们的子集带全量 CJK，所以看不出问题——只有等宽这份是刻意裁过的。
+
+**为什么两道门都没拦**：子集与真面度量同源（同一张 `simsun.ttc` 字面，ascent/descent 0.8594/0.1406 一致），所以行盒宽高、基线、换行点**逐位吻合**——盒级对拍 0 条位移带，像素门也只报 0.3% 强差（48px 四个字的形差摊到整页太小）。这类「同度量、不同字面」的错只有肉眼或字形级断言能抓到。
+
+**修复**：`RegisterFontDirectory` 跳过 `FontManager` 自己按路径加载的那五份打包子集（`BundledSubsetFiles`）。它们已由上面的按族分派表接管，再按真实族名登记一遍等于用裁过的字面抢掉系统真面。修后 `NSimSun` 走系统真面（28905 字面），`monospace` 仍走 96 字面子集（PDF 体积不变），`Microsoft YaHei`/`Noto Sans SC` 仍走带 PRKT 的子集。
+
+**验收**：`pixdiff fontvs` 1x 可见重影 0.59% → 0.39%、2x 强差 0.3% → 0.2%，位移带仍 0；`face NSimSun 400 20` 回 `NSimSun glyphs=28905`，`face monospace` 回 `NSimSun glyphs=96 shared=True`；`pgpdf fontvs` 体积 6.81 MB（无膨胀，嵌入侧子集化照常裁）。
+
+---
+
 ## 取证脚本与复现约定
 
 - 圆角类数值来自：逐行扫描截图蓝区（`B−R ≥ 15 且 B > 200`）左右边界求弧长，2x 设备 px ÷ 实测比例 1.986 折 CSS px；引擎侧同法量 `dotnet run -- html login-page` 的 2x 光栅。
 - 回归断言已固化成受跟踪测试 `tests/PaperSharp.Tests/PseudoScopeTests.cs`（23 条，含双向对照），不再依赖仓库外探针（`.scratch/radius/probe/` 只作临时取证）。
 - 几何基线复跑：`bash tools/sweep.sh`；绘制层基线复跑：`bash tools/pixelsweep.sh [样例…]`。
+- P2-9 的 SVG↔光栅差分账复跑法：同一串各写一遍 `text-align:right` 与 `left`，`Renderer.RenderPng(html, css, 400, scale:4)` 逐行取最左墨迹列、`Renderer.RenderSvg(html, css, 400)` 正则抓两个 `<text x>`，两差相减。字距侧用 `dotnet run --project src/PaperSharpSamples -- kern "<串>" "Segoe UI"` 自证该串有没有配对（`kern=0` 才是干净对照）。
 - **并发量测必须错开 CDP 端口**：`boxdiff.mjs` 的调试端口默认写死 9411，同机多个会话同时量会互踩 CDP——表现为 `Execution context was destroyed`、或干脆量到半张图当真实差。`tools/pixelsweep.sh` 已改成默认按进程号取端口（`CDPPORT=…` 可覆盖）；手跑 `boxdiff` 时记得带 `--port`。P2-5 那两条「样例测不到」经复核就是这一条，不是页面问题。
 - 待落刀补丁：`python .scratch/apply-layoutunit-margin-snap.py`（P2-7 的 margin 版，幂等、`--revert` 可撤）。已用私有端口复验两遍：challenge 12.5→12.1（位移带 6→3）、m7 24.4→24.1、framer-motion / fluent-docs / m1 三张守卫逐张不变；代价是 2 张 `PngGolden` 自比金标失效（40 红→42 红），等金标收敛后落。
 
