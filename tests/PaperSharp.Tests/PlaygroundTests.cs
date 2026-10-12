@@ -148,8 +148,10 @@ public class PlaygroundTests
     {
         var css = PlaygroundService.BuildPdfCss("@page{size:a2;margin:20mm 15mm}", 1284f, PdfPaper.SameWidth);
         var spec = AtPageParser.Parse(css, 595.28f, 841.89f);
-        var mV = AtPageParser.ToCssPx("20mm");
-        var mH = AtPageParser.ToCssPx("15mm");
+        // 长度落到 Blink 的 LayoutUnit 1/64 网格（20mm → 75.59055px 截成 75.578125 = 4837/64），
+        // 所以这里按同一口径折一遍再比，别拿未折的换算值当期望。
+        var mV = CssValueParser.Snap(AtPageParser.ToCssPx("20mm"));
+        var mH = CssValueParser.Snap(AtPageParser.ToCssPx("15mm"));
 
         Assert.Equal(1284f, spec.PageW);                    // a2 被同宽档换掉
         Assert.Equal(841.89f, spec.PageH);                  // 高仍按 A4：分页位置才可比
@@ -174,6 +176,7 @@ public class PlaygroundTests
 
         var m = Regex.Match(Encoding.ASCII.GetString(pdf), @"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)");
         Assert.True(m.Success, "PDF 里没找到 MediaBox");
-        Assert.Equal(1284, (int)float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture));
+        // MediaBox 是 pt：布局宽按 1284 CSS px 记账，出纸时 ×0.75 折成 pt = 963（同一张纸两面）。
+        Assert.Equal(963, (int)float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture));
     }
 }

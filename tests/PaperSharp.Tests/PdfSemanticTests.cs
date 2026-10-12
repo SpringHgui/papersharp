@@ -60,8 +60,12 @@ public class PdfSemanticTests
     [Fact]
     public void Pagination_flows_content_to_later_pages()
     {
-        using var doc = PdfDocument.Open(Fixture.RenderPdf("long"));
+        // 样例选 report 而不是 long：long 在单位制改 CSS px + 长度落 1/64 网格之后确实放得进一页
+        // （2026-10-12 与 Chrome 打印真值对拍：两者都是 1 页，逐字保留率 100.0%），
+        // 用它当「翻页」样本就成了过期断言。report 两页，第二页有正文，才是要钉住的机制。
+        using var doc = PdfDocument.Open(Fixture.RenderPdf("report"));
         Assert.Equal(2, doc.NumberOfPages);
         Assert.False(string.IsNullOrWhiteSpace(doc.GetPage(2).Text));
+        Assert.NotEqual(doc.GetPage(1).Text, doc.GetPage(2).Text);
     }
 }
