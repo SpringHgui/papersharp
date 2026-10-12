@@ -30,33 +30,20 @@ SAMPLES=${*:-$(ls src/PaperSharpSamples/assets/*.html | xargs -n1 basename | sed
 # 本引擎的目标介质是 PDF/PNG，那里根本没有次像素彩边，所以参照物也不该带它。
 export NO_LCD=${NO_LCD:-1}
 
-BOXJSON_DIR=src/PaperSharpSamples/bin/Release/net10.0/output
-
 for s in $SAMPLES; do
   dotnet run --project src/PaperSharpSamples -c Release --no-build -- boxes "$s" "$WIDTH" >/dev/null 2>&1
-  # 两侧必须排在**同一个宽**上：boxdiff 交给浏览器的视口宽是 `Math.round(contentWidth)`
-  # （CDP 的 width 只能是整数），而引擎按分数宽排（16mm 边距 → 1163.0552）。
-  # 差的那 δ 会让 mm 边距页**每一个块级盒**都差一点宽——2026-09-29 复核占残余漂移的 35%
-  # （report 35/35、pct 24/24、polish 15/17、m1 158/501），全是门的口径不是引擎的错。
-  # 这里把引擎按 W−δ 重排一遍，让它的 contentWidth 正好落到浏览器那个整数上。
+  # 两侧排在同一个宽上这件事，2026-09-30 起由预览文档自己解决（台账 P0-6）：boxes-<名>.html 带上
+  # @page 边距（落成 html padding），boxdiff 交给浏览器的视口宽就是**整页宽**（整数），引擎的分数
+  # 内容宽 = 整页宽 − 边距 与浏览器完全相等。旧的「按 W−δ 重排」会把页宽改掉而边距没改，两侧反而错开 δ。
   W=$WIDTH
-  if [ -f "$BOXJSON_DIR/boxes-$s.json" ]; then
-    W=$(python -c "
-import json,io
-d=json.load(io.open('$BOXJSON_DIR/boxes-$s.json',encoding='utf-8'))
-cw=d.get('contentWidth') or $WIDTH
-print('$WIDTH' if abs(cw-round(cw))<0.002 else round($WIDTH-(cw-round(cw)),4))")
-    if [ "$W" != "$WIDTH" ]; then
-      dotnet run --project src/PaperSharpSamples -c Release --no-build -- boxes "$s" "$W" >/dev/null 2>&1
-    fi
-  fi
   node tools/boxdiff.mjs "$s" --dsf 2 --port "$CDPPORT" --shot "$OUTDIR/shot-$s.png" >/dev/null 2>&1
   raw="$OUTDIR/$s.txt"
   dotnet run --project src/PaperSharpSamples -c Release --no-build -- pixdiff "$s" "$OUTDIR/shot-$s.png" "$W" > "$raw" 2>&1
   # 三块指标各取各的：2x 强差在「2x 强差 …」行、1x 可见与判定同行、重影评分在 GHOST 行
   strong=$(grep -oE "2x 强差 [0-9,]+/[0-9,]+ = [0-9.]+%" "$raw" | tail -1 | grep -oE "= [0-9.]+%" | tr -d '= %')
   vis=$(grep -oE "1x 可见重影 [0-9,]+/[0-9,]+ = [0-9.]+%" "$raw" | tail -1 | grep -oE "= [0-9.]+%" | tr -d '= %')
-  verdict=$(grep -oE "→ (干净|轻微|可接受|偏重|严重)" "$raw" | tail -1 | sed 's/→ //')
+  # 档名以 PixelDiff.cs 的那四档为准（干净<1 / 轻微<4 / 明显<12 / 严重），漏一档就整列显示「未判定」。
+  verdict=$(grep -oE "→ (干净|轻微|明显|严重)" "$raw" | tail -1 | sed 's/→ //')
   bands=$(grep -oE "bands=[0-9]+/[0-9]+" "$raw" | tail -1 | cut -d= -f2)     # 真位移带（可修的那类）
   # 两条「不可比」判定，先于位移带读：pixdiff 的位移带是在**对齐之后**数的，
   # ① 两层**墨尽行**差 >2 CSS px → 比的不是同一份文档（一边多画/少画了一截）。

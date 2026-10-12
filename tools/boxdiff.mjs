@@ -40,9 +40,10 @@ async function main() {
     process.exit(1);
   }
   const engine = JSON.parse(readFileSync(boxesPath, "utf8"));
-  // 浏览器视口 = 引擎的排版宽（画布宽 − @page 左右页边距），与 Playground 给 iframe 设的是同一个数；
-  // 直接按画布宽量，声明了 @page margin 的样例会凭空整幅宽度漂移（pct 实测 91px）。
-  const vw = Math.max(1, Math.round(engine.contentWidth || WIDTH));
+  // 浏览器视口 = **整页宽**（引擎的画布宽）。预览文档已把 @page 边距落成 html padding（见 Program.cs
+  // boxes 分支），所以两侧的内容盒原点、Blink 的取相位一致；按 contentWidth 量会让声明 @page margin 的
+  // 样例整幅平移一个页边距（pct 实测 91px），而按 padding 后剩余的**分数**边距才是真相位差（P0-6）。
+  const vw = Math.max(1, Math.round(engine.width || engine.contentWidth || WIDTH));
   const browser = await measureInBrowser(docPath, vw);
   if (browser == null) return;   // --probe 只看浏览器侧真值，不求差
 
@@ -85,7 +86,12 @@ async function measureInBrowser(docPath, vw) {
   // 强差，「1x 可见重影 44.8%」里到底有多少是引擎画错、多少是参照物的显示口径，量不出来。
   // 关掉之后剩下的差才是可比的（PDF/打印输出本来就没有次像素彩边，那才是本引擎的目标介质）。
   const proc = spawn(browser, [
-    "--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
+    // HEADED=1 用真实窗口浏览器出参照物。**必须留这个开关**：同版本 Edge 在 headless 与 headed
+    // 下对「等宽链里的中文」给出两套 advance（本机 154 实测 bold 10pt `Consolas,monospace` 的「序号」
+    // 无头 30 / 有头 27.188 —— 无头套 legacy 等宽的半格网格，有头走真实字面+合成粗体），
+    // 而用户屏幕上看到的是有头。参照物选错模式，就会「引擎与参照逐位吻合、用户满屏重影」。
+    ...(process.env.HEADED === "1" ? [] : ["--headless=new"]),
+    `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars",
     ...(process.env.NO_LCD === "1" ? ["--disable-lcd-text"] : []),
     ...(process.env.HINTNONE === "1" ? ["--font-render-hinting=none"] : []),
