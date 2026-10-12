@@ -1,4 +1,4 @@
-@page "/playground"
+@page "/"
 @layout PlaygroundLayout
 @rendermode InteractiveServer
 @implements IAsyncDisposable
@@ -40,8 +40,10 @@
 
     <div class="seg">
         <button type="button" class="@Seg(ViewMode.SideBySide)" @onclick="() => SetViewAsync(ViewMode.SideBySide)">并排</button>
-        <button type="button" class="@Seg(ViewMode.Overlay)" @onclick="() => SetViewAsync(ViewMode.Overlay)">叠加</button>
-        <button type="button" class="@Seg(ViewMode.Diff)" @onclick="() => SetViewAsync(ViewMode.Diff)">盒级差异</button>
+        <button type="button" class="@Seg(ViewMode.Overlay)" @onclick="() => SetViewAsync(ViewMode.Overlay)"
+                title="引擎图叠在无头(Skia)参照上——与引擎同为打印口径（引擎 PDF 与 Chrome printToPDF 逐位相同）。CJK 在此视图应≈0 重影；有头屏显的 ±0.5px/行是屏幕 DirectWrite 差、连 Chrome 自己的打印都不含它，见台账 P0-10">叠加</button>
+        <button type="button" class="@Seg(ViewMode.Diff)" @onclick="() => SetViewAsync(ViewMode.Diff)"
+                title="逐元素矩形描边 + Δ 表，同样吃无头(Skia)打印口径参照">盒级差异</button>
     </div>
 
     @if (_view != ViewMode.SideBySide)
@@ -82,7 +84,22 @@
         <div class="compare" data-mode="@ModeAttr">
             <div class="pane pane-browser" @ref="_browserPane">
                 <div class="pane-tag">BROWSER</div>
+                @* iframe 常驻（并排模式看实时有头渲染；切视图时 _iframe 引用不失效）。叠加/盒级差异再叠一张
+                   不透明的无头参照盖住它——参照与引擎 PNG 同尺寸同原点，套同一套平移/裁边即逐像素重合（见 RefShotStyle）。
+                   无头(Skia) 与引擎同为打印口径（引擎 PDF == Chrome printToPDF），CJK 重影在此应≈0；有头屏显的
+                   ±0.5px/行是屏幕 DirectWrite 差、连 Chrome 自己的打印都不含它（台账 P0-10）。 *@
                 <iframe @ref="_iframe" title="浏览器渲染"></iframe>
+                @if (_view is ViewMode.Overlay or ViewMode.Diff)
+                {
+                    @if (_refToken is { Length: > 0 } refTok)
+                    {
+                        <img class="shot shot-ref" src="@($"/api/playground/image/{refTok}")" style="@RefShotStyle(_render)" alt="无头浏览器参照（打印口径）" />
+                    }
+                    else
+                    {
+                        <div class="ref-wait">无头参照生成中…（拉起一次无头 Edge，约 1~2s）</div>
+                    }
+                }
             </div>
             <div class="pane pane-engine" @ref="_enginePane">
                 <div class="pane-tag">PAPERSHARP</div>
@@ -113,7 +130,7 @@
     @if (_view == ViewMode.Diff)
     {
         <aside class="report">
-            <div class="label">差异明细 <span class="hint">红虚线=引擎 · 绿实线=浏览器；只列超容差的，按最坏分量倒序</span></div>
+            <div class="label">差异明细 <span class="hint">红虚线=引擎 · 绿实线=无头参照（打印口径）；只列超容差的，按最坏分量倒序</span></div>
             <table>
                 <thead>
                     <tr><th>元素</th><th class="r">Δx</th><th class="r">Δy</th><th class="r">Δw</th><th class="r">Δh</th></tr>
@@ -147,7 +164,7 @@
                     }
                     else
                     {
-                        <tr><td class="none" colspan="5">@(string.IsNullOrEmpty(_error) ? "等待浏览器侧回传矩形…" : "渲染失败，无矩形可比")</td></tr>
+                        <tr><td class="none" colspan="5">@(string.IsNullOrEmpty(_error) ? "等待无头参照生成…" : "渲染失败，无矩形可比")</td></tr>
                     }
                 </tbody>
             </table>
@@ -159,7 +176,7 @@
     @if (_render is { } r)
     {
         <span>@r.PixelWidth × @r.PixelHeight</span>
-        <span>· PNG · @((r.Bytes / 1024.0).ToString("0.#", Inv)) KB · 引擎 @(r.ElapsedMs.ToString("0", Inv)) ms · 浏览器量测 @(_previewMs.ToString("0", Inv)) ms</span>
+        <span>· PNG · @((r.Bytes / 1024.0).ToString("0.#", Inv)) KB · 引擎 @(r.ElapsedMs.ToString("0", Inv)) ms · @(_view == ViewMode.SideBySide ? "浏览器量测" : "无头参照") @(( _view == ViewMode.SideBySide ? _previewMs : _refMs ).ToString("0", Inv)) ms</span>
         <span>· 排版宽 @(r.ContentWidth.ToString("0", Inv))</span>
     }
     @if (_diff is { } s)
@@ -167,11 +184,11 @@
         <span class="sep">|</span>
         <span>盒 @s.Summary.Total</span>
         <span class="@Badge(s.Summary)">漂移 @s.Summary.Drift</span>
-        <span>引擎独有 @s.Summary.EngineOnly · 浏览器独有 @s.Summary.BrowserOnly</span>
+        <span>引擎独有 @s.Summary.EngineOnly · 参照独有 @s.Summary.BrowserOnly</span>
         <span>最坏 @(s.Summary.WorstDelta.ToString("0.0", Inv))px · 漂移均值 @(s.Summary.MeanDriftPx.ToString("0.0", Inv))px</span>
     }
     <span class="grow"></span>
-    <span class="hint">iframe 已注入与引擎同一份 UA 表并藏滚动条，两侧排版宽严格相等</span>
+    <span class="hint">叠加/盒级差异的参照走无头(Skia)打印口径（引擎 PDF==Chrome printToPDF）；并排看有头 iframe 实时渲染</span>
 </footer>
 
 @* PDF 悬浮窗：脱流浮在两窗之上，左边改字它就跟着重出。拖标题条挪位置、右下角原生 resize 改大小。 *@
@@ -255,6 +272,10 @@
     IReadOnlyList<DomRect> _browserRects = Array.Empty<DomRect>();
     string _error = "";
 
+    /// <summary>无头(Skia)打印口径参照：PNG token（供 &lt;img&gt; 盖在有头 iframe 上）+ 耗时。叠加/盒级差异用。</summary>
+    string _refToken = "";
+    double _refMs;
+
     bool _pdfOpen, _pdfBusy;
     PdfPaper _paper = PdfPaper.SameWidth;
     PlaygroundPdf? _pdf;
@@ -304,15 +325,15 @@
 
     string Seg(ViewMode v) => _view == v ? "on" : "";
 
-    /// <summary>切视图模式：iframe 的平移量按模式算（见 playground.js alignPreview），
-    /// 而 loadPreview 只在渲染时跑一次——不在此处补一次对齐，「并排载入 → 切叠加」两层就
-    /// 永远错开一个 body margin（m5 实测 36px）。模式串显式传给 JS，不靠回读 DOM。</summary>
+    /// <summary>切视图：并排看有头 iframe 实时渲染，叠加/盒级差异看无头(Skia)打印口径参照。
+    /// 两者参照物不同，跨「并排 ↔ 叠加/盒级差异」要重出参照；叠加↔盒级差异共用同一份无头参照，不重渲染。</summary>
     async Task SetViewAsync(ViewMode v)
     {
         if (_view == v) return;
+        bool oldHeadless = _view != ViewMode.SideBySide;
         _view = v;
-        if (_module is { } js && _render is not null)
-            await js.InvokeVoidAsync("alignPreview", _iframe, ModeAttr);
+        bool newHeadless = v != ViewMode.SideBySide;
+        if (oldHeadless != newHeadless) await RerenderAsync();
     }
 
     async Task OnInputAsync()
@@ -438,15 +459,35 @@
             // PDF 挂在浏览器量测这段时间里并行跑：那半边走 JS 与 SignalR，不吃引擎这颗核。
             if (_pdfOpen) _ = RefreshPdfAsync();
 
+            // 参照物按视图分两套：叠加/盒级差异用无头(Skia)出图（与引擎同为打印口径，见台账 P0-10——
+            // 有头屏显吃 DirectWrite，会凭空给 CJK 加 ±0.5px/行的幻影重影）；并排用有头 iframe 实时渲染（编辑手感）。
+            if (_view != ViewMode.SideBySide)
+            {
+                var refShot = await Svc.PrintParityAsync(_html, _css, render.CssWidth, _scale,
+                    (render.PageMarginTop, render.PageMarginRight, render.PageMarginBottom, render.PageMarginLeft),
+                    CancellationToken.None);
+                if (seq != _seq) return;
+                _refToken = refShot.Token;
+                _refMs = refShot.ElapsedMs;
+                _browserRects = refShot.Rects;
+                _diff = Svc.Diff(render.Token, refShot.Rects, _tolerance);
+                return;
+            }
+
+            _refToken = "";   // 并排不叠无头参照，清掉免得切回时先闪一张过期图
             if (_module is null) return;
             var srcdoc = PlaygroundService.BuildPreviewDoc(_html, _css,
-                Samples.AssetsDir is { Length: > 0 } ? PlaygroundService.AssetUrlBase : null);
+                Samples.AssetsDir is { Length: > 0 } ? PlaygroundService.AssetUrlBase : null,
+                (render.PageMarginTop, render.PageMarginRight, render.PageMarginBottom, render.PageMarginLeft));
             var tPrev = Stopwatch.GetTimestamp();
-            var got = await _module.InvokeAsync<BrowserMeasurement>("loadPreview", _iframe, srcdoc, render.ContentWidth);
+            // 视口给**整页宽**而不是内容宽：预览文档已经把 @page 边距落成 html padding（见 BuildPreviewDoc），
+            // 两侧于是同零点、同内容宽。按内容宽量会把分数边距挤成整数（1163.0625→1163），
+            // 那一圈 δ 让 mm 边距页每个块级盒都差一点宽，也会被读成文字重影。
+            var got = await _module.InvokeAsync<BrowserMeasurement>("loadPreview", _iframe, srcdoc, render.CssWidth);
             _previewMs = Stopwatch.GetElapsedTime(tPrev).TotalMilliseconds;
             if (seq != _seq) return;
             _browserRects = got?.Rects ?? Array.Empty<DomRect>();
-            _diff = Svc.Diff(render.Token, _browserRects, _tolerance);
+            _diff = null;   // 并排不做度量：有头 iframe 的矩形不是引擎的对拍目标
         }
         catch (Exception ex)
         {
@@ -454,27 +495,34 @@
         }
     }
 
-    // 负偏移只为「叠加」服务：把引擎 body 原点搬到舞台 (0,0) 才能与同样平移过的 iframe 重合。
-    // 并排模式下不平 body（两栏各自从 body 原点开画才可比，照旧平移会让引擎整页比浏览器高
-    // BodyX/BodyY，实测 m9 body margin 28px → 并排时标题差 28px），但要平掉 @page 页边距：
-    // 浏览器屏幕渲染没有 @page 边距，引擎 PNG 的内容却从页边距内侧开始画，
-    // 不平就整页右移/下移一圈页边距（实测 m1/m2 margin 20mm 15mm → 并排错开 42.5/56.7px）。
-    string ShotStyle(PlaygroundRender r) =>
+    // 负偏移只为「叠加」服务：把引擎 body 原点搬到舞台 (0,0) 才能与同样平移过的 iframe 重合
+    // （iframe 侧是 JS 的 -Math.round(body.left)，这里必须同样**折到整 CSS px**：引擎 PNG 的内容
+    // 本来就落在 round(bodyX) 那个整格上（绘制层折相位，见 PaintSnap），按分数 -60.46875 摆会让
+    // 整张 PNG 在屏幕上被重采样到半格，等于凭空给引擎层加一层模糊——叠图看差异时最先糊掉的就是字）。
+    // 并排模式不平也不裁：预览文档现在带上了 @page 边距（html padding，见 BuildPreviewDoc），
+    // 两栏本来就各自从页边距内侧开画，再平一次反而错开一圈边距（旧口径要平，是因为那时浏览器没有边距）。
+    string ShotStyle(PlaygroundRender r) => _view == ViewMode.SideBySide
+        ? $"width:{Px(r.CssWidth)};"                       // 并排：不平不裁，各自从页边距内侧开画
+        : ShotStyleFor(r, _opacityPercent / 100.0);
+
+    // 无头参照图：与引擎 PNG 同尺寸、同 body 原点，套同一套平移/裁边，只是它当底图不透明（叠加/盒级差异用）。
+    string RefShotStyle(PlaygroundRender? r) => r is null ? "" : ShotStyleFor(r, 1.0);
+
+    static string ShotStyleFor(PlaygroundRender r, double opacity) =>
         $"width:{Px(r.CssWidth)};"
-        + (_view == ViewMode.SideBySide ? $"left:{Px(-r.PageMarginLeft)};top:{Px(-r.PageMarginTop)};"
-                                        : $"left:{Px(-r.BodyX)};top:{Px(-r.BodyY)};") +
-        (_view == ViewMode.SideBySide ? "" : $"opacity:{(_opacityPercent / 100.0).ToString("0.##", Inv)};") +
-        // 引擎图比浏览器排版宽出一圈 @page 边距：叠加/差异时按内容盒裁掉那圈留白，
-        // 否则半透明叠图右/下缘会多出灰白边，看着像没对齐（并排模式整页展示，不裁）。
-        (_view == ViewMode.SideBySide ? "" :
-            $"clip-path:inset({Px(r.PageMarginTop)} {Px(r.PageMarginRight)} {Px(r.PageMarginBottom)} {Px(r.PageMarginLeft)});");
+        + $"left:{Px(-MathF.Round(r.BodyX))};top:{Px(-MathF.Round(r.BodyY))};"
+          + $"opacity:{opacity.ToString("0.##", Inv)};"
+          // 引擎图比内容区宽出一圈 @page 边距：叠加/差异时裁掉那圈留白，否则半透明叠图右/下缘
+          // 多出灰白边，看着像没对齐。同样折整，裁边才与整格的位图边界重合。
+          + $"clip-path:inset({MathF.Round(r.PageMarginTop)}px {MathF.Round(r.PageMarginRight)}px"
+          + $" {MathF.Round(r.PageMarginBottom)}px {MathF.Round(r.PageMarginLeft)}px);";
 
     static string MarkStyle(DomRect r) => $"left:{Px(r.X)};top:{Px(r.Y)};width:{Px(r.W)};height:{Px(r.H)}";
 
     static string KindCode(DiffRow r) => r.Kind switch
     {
         DiffKind.EngineOnly => "仅引擎",
-        DiffKind.BrowserOnly => "仅浏览器",
+        DiffKind.BrowserOnly => "仅参照",
         _ => "Δ",
     };
 

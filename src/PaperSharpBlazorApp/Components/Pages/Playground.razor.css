@@ -220,6 +220,14 @@
 
 iframe { display: block; border: 0; background: #fff; }
 
+/* 叠加/盒级差异：无头参照图盖住常驻的有头 iframe（absolute 天然浮于 static 之上，z-index 只是兜底）。 */
+.compare:not([data-mode="side"]) .pane-browser .shot-ref { z-index: 1; }
+.ref-wait {
+    position: absolute; left: 0; top: 0; right: 0; padding: 40px;
+    text-align: center; color: #5c656e; font: 14px/1.6 system-ui, sans-serif;
+    background: rgba(255, 255, 255, .92); z-index: 2;
+}
+
 .diff-boxes { position: absolute; left: 0; top: 0; z-index: 3; }
 
 .diff-box {

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using PaperSharp;
 using PaperSharp.Css;
@@ -50,6 +51,9 @@ public sealed class PlaygroundService
     /// 最多一份在生成——否则连打十个字符就排十趟管线，全在抢同一批核，最后那张反而最晚出来。
     /// </summary>
     readonly SemaphoreSlim _pdfGate = new(1, 1);
+
+    /// <summary>打印对拍会拉起一个无头 Edge（秒级、吃一份进程），串到 1 份，别连打时堆一排浏览器。</summary>
+    readonly SemaphoreSlim _ppGate = new(1, 1);
 
     public PlaygroundService(PlaygroundSamples samples, ILogger<PlaygroundService> log)
     {
@@ -107,6 +111,98 @@ public sealed class PlaygroundService
     {
         lock (_gate) return _shots.TryGetValue(token, out var shot) ? shot.Png : null;
     }
+
+    /// <summary>
+    /// 「打印对拍」的浏览器参照：把预览文档丢给**无头** Edge（<c>tools/pgshot.mjs</c>）出 2× 截图 + 量矩形。
+    /// 为什么是无头而不是 Playground 默认的有头 iframe（2026-10-02 取证，见台账 P0-10）：
+    /// 有头屏显吃 **DirectWrite** 字体度量，无头屏显与 <c>printToPDF</c> 吃 **Skia** 度量——本引擎是打印
+    /// 引擎，出图走 Skia，且实测**引擎 PDF 与 Chrome PDF 逐位相同**。所以无头参照才是与引擎同口径的参照物，
+    /// 拿它对 <c>challenge</c> 逐盒对拍 **257/257、最坏 0.00px**；有头 iframe 才会露出 ±0.5px/行的 CJK 幻影重影。
+    /// </summary>
+    /// <param name="viewportWidth">整页宽（= 长图 <see cref="PlaygroundRender.CssWidth"/>），与 iframe 同值。</param>
+    /// <param name="pageMargin">引擎那趟的 @page 边距，落成预览文档的 html padding，两侧零点/相位才一致。</param>
+    public async Task<PrintParityResult> PrintParityAsync(string html, string extraCss, float viewportWidth,
+        float scale, (float top, float right, float bottom, float left)? pageMargin, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        var script = FindRepoTool("tools/pgshot.mjs")
+            ?? throw new InvalidOperationException("找不到 tools/pgshot.mjs（打印对拍参照脚本）。");
+        var assets = _samples.AssetsDir;
+        var fileBase = string.IsNullOrEmpty(assets)
+            ? null
+            : "file:///" + assets.Replace('\\', '/').TrimEnd('/') + "/";
+        var srcdoc = BuildPreviewDoc(html, extraCss, fileBase, pageMargin);
+
+        var dir = Path.Combine(Path.GetTempPath(), "papersharp-pp-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var docPath = Path.Combine(dir, "preview.html");
+            var pngPath = Path.Combine(dir, "shot.png");
+            var rectsPath = Path.Combine(dir, "rects.json");
+            await File.WriteAllTextAsync(docPath, srcdoc, ct);
+
+            await _ppGate.WaitAsync(ct);
+            try
+            {
+                var psi = new ProcessStartInfo("node",
+                    $"\"{script}\" \"{docPath}\" {Math.Max(1, (int)viewportWidth)} {Math.Max(1, (int)scale)} \"{pngPath}\" \"{rectsPath}\"")
+                {
+                    RedirectStandardError = true, RedirectStandardOutput = true,
+                    UseShellExecute = false, CreateNoWindow = true,
+                    WorkingDirectory = Path.GetDirectoryName(script)!,
+                };
+                using var proc = Process.Start(psi)
+                    ?? throw new InvalidOperationException("无法启动 node。");
+                // 无头 Edge 冷启 + 排版 settle 约 1~2s；给足但别无限等。
+                using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    timeout.CancelAfter(TimeSpan.FromSeconds(45));
+                    await proc.WaitForExitAsync(timeout.Token);
+                }
+                if (proc.ExitCode != 0 || !File.Exists(pngPath))
+                    throw new InvalidOperationException(
+                        "无头参照出图失败：" + (await proc.StandardError.ReadToEndAsync()).Trim());
+            }
+            finally { _ppGate.Release(); }
+
+            var png = await File.ReadAllBytesAsync(pngPath, ct);
+            var rects = JsonDocument.Parse(await File.ReadAllTextAsync(rectsPath, ct))
+                .RootElement.EnumerateArray().Select(e => new DomRect
+                {
+                    DomPath = e.TryGetProperty("domPath", out var dp) ? dp.GetString() ?? "" : "",
+                    Tag = e.TryGetProperty("tag", out var tg) ? tg.GetString() ?? "" : "",
+                    X = GetF(e, "x"), Y = GetF(e, "y"), W = GetF(e, "w"), H = GetF(e, "h"),
+                }).ToList();
+
+            var token = Guid.NewGuid().ToString("N");
+            Remember(token, png, Array.Empty<BoxRect>());   // 只借 _shots 存 PNG 供 <img> 取；对拍用 render.Token 那份盒
+            sw.Stop();
+            _log.LogDebug("print-parity {Token}：{Rects} 矩形 · {Kb} KB · {Ms} ms",
+                token[..8], rects.Count, png.Length / 1024.0, sw.Elapsed.TotalMilliseconds);
+            return new PrintParityResult(token, rects, sw.Elapsed.TotalMilliseconds);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* 临时目录清不掉不影响本次结果 */ }
+        }
+    }
+
+    static float GetF(JsonElement e, string name)
+        => e.TryGetProperty(name, out var v) && v.TryGetSingle(out var f) ? f : 0f;
+
+    /// <summary>从运行目录逐级上溯找仓库内的工具脚本（Playground 是本地开发工具，node 已在 PATH 上）。</summary>
+    static string? FindRepoTool(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int up = 0; dir is not null && up < 8; up++, dir = dir.Parent)
+        {
+            var cand = Path.Combine(dir.FullName, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(cand)) return cand;
+        }
+        return null;
+    }
+
 
     public byte[]? PeekPdf(string token)
     {
@@ -201,13 +297,30 @@ public sealed class PlaygroundService
     /// 相对资源的服务端基址。引擎按 baseDir 从磁盘读 <c>imgs/qr.png</c>，浏览器没有它就取不到，
     /// 于是凭空报出一条「浏览器独有」——注 <c>&lt;base&gt;</c> 让两边解析到同一个文件，差异才是真差异。
     /// </param>
-    public static string BuildPreviewDoc(string html, string extraCss, string? assetBaseHref = null)
+    /// <param name="pageMargin">
+    /// 引擎那趟用到的 @page 边距（CSS px，上右下左）。@page 在屏幕渲染里不生效，所以预览文档要把它
+    /// 落成 <c>html{padding}</c>：浏览器与引擎的**绘制相位**都是拿「相对文档零点的位置」折整 CSS px
+    /// （2026-09-30 探针 <c>tools/snapprobe.mjs</c> 实测：左边距 60.5 → 落在 61，60.46875 → 落在 60），
+    /// 引擎的内容从页边距内侧开画、浏览器从 0 开画，两边折的网格就不是同一个 —— 毫米边距的样例
+    /// （16mm = 60.46875）于是整页文字错开一格，polish/pct/report 实测 6~15% 的「重影」全是这么来的。
+    /// 注了 padding 之后两侧文档零点相同，视口宽也要跟着给**整页宽**（见 Playground.razor 的 loadPreview）。
+    /// </param>
+    public static string BuildPreviewDoc(string html, string extraCss, string? assetBaseHref = null,
+        (float top, float right, float bottom, float left)? pageMargin = null)
     {
+        var (mt, mr, mb, ml) = pageMargin ?? (0, 0, 0, 0);
+        // 边距已经折在 1/64 网格上（AtPageParser.ToMarginPx），默认 float  ToString 就是往返精确的十进制，
+        // 别加格式串——"0.##" 会把 60.46875 打成 60.47，两侧又错开半格。
+        string N(float v) => v.ToString(CultureInfo.InvariantCulture);
+        var pagePad = mt == 0 && mr == 0 && mb == 0 && ml == 0
+            ? ""
+            : $"<style>html{{padding:{N(mt)}px {N(mr)}px {N(mb)}px {N(ml)}px}}</style>";
         var head = "<meta charset=\"utf-8\">" +
                    (assetBaseHref is { Length: > 0 } b ? $"<base href=\"{b}\">" : "") +
                    $"<style>{StyleResolver.UaStylesheetForPreview}</style>" +
                    (string.IsNullOrWhiteSpace(extraCss) ? "" : $"<style>{extraCss}</style>") +
-                   $"<style>{PreviewOnlyStyles}</style>";
+                   $"<style>{PreviewOnlyStyles}</style>" +
+                   pagePad;
 
         var mHead = Regex.Match(html, @"<head[^>]*>", RegexOptions.IgnoreCase);
         if (mHead.Success) return html.Insert(mHead.Index + mHead.Length, head);
