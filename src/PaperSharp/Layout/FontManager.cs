@@ -6,8 +6,9 @@ namespace PaperSharp.Layout;
 
 /// <summary>
 /// 按 family name 加载 SKTypeface，跨平台回退。
-/// 优先加载 assets/fonts/ 下的**子集字体**（src/PaperSharpSamples/tools/subset-font.py 生成），
-/// 这样 PDF 里嵌入的是 ~2.2MB 子集而非 ~17MB 全量字体。
+/// 优先用**打包的子集字体**（src/PaperSharpSamples/tools/subset-font.py 生成，解析顺序见 <see cref="LoadFace"/>），
+/// 这样 PDF 里嵌入的是 ~2.2MB 子集而非 ~17MB 全量字体。NuGet 包只内嵌 OFL 授权的 Noto 两族字面，
+/// 雅黑/宋体子集由 <see cref="BundledFontDirectory"/> 指过来才生效（样例工程即如此）。
 /// **打包了两族 face，按 CSS family 关键字分派**：参考浏览器把 `"Microsoft YaHei"` 解析到本机真装的
 /// 雅黑（normal 行盒 16px→21），把 generic `sans-serif` 解析到 Noto Sans SC（16px→24）——两者度量差
 /// 一整档，用一族替另一族会让每一行恒差 1~3px（实测反证：inline/table/m3 声明 sans-serif，
@@ -25,23 +26,37 @@ public static class FontManager
     static readonly ConcurrentDictionary<string, (int weight, string[] paths)[]> GlobalRegistered = new(StringComparer.OrdinalIgnoreCase);
 
     // 子集字体：一族两份字面（regular/bold），按 CSS family 关键字分派
+    //
+    // 历史坑（PERF_REPORT §12.6）：这批字体原先只按 AppContext.BaseDirectory/assets/fonts 找，
+    // 那是**入口程序集**旁边——库说了不算，而且字体根本没进 NuGet 包。结果消费方静默退回系统字体，
+    // 同一份 HTML 体积差 2.9~12.7 倍，「PDF 体积 + 跨平台一致」这两个设计目的双双失效，且毫无信号。
+    // 现在字体嵌在 dll 里，路径只作为显式覆盖与老宿主的兼容回退存在。
     static readonly string FontDir = Path.Combine(AppContext.BaseDirectory, "assets", "fonts");
-    static readonly string[] NotoFiles =
-    [
-        Path.Combine(FontDir, "NotoSansSCSub-Regular.ttf"),
-        Path.Combine(FontDir, "NotoSansSCSub-Bold.ttf"),
-    ];
-    static readonly string[] YaheiFiles =
-    [
-        Path.Combine(FontDir, "YaheiSub-Regular.ttf"),
-        Path.Combine(FontDir, "YaheiSub-Bold.ttf"),
-    ];
-    static readonly string MonoRegularFile = Path.Combine(FontDir, "NSimSunSub-Regular.ttf");
 
-    // 打包子集自己的绝对路径 —— <see cref="RegisterFontDirectory"/> 必须跳过它们（原因见该方法）。
-    static readonly HashSet<string> BundledSubsetFiles = new(
-        NotoFiles.Concat(YaheiFiles).Append(MonoRegularFile).Select(System.IO.Path.GetFullPath),
-        StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// 显式指定打包子集字体所在目录（在首次渲染之前设置）。为 null 时用 dll 内嵌的那份。
+    /// 用途：重新烤了子集、想在不改代码的情况下让引擎吃自己那份字体的宿主（含本仓样例工程）。
+    /// </summary>
+    public static string? BundledFontDirectory { get; set; }
+
+    /// <summary>
+    /// 打包子集实际从哪儿来的："<c>directory:…</c>" / "<c>embedded</c>" / "<c>legacy:…</c>" /
+    /// "<c>none</c>"（= 全部落空，正文将退回系统字体）。首次用到子集字体时定格。
+    /// 消费方可以在启动时断言它，CI 里更该断言——静默降级成系统字体是这个库最容易踩的坑。
+    /// </summary>
+    public static string FontSource { get; private set; } = "none";
+
+    /// <summary>打包子集完全不可用时的一次性告警（只发一次，不改变渲染结果，纯给宿主听见的机会）。
+    public static event Action<string>? BundledFontsUnavailable;
+
+    // 打包子集的字面**文件名** —— <see cref="RegisterFontDirectory"/> 必须跳过它们（原因见该方法）。
+    // 认名字而不是绝对路径：同一份子集现在可能落在显式目录、dll 内嵌、老路径三处任一，只有名字稳定。
+    static readonly HashSet<string> BundledSubsetNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NotoSansSCSub-Regular.ttf", "NotoSansSCSub-Bold.ttf",
+        "YaheiSub-Regular.ttf", "YaheiSub-Bold.ttf",
+        "NSimSunSub-Regular.ttf",
+    };
 
     // 命中这些 family 名时直接用打包子集，而不是去系统里找同名字体（PDF 体积 + 跨平台一致）。
     // "YaheiSub" 是历史别名：样例 CSS 里直接把它当 family 名写过（m4 的 .dirfont），浏览器侧那是不
@@ -110,7 +125,7 @@ public static class FontManager
         {
             var ext = Path.GetExtension(file).ToLowerInvariant();
             if (ext is not (".ttf" or ".otf" or ".woff" or ".woff2")) continue;
-            if (BundledSubsetFiles.Contains(Path.GetFullPath(file))) continue;
+            if (BundledSubsetNames.Contains(Path.GetFileName(file))) continue;
             try
             {
                 using var tf = SKTypeface.FromFile(file);
@@ -136,21 +151,70 @@ public static class FontManager
         lock (SubsetLock)
         {
             if (_loadedSubsetAttempted) return;
-            (_notoRegular, _notoBold) = LoadPair(NotoFiles);
-            (_yaheiRegular, _yaheiBold) = LoadPair(YaheiFiles);
-            try { _monoRegular = FromFile(MonoRegularFile); }
-            catch { _monoRegular = null; }
+            (_notoRegular, _notoBold) = LoadPair("NotoSansSCSub");
+            (_yaheiRegular, _yaheiBold) = LoadPair("YaheiSub");
+            _monoRegular = LoadFace("NSimSunSub-Regular");
+            if (FontSource == "none")
+            {
+                // 全部落空 ⇒ 正文会静默退回系统字体：体积与跨平台一致双双失守，必须让宿主有机会听见
+                try { BundledFontsUnavailable?.Invoke(FontDir); } catch { /* 宿主订阅方炸了不影响渲染 */ }
+            }
             _loadedSubsetAttempted = true; // 最后置位：读侧见到 flag 即见到完整赋值（lock 提供屏障）
         }
     }
 
-    static (SKTypeface?, SKTypeface?) LoadPair(string[] files)
+    static (SKTypeface?, SKTypeface?) LoadPair(string stem)
+        => (LoadFace(stem + "-Regular"), LoadFace(stem + "-Bold"));
+
+    /// <summary>
+    /// 一张打包子集字面的三级解析：显式目录 → dll 内嵌 → 老的 BaseDirectory 路径。
+    /// 内嵌排在老路径之前，正是为了让「测试宿主」与「NuGet 消费方」拿到**同一份**字体——
+    /// 以前两者拿到的是不同字面，仓库的金标因此从没覆盖过消费方实际走的那条分支。
+    /// 老路径仍留着：重烤字体后想临时验证的宿主可以就地放文件，不必改代码。
+    /// </summary>
+    static SKTypeface? LoadFace(string stem)
+    {
+        var dir = BundledFontDirectory;
+        if (!string.IsNullOrWhiteSpace(dir))
+        {
+            var tf = FromFile(Path.Combine(dir, stem + ".ttf"));
+            if (tf != null) { NoteSource("directory:" + dir); return tf; }
+        }
+        var bytes = Fonts.Bundled.Read("PaperSharp.Fonts." + stem + ".ttf");
+        if (bytes is { Length: > 0 })
+        {
+            var tf = FromBytes(bytes);
+            if (tf != null) { NoteSource("embedded"); return tf; }
+        }
+        var legacy = FromFile(Path.Combine(FontDir, stem + ".ttf"));
+        if (legacy != null) { NoteSource("legacy:" + FontDir); return legacy; }
+        return null;
+    }
+
+    /// <summary>记录来源；若不同字面来自不同处，如实标成 mixed（那说明部署状态本身就不一致）。</summary>
+    static void NoteSource(string src)
+    {
+        if (FontSource == "none") FontSource = src;
+        else if (FontSource != src && !FontSource.StartsWith("mixed:")) FontSource = "mixed:" + FontSource + "|" + src;
+    }
+
+    // SKData 交给 SKTypeface 后仍自持一份引用：Skia 的 FromData 语义在各版本上是「借用」，
+    // 提前 Dispose 会得到一张静默失效的 face。5 张 face、8 MB 级，随进程活着可接受。
+    static readonly List<SKData> KeptData = new();
+
+    /// <summary>从内存里的 sfnt 加载字面，并按同一份字节登记 PRKT 字距表。</summary>
+    static SKTypeface? FromBytes(byte[] sfnt)
     {
         try
         {
-            return (FromFile(files[0]), FromFile(files[1]));
+            var data = SKData.CreateCopy(sfnt);
+            var tf = SKTypeface.FromData(data);
+            if (tf == null) { data.Dispose(); return null; }
+            lock (KeptData) KeptData.Add(data);
+            KernTable.AttachFromBytes(tf, sfnt);   // 不能退成 AttachFromTables：那会丢 PRKT
+            return tf;
         }
-        catch { return (null, null); }
+        catch { return null; }
     }
 
     /// <summary>从文件加载字面，并顺带登记它的字距对表（<see cref="KernTable"/>，只有打包子集带）。

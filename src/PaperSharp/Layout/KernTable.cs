@@ -257,6 +257,34 @@ public sealed class KernTable
     // 只保留双码位 < Limit 的对（同 PRKT：CJK 全宽，字距交给 palt）。
 
     /// <summary>
+    /// 从内存里的 sfnt 字节登记 PRKT 字距表——嵌资源加载的打包字体走这条（没有文件路径可读）。
+    ///
+    /// 必须存在的原因：打包子集的字距在项目自定义表 <c>PRKT</c> 里，而 <see cref="AttachFromTables"/>
+    /// 只认标准 GPOS。若嵌资源改造只换成 AttachFromTables，PRKT 会被**静默丢弃**，
+    /// 度量退回 hmtx 口径——正是重影/字距那批工作（P0-6/P0-7/P1-16）的地基。
+    /// 所以嵌资源路径要么按字节读 PRKT，要么就不做。
+    /// </summary>
+    public static void AttachFromBytes(SKTypeface tf, byte[] sfnt)
+    {
+        var key = (tf.FamilyName, tf.FontWeight);
+        if (Cache.ContainsKey(key)) return;
+        KernTable? t = null;
+        try
+        {
+            using var ms = new MemoryStream(sfnt, writable: false);
+            var rows = ReadPrkt(ms);
+            if (rows is { Count: > 0 }) t = new KernTable(rows);
+        }
+        catch { /* 读不到就当没有自定义字距表，下面退 GPOS */ }
+        if (t == null)
+        {
+            AttachFromTables(tf);
+            return;
+        }
+        Cache.TryAdd(key, t);
+    }
+
+    /// <summary>
     /// 从字面自带的 sfnt 表登记字距（系统字体没有 PRKT，字距在 GPOS + legacy kern 里；
     /// @font-face 的子集若无 PRKT 也走这条，但只认自己那份 GPOS，见 <see cref="AttachWebfont"/>）。
     /// 解析一次即缓存，<see cref="SKTypeface.GetTableData"/> 只把用到的表体读进临时数组，不留字面数据。

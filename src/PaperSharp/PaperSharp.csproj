@@ -27,6 +27,22 @@
     <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!-- 打包子集字体随 dll 走（EmbeddedResource）：运行时不再依赖「入口程序集旁边有没有
+       assets/fonts」。那是 PERF_REPORT §12.6 那条宿主依赖 bug 的根因——字体没进包，消费方
+       静默退回系统字体，同一份 HTML 体积差 2.9~12.7 倍，而「PDF 体积 + 跨平台一致」正是
+       这批子集存在的理由。LogicalName 写死：默认名随 RootNamespace/路径变，别哪天找不到。
+       只嵌 Noto（OFL 可再分发）。雅黑/宋体的子集是微软/中易字体的派生二进制，不随 MIT 包
+       分发；宿主需要它就 FontManager.BundledFontDirectory 指给自己的目录。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Fonts\NotoSansSCSub-Regular.ttf" LogicalName="PaperSharp.Fonts.NotoSansSCSub-Regular.ttf" />
+    <EmbeddedResource Include="Fonts\NotoSansSCSub-Bold.ttf" LogicalName="PaperSharp.Fonts.NotoSansSCSub-Bold.ttf" />
+  </ItemGroup>
+
+  <!-- OFL 要求字体许可证随字体一并分发：嵌进 dll 不够，包内也要有一份。 -->
+  <ItemGroup>
+    <None Include="Fonts\OFL.txt" Pack="true" PackagePath="fonts\" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.3.1" />
     <PackageReference Include="AngleSharp.Css" Version="1.0.0-beta.176" />
