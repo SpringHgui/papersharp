@@ -13,8 +13,8 @@
 ## 为什么选它
 
 - **零浏览器依赖** —— 不装 Chromium、不起子进程、不开调试端口；一个类库嵌进你的 .NET 进程即可渲染
-- **服务端效率** —— 单页 PDF 中位约 200ms，单线程吞吐 ~5 页/秒；**线程安全**，多请求可并发进同一进程；常驻仅一个类库的体量，没有 V8/渲染树的内存包袱
-- **中文原生排版** —— CJK 逐字折行、GB2312 常用字字体子集嵌入（PDF 仅 ~2.5MB 且文字可选中可搜索）、中文数字页码
+- **服务端效率** —— 单页 PDF 中位约 30ms，单线程吞吐约 40 页/秒；**线程安全**，多请求可并发进同一进程；常驻仅一个类库的体量，没有 V8/渲染树的内存包袱
+- **中文原生排版** —— CJK 逐字折行、用字级字体子集嵌入（纯文字单页 PDF 约 50–120KB，文字可选中可搜索）、中文数字页码
 - **打印级语义** —— 天生面向分页媒体：`@page` 页边距、页眉页脚边距盒、自动跨页回流、表格跨页续 + `<thead>` 重复、`break-inside` / `orphans` / `widows`
 - **确定性输出** —— 默认离线渲染，同一输入恒定产物，适合发票、报表、合同等财务级文档
 
@@ -26,6 +26,10 @@ using PaperSharp;
 byte[] pdf = Renderer.RenderPdf(html, css);                        // 分页矢量 PDF（自动注入书签、链接注释、元数据）
 byte[] png = Renderer.RenderPng(html, css, width: 794, scale: 2);  // 2× 高清（~192 DPI）
 ```
+
+> **字体**：包里内嵌的是 SIL OFL 授权的 Noto Sans SC 子集（regular/bold，随 dll 内嵌资源走，不依赖宿主目录）。
+> CSS 里写 `"Microsoft YaHei"` 而本机装了雅黑时会自动用系统字面；想让引擎吃自己烤的子集
+> （体积与跨平台一致都要靠它），在首次渲染前设 `FontManager.BundledFontDirectory`。
 
 ## 示例集锦
 
@@ -146,7 +150,7 @@ body  { --brand: #1a73e8; --gap: 12px }
 - **选择器与伪元素**：`:is()`/`:where()`（AngleSharp 原生）、`::before`/`::after` 生成内容（字符串 / `attr()` / `open-quote`·`close-quote` / `url()` 图 / `counter()`·`counters()` 自动编号，含中文数字），块级与行内成盒
 - **文本**：inline 混排真行盒（span/a/br/inline-block/行内 img，基线对齐 + `vertical-align`）、CJK 逐字 / Latin 逐词折行、`white-space`/`word-break`/`text-overflow: ellipsis`/`letter-spacing`/`text-transform`/`text-decoration`、`text-wrap: balance`、`text-fit`
 - **视觉**：圆角（含 squircle）/阴影/linear·radial·conic 渐变/opacity/`mix-blend-mode`/`clip-path`/`mask-image`/`filter: blur|drop-shadow` 链/`background-clip: text`（渐变文字）/`backdrop-filter`（毛玻璃，仅位图路径）/内联 `<svg>`
-- **字体**：构建期 fonttools 子集化（PDF 23MB→2.5MB）、`@font-face`（多 src 回退/woff2）、`GoogleFonts.Fetch()` 下载+缓存+离线复用、`RegisterFontDirectory`、跨平台系统回退
+- **字体**：构建期 fonttools 子集化 + 随 dll 内嵌（纯文字单页 PDF 从 ~2.5MB 降到 50–120KB）、`@font-face`（多 src 回退/woff2）、`GoogleFonts.Fetch()` 下载+缓存+离线复用、`RegisterFontDirectory`、`BundledFontDirectory`（宿主自带子集）、跨平台系统回退
 - **复杂文字**：HarfBuzz shaping（阿拉伯连写）、`direction: rtl` + 轻量 bidi 混排、扩展字素安全折行（emoji ZWJ/组合符不拆散）、字形级字体回退（emoji/小语种不再出豆腐块）
 - **动画（确定性取帧）**：解析 `@keyframes` + `animation` 全套（timing/iteration/direction/fill），渲染传 `animationTime`（秒）即取该时刻的一帧，对 opacity/颜色/长度/圆角/字号/定位偏移按帧插值；输出仍是静态单帧、逐字节确定。Tailwind `animate-pulse` 已映射（详见边界）
 - **输出**：矢量 PDF（h1–h6 书签 + `<a>` 链接注释 + metadata，经自研 `PdfEnhancer` 增量尾部注入）/ PNG（scale 高清）/ JPEG / WebP / ICO / SVG
@@ -181,7 +185,7 @@ papersharp/
 
 ```bat
 cd src/PaperSharpSamples
-python tools/subset-font.py   :: 一次性，需 pip install fonttools；跳过则 PDF 回退嵌整份系统雅黑 ~20MB
+python tools/subset-font.py   :: 一次性，需 pip install fonttools；产出会自动同步进库工程（只同步 OFL 的 Noto），跳过则 PDF 回退嵌整份系统雅黑 ~20MB
 dotnet run
 ```
 
@@ -244,9 +248,12 @@ UPDATE_GOLDENS=1 dotnet test tests/PaperSharp.Tests       :: 有意变更后重�
 
 ## 性能
 
-详见 [PERF_REPORT.md](PERF_REPORT.md)（§3–§5.4、§7 为 Release `bench 50` 净跑，数据在 `src/PaperSharpSamples/bench_20260922.txt`；§5.5 与 §6 为 2026-09-24 的作者 CSS 层叠定性与 Playground 语料对拍）。要点：
+详见 [PERF_REPORT.md](PERF_REPORT.md)（§11 字体子集化、§12 跨引擎赛道定位与 shaping 刀、§13 PDF 体积两刀、§14 合并态分段归因；§3–§7 是 2026-09-22/24 换 PNG 编码器前后的 `bench 50`，留作历史对照）。要点：
 
-- 单页 PDF 中位 184–280ms，其中 paintEncode（**字体子集写入 + PDF backend**，与 PNG 编码器无关）占 **85–95%**；布局（measure+paginate）<2%。PNG 中位 27–107ms、吞吐 invoice **4.9 页/秒**（单线程）——※ 这两个 PNG/吞吐数是换 PNG 编码器**之前**的 `bench 50` 数据，未重跑；新编码器的效果见 §6。
+- **单页 PDF**：纯文字样例中位 27.5–64.8ms（invoice **31.0ms**、report 两页 64.8ms），单线程吞吐 invoice **42.4 页/秒**（§11 的字体子集化把 5.1 页/秒抬上来的：速度与体积是同一个根因，Skia 的 PDF 后端完全不子集化字体）。
+- **体积**：纯文字单页 94 → **47.5 KB**（§13.3 cmap 收口 + name 瘦身），m7 那种含彩色字体的页 **−92.6%**（§13.6 COLR v1 图层闭包），逐像素不变。
+- **多页成本模型**：跨引擎语料上 warm 拟合 ≈ **165 ms + 50 ms/声明页**（系统字体宿主），shaping run 缓存把边际压到 **36.3 ms/页（−27%）**、产物逐字节相同（§12.9）。
+- 布局（measure+paginate）<2%，**层叠**（AngleSharp `GetComputedStyle`）才是元素上千时的第一瓶颈——已用 `EagerStyleCollection` 把 O(n².5) 消回近线性（下两条）。
 - **`buildDoc`（AngleSharp 逐元素层叠）曾随元素数超线性 ~O(n^2.5)**：table 2000 行 74.4s / flexlist 2000 条 21.3s，而同规模自研布局仅 76/162ms。**2026-09-24 已定位并消掉**：根因不是层叠算法贵，是 AngleSharp 每层叠一个元素、且对其**每个祖先**，都把整份样式表集合（未物化的 LINQ）重新枚举一遍 → 每元素 O(深度 × 文档大小)。改成「整篇枚举一次、之后吃这份列表」（`Css/EagerStyleCollection.cs`，~40 行，特异度/继承/`!important`/`var()` 仍全部由 AngleSharp 判定）后 table 2000 行 **74.4s → 5.29s**、净层叠同进程对拍 **19–25×**，规模档回到近线性；逐属性 57,058 次比对 0 差异（PERF_REPORT §5.5）。ROADMAP M6 的「自研级联」因此降级为可选的依赖收敛项。
 - **「谁是第一瓶颈」有两个区间**：产物像素数主导时是**编码**，元素数上千时是**层叠**。2026-09-24 用自研并行 PNG 编码器把编码段压掉 **14×**（22 个真实页面样例合计 4752 → 339ms，端到端 **2.74×**、逐像素不变）之后，数百元素的常见页面（m1 501 盒：层叠 306ms vs 编码 46ms）也已转为层叠第一；随后上面的层叠改动把该语料端到端再压到 **2,091ms**（−15%，语料最大 501 盒，所以只有一两成）；同日第二刀（层叠结果**按元素缓存** + `ReadStyle` 双轮并一轮，语义仍零替换）在此之上把 22 样例 buildDoc 再压 **1.76×**、端到端 **2,893 → 2,001ms（1.45×）**，门是 1,274,452 次逐属性比对 0 不一致（PERF_REPORT §5.6）。层叠这条路的性能理由至此用尽。
 
