@@ -40,12 +40,21 @@ public sealed class KernTable
     }
 
     /// <summary>
-    /// 已登记的字距表，按 (family, weight) 键控。**不能**按 SKTypeface 实例键控：
+    /// 已登记的字距表，按 (family, weight, slant) 键控。**不能**按 SKTypeface 实例键控：
     /// SKFont.Typeface 每次读取都新建一个托管包装，用实例当键会让每次度量都重新解析一遍 PRKT
     /// （Noto 那份 3 万对 → 单次约 3ms，折行循环里直接把渲染跑成挂死）。
     /// null 也是有意义的条目（该字面无 PRKT，负缓存，不再重复读文件）。
+    ///
+    /// 键里**必须带倾斜档**：FamilyName+Weight 撞得上不等于同一张表——"Segoe UI" 的正立面与
+    /// 真斜面（Arial Italic 那一类）族名和字重完全相同，但 GPOS 配对不同（实测正立 Te=−200 units、
+    /// 斜面 −184）。少带这一档，先跑的那条渲染把斜面的表登记进 ("Segoe UI",400)，后跑的度量
+    /// 就整页吃错字距；并行套件里谁先跑不确定，于是表现为「只有满载时才偶发」的红。
+    /// 与 <c>FontManager.Cache</c> 的 (family, weight, slant) 口径一致。
+    /// 副作用是可接受的：向系统要不到斜面的请求会带回**正立面 + 请求的 slant 值**（见
+    /// <see cref="FontManager.FaceIsSlanted"/>），于是同一张物理面按两个 slant 键各解析一次，
+    /// 有上界（≤3 档）、不改变结果。
     /// </summary>
-    static readonly ConcurrentDictionary<(string Family, int Weight), KernTable?> Cache = new();
+    static readonly ConcurrentDictionary<(string Family, int Weight, SKFontStyleSlant Slant), KernTable?> Cache = new();
 
     /// <summary>
     /// **按字面实例**的字距覆盖表（键 = SKTypeface 的原生指针 Handle，SKObject.Handle 跨托管包装稳定）。
@@ -58,10 +67,15 @@ public sealed class KernTable
     /// </summary>
     static readonly ConcurrentDictionary<long, KernTable?> InstanceCache = new();
 
+    /// <summary>字距表的缓存键：族名 + 字重 + 倾斜档（三者缺一就会把另一张面的表当自己的用，
+    /// 见 <see cref="Cache"/>）。用 <c>FontSlant</c> 而不是 <c>FontStyle.Slant</c>：后者每次新建一个
+    /// SKFontStyle 包装，度量热路径上白掏分配。</summary>
+    static (string, int, SKFontStyleSlant) Key(SKTypeface tf) => (tf.FamilyName, tf.FontWeight, tf.FontSlant);
+
     /// <summary>度量路径取字距表；未登记（系统字体、@font-face 无 PRKT）返回 null。</summary>
     public static KernTable? For(SKTypeface? tf) => tf == null ? null
         : InstanceCache.TryGetValue(tf.Handle.ToInt64(), out var ov) ? ov
-        : Cache.TryGetValue((tf.FamilyName, tf.FontWeight), out var t) ? t : null;
+        : Cache.TryGetValue(Key(tf), out var t) ? t : null;
 
     /// <summary>字符串的字距增量（px）；无表 → 0。</summary>
     public static float Of(string s, SKTypeface? tf, float sizePx) => For(tf)?.Adjust(s, sizePx) ?? 0f;
@@ -118,7 +132,7 @@ public sealed class KernTable
     /// <summary>从字体文件登记字距表：只读 PRKT 那一段，不把整份字体留在内存。加载字面时调用一次。</summary>
     public static void Attach(SKTypeface tf, string path)
     {
-        var key = (tf.FamilyName, tf.FontWeight);
+        var key = Key(tf);
         if (Cache.ContainsKey(key)) return;
         // PRKT 优先：它是烘焙期把「源的 legacy kern + 子集 GPOS pair-pos」合并成的码位对表，
         // 覆盖面比运行期再解析一遍 GPOS 更全（浏览器用**已安装字面**时那份 legacy kern 照样生效）。
@@ -266,7 +280,7 @@ public sealed class KernTable
     /// </summary>
     public static void AttachFromBytes(SKTypeface tf, byte[] sfnt)
     {
-        var key = (tf.FamilyName, tf.FontWeight);
+        var key = Key(tf);
         if (Cache.ContainsKey(key)) return;
         KernTable? t = null;
         try
@@ -291,7 +305,7 @@ public sealed class KernTable
     /// </summary>
     public static void AttachFromTables(SKTypeface tf)
     {
-        var key = (tf.FamilyName, tf.FontWeight);
+        var key = Key(tf);
         if (Cache.ContainsKey(key)) return;
         Cache.TryAdd(key, OwnTable(tf, legacyKern: true));   // null 也要存：负缓存，度量退回 hmtx 口径
     }
