@@ -12,7 +12,7 @@ namespace PaperSharp.Tests;
 /// 落笔那半边由 <see cref="KernDrawSiteTests"/> 哨兵管（逐段推进必须与正文同一条口径），
 /// 这里只钉**宽度算式**——它俩错法不同，得分开守。
 ///
-/// 探针 src/PaperSharpSamples/assets/_probe-mb.html 把同一串 "Wave offline AVoWyA!" 同时放进
+/// 探针页（下面内联的 <see cref="Html"/>）把同一串 "Wave offline AVoWyA!" 同时放进
 /// @top-left / @top-center / @bottom-right。三个盒子吃的是同一个 w，于是**不带边距衬字**地：
 ///   贴右起点 − 贴左起点 = spanW − w，居中起点 − 贴左起点 = (spanW − w)/2
 /// 前者必须严格是后者的 2 倍（两钉同宽），再由 spanW − 贴右差反出 w 的绝对值。
@@ -22,7 +22,28 @@ namespace PaperSharp.Tests;
 /// </summary>
 public class MarginBoxKernTests
 {
-    const string Probe = "_probe-mb";
+    /// <summary>
+    /// 探针页**内联**在这里，不走 <c>assets/_probe-mb.html</c>：那个 <c>_</c> 前缀路径按仓库约定
+    /// 是「一次性判别探针」，被 <c>.gitignore</c> 挡在库外（<code>src/PaperSharpSamples/assets/**/_*</code>）。
+    /// 测试读它 = 只在开发机上绿：CI 从干净检出跑必然 <c>FileNotFoundException</c>，
+    /// 而它是发版门禁里的一条（1.0.0 第一次推 tag 就卡在这）。判据需要的只是这份 15 行的 CSS，
+    /// 没有别的消费者，所以内联比给 .gitignore 开例外便宜。
+    /// </summary>
+    const string Html = """
+<style>
+@page {
+  size: A4;
+  margin: 24mm 16mm;
+  @top-left     { content: "Wave offline AVoWyA!"; font-family: "Microsoft YaHei"; font-size: 14px; color: #111111; }
+  @top-center   { content: "Wave offline AVoWyA!"; font-family: "Microsoft YaHei"; font-size: 14px; color: #111111; }
+  @bottom-right { content: "Wave offline AVoWyA!"; font-family: "Microsoft YaHei"; font-size: 14px; color: #111111; }
+}
+html, body { margin: 0; }
+body { font-family: "Microsoft YaHei"; font-size: 14px; color: #111111; }
+</style>
+
+<p>Wave offline AVoWyA!</p>
+""";
     const double MarginPt = 16 * 72.0 / 25.4;       // 探针 @page margin: 24mm 16mm
     const double KernedPt = 149.557 * 0.75;         // hmtx + 字距对（PaperSharpSamples kern 探针实测）
     const double BarePt = 152.291 * 0.75;           // 纯 hmtx：度量端漏付字距时会退回这个
@@ -59,10 +80,7 @@ public class MarginBoxKernTests
     [Fact]
     public void Center_and_right_pins_use_the_kerned_width()
     {
-        var html = File.ReadAllText(Path.Combine(Fixture.AssetsDir, Probe + ".html"));
-        var cssPath = Path.Combine(Fixture.AssetsDir, Probe + ".css");
-        using var doc = PdfDocument.Open(Renderer.RenderPdf(html,
-            File.Exists(cssPath) ? File.ReadAllText(cssPath) : "", baseDir: Fixture.AssetsDir));
+        using var doc = PdfDocument.Open(Renderer.RenderPdf(Html, ""));
 
         var top = Boxes(doc)[0];                       // @top-left, @top-center
         var bottom = Boxes(doc)[^1];                   // @bottom-right
