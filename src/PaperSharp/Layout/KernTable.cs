@@ -47,12 +47,70 @@ public sealed class KernTable
     /// </summary>
     static readonly ConcurrentDictionary<(string Family, int Weight), KernTable?> Cache = new();
 
+    /// <summary>
+    /// **按字面实例**的字距覆盖表（键 = SKTypeface 的原生指针 Handle，SKObject.Handle 跨托管包装稳定）。
+    /// @font-face 网络字体走这条：浏览器加载的是**那份子集文件本身**，只认它自带的 GPOS
+    /// （子集的 GPOS 是空的 → 字距 0），而**不**套用打包时烘进 PRKT 的那份「源 legacy kern」。
+    /// 同一份子集文件若经「已安装字面」通路（FontManager 的 Microsoft YaHei / Noto 分派）加载，
+    /// 浏览器用的是真装的雅黑/思源，那份 legacy kern 照样生效 → 仍走 (family,weight) 的 PRKT 缓存。
+    /// 两条通路内部 family 相同，只能按实例区分，故用这张覆盖表。
+    /// null 也是有意义条目（该 webfont 实例无自带字距表）。
+    /// </summary>
+    static readonly ConcurrentDictionary<long, KernTable?> InstanceCache = new();
+
     /// <summary>度量路径取字距表；未登记（系统字体、@font-face 无 PRKT）返回 null。</summary>
     public static KernTable? For(SKTypeface? tf) => tf == null ? null
+        : InstanceCache.TryGetValue(tf.Handle.ToInt64(), out var ov) ? ov
         : Cache.TryGetValue((tf.FamilyName, tf.FontWeight), out var t) ? t : null;
 
     /// <summary>字符串的字距增量（px）；无表 → 0。</summary>
     public static float Of(string s, SKTypeface? tf, float sizePx) => For(tf)?.Adjust(s, sizePx) ?? 0f;
+
+    /// <summary>相邻码位对的字距（px）。查表规则与 <see cref="Adjust"/> 逐字相同：两侧任一达到
+    /// <see cref="Limit"/>（CJK 全宽，源里本就没有配对）或该对没配 → 0。</summary>
+    public float Pair(int prev, int cp, float sizePx)
+    {
+        if (_count == 0 || prev >= Limit || cp >= Limit) return 0;
+        if (prev < 128 && cp < 128) return (_ascii?[(prev << 7) | cp] ?? 0f) * sizePx;
+        return _wide != null && _wide.TryGetValue((prev << 16) | cp, out var v) ? v * sizePx : 0f;
+    }
+
+    /// <summary>
+    /// 把串按「非零字距对」切开：每段内部的相邻对全为 0 ⇒ 段宽就是纯 hmtx 宽，
+    /// 段尾 <c>Tail</c> 是该段末码位到下一段首码位那一对的调整量。
+    /// Σ(段宽 + Tail) 与 <c>MeasureText(整串) + Adjust(整串)</c> 逐项相等 —— 这正是绘制端要的口径：
+    /// Skia 一次 DrawText 只按 hmtx 走位，字距是度量端（<c>TextMeasurer.LineWidth</c>）加进行宽的，
+    /// 不切开画就会「量得窄、画得宽」，配对之后的每个字形都比布局以为的位置更往右。
+    /// 串里没有配对时返回单段且 Tail=0，且段就是原串本身（无拷贝），调用方等同整串一次绘制。
+    /// </summary>
+    public List<(string Seg, float Tail)> KernChunks(string s, float sizePx)
+    {
+        var list = new List<(string, float)>();
+        if (_count == 0 || s.Length < 2) { list.Add((s, 0f)); return list; }
+        int start = 0, prev = First(s, 0);
+        for (int i = Advance(s, 0); i < s.Length; i += Advance(s, i))
+        {
+            int cp = First(s, i);
+            float k = Pair(prev, cp, sizePx);
+            if (k != 0) { list.Add((s.Substring(start, i - start), k)); start = i; }
+            prev = cp;
+        }
+        list.Add((s[start..], 0f));
+        return list;
+    }
+
+    /// <summary>该字面下串内是否存在非零字距对（绘制端据此决定要不要走整串快路）。</summary>
+    public static bool HasPairs(string s, SKTypeface? tf, float sizePx) => Of(s, tf, sizePx) != 0f;
+
+    /// <summary>串首码位（代理对算一个）。</summary>
+    public static int FirstCp(string s) => First(s, 0);
+    /// <summary>串末码位（代理对算一个）。空串 → 0（0 是 .notdef，落不到任何配对）。</summary>
+    public static int LastCp(string s)
+    {
+        int last = s.Length - 1;
+        if (last < 0) return 0;
+        return last > 0 && char.IsLowSurrogate(s[last]) ? char.ConvertToUtf32(s, last - 1) : s[last];
+    }
 
     /// <summary>该字面是否带字距表（自检用）。</summary>
     public static bool HasTable(SKTypeface tf) => For(tf) != null;
@@ -62,20 +120,38 @@ public sealed class KernTable
     {
         var key = (tf.FamilyName, tf.FontWeight);
         if (Cache.ContainsKey(key)) return;
-        KernTable? t = null;
-        try
-        {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var rows = ReadPrkt(fs);
-            if (rows is { Count: > 0 }) t = new KernTable(rows);
-        }
-        catch { /* 读不到就当没有字距 */ }
+        // PRKT 优先：它是烘焙期把「源的 legacy kern + 子集 GPOS pair-pos」合并成的码位对表，
+        // 覆盖面比运行期再解析一遍 GPOS 更全（浏览器用**已安装字面**时那份 legacy kern 照样生效）。
+        var t = PrktTable(path);
         if (t == null)
         {
             AttachFromTables(tf);   // 自定义表没有 → 退回标准 GPOS 通路（下面那条）
             return;
         }
         Cache.TryAdd(key, t);
+    }
+
+    /// <summary>
+    /// @font-face 网络字体实例的字距登记：只解析**该字面自带的 GPOS**（不读 PRKT 里那份源 legacy kern），
+    /// 结果按 SKTypeface 实例（UniqueKey）缓存。浏览器的 DirectWrite/Skia 对 webfont 只应用文件内的 GPOS，
+    /// 子集文件的 GPOS 是空的 → 字距 0（m4 SubSrcTest 实测：浏览器 = 纯 hmtx 78.03，引擎此前多套 −2.07）。
+    /// </summary>
+    public static void AttachWebfont(SKTypeface tf)
+    {
+        long key = tf.Handle.ToInt64();
+        if (InstanceCache.ContainsKey(key)) return;
+        InstanceCache.TryAdd(key, OwnTable(tf));   // null 也存：负缓存，度量退回纯 hmtx
+    }
+
+    /// <summary>读该文件的 PRKT 自定义表；没有或解析失败 → null。</summary>
+    static KernTable? PrktTable(string path)    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var rows = ReadPrkt(fs);
+            return rows is { Count: > 0 } ? new KernTable(rows) : null;
+        }
+        catch { return null; }   // 读不到就当没有字距
     }
 
     /// <summary>串内相邻码位对的字距合计（px）。</summary>
@@ -168,32 +244,105 @@ public sealed class KernTable
 
     // ── 系统字体：GPOS pair-pos ───────────────────────────────────────
     //
-    // 系统字体没有 PRKT（那是子集构建期烘进去的自定义表），字距在 GPOS 的 'kern'/'dist' 特性里，
-    // 挂在**字面对**上（format 1 精确对 / format 2 字距类对）。口径照 src/PaperSharpSamples/tools/
-    // subset-font.py 的 _gpos_pairs：特性取 kern+dist 的并集（不分 script）、同一对跨 lookup 累加、
-    // 每个字面只认 cmap 里最小的那个码位。Chrome 的 HarfBuzz 也是这个算法，所以对得上参考浏览器：
-    // Segoe UI「Page 1 - Typography & Text」@10 hmtx 123.989 + 字距 −1.870 = 122.119 = Chrome 实测。
+    // 系统字体没有 PRKT（那是子集构建期烘进去的自定义表），字距有两条来源，两条都吃：
+    // ① GPOS 的 'kern'/'dist' 特性，挂在**字面对**上（format 1 精确对 / format 2 字距类对）。口径照
+    //    src/PaperSharpSamples/tools/subset-font.py 的 _gpos_pairs：特性取 kern+dist 的并集（不分 script）、
+    //    同一对跨 lookup 累加、每个字面只认 cmap 里最小的那个码位。Chrome 的 HarfBuzz 也是这个算法，
+    //    所以对得上参考浏览器：Segoe UI「Page 1 - Typography & Text」@10 hmtx 123.989 + 字距 −1.870
+    //    = 122.119 = Chrome 实测。
+    // ② legacy <c>kern</c> 表（见 <see cref="LegacyKernRows"/>）——Arial / Times New Roman / Verdana 这批
+    //    系统字面的字距**全**在这一张里，它们的 GPOS 里没有可用 pair-pos，只吃①就等于整张表为 null、
+    //    度量退回纯 hmtx，于是每一行拉丁从第一个配对起就一路往右漂（真值矩阵实测 Arial@20「Te」偏宽
+    //    2.21px、「TAVoWyA!」偏宽 4.25px；Times@20「TAVoWyA!」偏宽 7.96px）。
     // 只保留双码位 < Limit 的对（同 PRKT：CJK 全宽，字距交给 palt）。
-    // 注：字距完全躲在 legacy <c>kern</c> 表里的字体（雅黑那种）不在这条通路内——打包子集已带 PRKT，
-    // 只有系统回退命中这类字体时才退回旧的「无字距」口径。
 
     /// <summary>
-    /// 从字面自带的 sfnt 表登记字距（系统字体没有 PRKT，字距在 GPOS 里；@font-face 的子集若无 PRKT 也走这条）。
-    /// 解析一次即缓存，<see cref="SKTypeface.GetTableData"/> 只把 GPOS/cmap 两段表体读进临时数组，不留字面数据。
+    /// 从字面自带的 sfnt 表登记字距（系统字体没有 PRKT，字距在 GPOS + legacy kern 里；
+    /// @font-face 的子集若无 PRKT 也走这条，但只认自己那份 GPOS，见 <see cref="AttachWebfont"/>）。
+    /// 解析一次即缓存，<see cref="SKTypeface.GetTableData"/> 只把用到的表体读进临时数组，不留字面数据。
     /// </summary>
     public static void AttachFromTables(SKTypeface tf)
     {
         var key = (tf.FamilyName, tf.FontWeight);
         if (Cache.ContainsKey(key)) return;
-        KernTable? t = null;
+        Cache.TryAdd(key, OwnTable(tf, legacyKern: true));   // null 也要存：负缓存，度量退回 hmtx 口径
+    }
+
+    /// <summary>按字面自己的 cmap 现算字距对：优先 GPOS，字面没有 GPOS 配对时（<paramref name="legacyKern"/>）
+    /// 整张改吃 legacy kern 表；两条路都没配对 → null。</summary>
+    static KernTable? OwnTable(SKTypeface tf, bool legacyKern = false)
+    {
         try
         {
             var glyph2cp = CmapReps(tf);
             var rows = glyph2cp.Count > 0 ? GposRows(tf, glyph2cp) : null;
-            if (rows is { Count: > 0 }) t = new KernTable(rows);
+            // **按字面整体二选一**，不是逐对合并：浏览器（HarfBuzz / DirectWrite）在字面自带 GPOS 'kern'
+            // 时就不再吃 legacy kern 表。逐对补会把只在 legacy 里出现的对（Segoe UI 的 r+y）也塞进来，
+            // 真值矩阵实测 Segoe UI 从 0/120 坏成 8/120（「ry」@20 偏 0.79px），而 Arial / Times
+            // 这种 GPOS 一条配对都没有的字面必须整张走 legacy（否则 66/120、75/120 全坏）。
+            if (legacyKern && rows is not { Count: > 0 }) rows = LegacyKernRows(tf, glyph2cp, null);
+            return rows is { Count: > 0 } ? new KernTable(rows) : null;
         }
-        catch { /* 表读不到 / 解析失败 → 负缓存，度量退回 hmtx 口径 */ }
-        Cache.TryAdd(key, t);
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// 读字面自带的 legacy <c>kern</c>（format 0 配对子表）成码位对表。<paramref name="have"/> 传 null：
+    /// 调用方 <see cref="OwnTable"/> 按字面整体二选一，只有 GPOS 一条配对都没有的字面才走到这里。
+    /// 表内规则与 <c>bake_kern</c> 的 <c>_legacy_pairs</c> 同：子表内同名对后到覆盖（fontTools 反编译成
+    /// dict）、跨子表相加、零值不进表。
+    ///
+    /// 子表头字节序按 fontTools 的 <c>table__k_e_r_n.decompile</c> 为准——PRKT 就是它烘的：
+    /// <c>u16 version / u16 length / u8 format / u8 coverage</c>，与 OpenType 文档里 coverage 在前的
+    /// 写法相反。照文档读会把 arial 那 909 对当成 format 1 状态表，整张静默丢掉。
+    /// coverage 不做横竖过滤（fontTools 也不做；这批字面只有 1 张子表，且都是横向）。
+    ///
+    /// 命中这张表的都是系统字面：打包子集的 legacy kern 早在构建期被并进 PRKT，PRKT 命中就轮不到这里。
+    /// </summary>
+    static List<(int, int, float)>? LegacyKernRows(SKTypeface tf, Dictionary<int, int> glyph2cp,
+        List<(int, int, float)>? have)
+    {
+        var t = Table(tf, "kern");
+        if (t == null || t.Length < 10) return have;
+        int n = Sfnt.U16(t, 2);
+        if (n is <= 0 or > 64) return have;
+
+        var merged = new Dictionary<long, int>();
+        int p = 4;
+        for (int i = 0; i < n && p + 14 <= t.Length; i++)
+        {
+            int len = Sfnt.U16(t, p + 2), fmt = t[p + 4], pairs = Sfnt.U16(t, p + 6);
+            // 有些字面（OpenSans / Calibri）声明的 length 比实际短，按 nPairs 反推为准（同 fontTools）
+            int body = 14 + pairs * 6;
+            if (len <= 0 || len > t.Length - p) len = Math.Min(body, t.Length - p);
+            if (fmt == 0 && len >= body)
+            {
+                var sub = new Dictionary<long, int>(pairs);
+                for (int k = 0; k < pairs; k++)
+                {
+                    int e = p + 14 + k * 6;
+                    if (!glyph2cp.TryGetValue(Sfnt.U16(t, e), out int a)
+                     || !glyph2cp.TryGetValue(Sfnt.U16(t, e + 2), out int b)) continue;
+                    short v = (short)Sfnt.U16(t, e + 4);
+                    if (v != 0) sub[((long)a << 16) | (uint)b] = v;
+                }
+                foreach (var (key, v) in sub) merged[key] = merged.GetValueOrDefault(key) + v;
+            }
+            p += len;
+        }
+        if (merged.Count == 0) return have;
+
+        var rows = have ?? new List<(int, int, float)>();
+        var seen = new HashSet<long>();
+        if (have != null) foreach (var (a, b, _) in have) seen.Add(((long)a << 16) | (uint)b);
+
+        int upm = tf.UnitsPerEm is > 0 and <= 16384 ? tf.UnitsPerEm : 1000;
+        foreach (var (key, units) in merged)
+        {
+            if (rows.Count >= MaxRows) break;
+            if (seen.Add(key)) rows.Add(((int)(key >> 16), (int)(key & 0xFFFF), units / (float)upm));
+        }
+        return rows;
     }
 
     /// <summary>字面 → 该字面自带的 sfnt 表正文；非 sfnt face 或无该表 → null。</summary>
@@ -221,8 +370,12 @@ public sealed class KernTable
             if (sub is 0x00030001 or 0x00000003 or 0x00010000) { if (f == 4 && fmt4 < 0) fmt4 = off; }
             else if (sub is 0x0003000A or 0x00000004) { if (f == 12 && fmt12 < 0) fmt12 = off; }
         }
-        if (fmt12 >= 0) Cmap12(cmap, fmt12, reps);
+        // 先 format 4 再 format 12，两边都是「先到先得」：字距只用到码位 < Limit（0x2E80，全在 BMP），
+        // BMP 归 format 4 说话，format 12 只补它没覆盖到的字形（个别只有 (3,10) 子表的字面）。
+        // 实测这个先后对现存的 9 张字面没有影响（两张子表一致），排在前面只是把「BMP 以 format 4 为准」
+        // 写死，免得以后遇到两张表打架的字面时又要重新查是谁盖了谁。
         if (fmt4 >= 0) Cmap4(cmap, fmt4, reps);
+        if (fmt12 >= 0) Cmap12(cmap, fmt12, reps);
         return reps;
     }
 
@@ -254,16 +407,30 @@ public sealed class KernTable
         }
     }
 
+    /// <summary>
+    /// cmap format 12 的组表。表头是 **16 字节**：u16 format / u16 reserved / u32 length /
+    /// u32 language / u32 numGroups，组从 off+16 起、每组 12 字节。
+    /// 少读那个 u32 language 会把 length 当组数、把组表起点少挪 4 字节 —— Arial 实测读成
+    /// 「9784 组、首组 0x0000..0x032E→gid 32」，凭空造出几千条 glyph→码位 的假映射；
+    /// 而 <see cref="CmapReps"/> 里这条通路先跑且 <see cref="TryAddRep"/> 先到先得，
+    /// format 4 那份正确表就被盖掉了（gid 89 本该是 'v'，假表里成了 '9'）——
+    /// 字距对于是登记到别的码位上，查表永远查不到（Arial 只有 A+V/A+W 这类侥幸命中的对活下来）。
+    /// </summary>
     static void Cmap12(byte[] t, int off, Dictionary<int, int> reps)
     {
-        int groups = (int)Sfnt.U32(t, off + 4);
+        if (off + 16 > t.Length) return;
+        int groups = (int)Sfnt.U32(t, off + 12);
+        if (groups is <= 0 or > 200_000) return;
+        long lastEnd = 0;
         for (int i = 0; i < groups; i++)
         {
-            int rec = off + 8 + i * 12;
+            int rec = off + 16 + i * 12;
             if (rec + 11 >= t.Length) return;
             long start = Sfnt.U32(t, rec), end = Sfnt.U32(t, rec + 4);
             uint glyph = Sfnt.U32(t, rec + 8);
             if (start >= Limit) return;
+            if (start > end || start < lastEnd) continue;   // 倒挂/重叠组：照 HarfBuzz 跳过，别展开
+            lastEnd = end;
             for (long cp = start; cp <= Math.Min(end, Limit - 1); cp++)
                 if (cp >= 0x20) TryAddRep(reps, (int)(glyph + (uint)(cp - start)), (int)cp);
         }
@@ -362,24 +529,33 @@ public sealed class KernTable
             }
             case 2:
             {
+                var cov = Coverage(t, st + Sfnt.U16(t, st + 2));
                 int vf1 = Sfnt.U16(t, st + 4), vf2 = Sfnt.U16(t, st + 6);
                 int c1n = Sfnt.U16(t, st + 8), c2n = Sfnt.U16(t, st + 10);
                 int size = ValueSize(vf1) + ValueSize(vf2);
-                if (size == 0 || c1n <= 0 || c2n <= 0 || c1n > 4096 || c2n > 4096) return;
+                if (size == 0 || c1n <= 0 || c2n <= 0 || c1n > 4096 || c2n > 4096 || cov.Count == 0) return;
                 int tail = st + 12 + c1n * c2n * size;      // Class1Record 数组之后才是两张 ClassDef
                 if (tail + 4 > t.Length) return;
                 var cd1 = ClassDef(t, st + Sfnt.U16(t, tail));
                 var cd2 = ClassDef(t, st + Sfnt.U16(t, tail + 2));
                 if (cd1.Count == 0 && cd2.Count == 0) return;
-                // 只对「有码位代表」的字形分类聚合（其余字形在度量时落不到，无需展开）
+                // 只对「有码位代表」的字形分类聚合（其余字形在度量时落不到，无需展开）。
+                // 首字形必须先过 Coverage：PairPosFormat2 的 Coverage 列出的就是 Class1 字形，
+                // **不在其中的字形整体退出**、而不是按「ClassDef 未列 → class 0」参与配对。原先漏了这一步，
+                // 于是 Coverage 里没有的 H/M 也吃到 class0×class1 的负字距（Noto 那份 lookup 只有 1 个子表，
+                // class1=0 里带着 HT −0.063em）→ "HTML"@12 被整体压窄 0.76px，连带其后每个行内盒 dx
+                // （inline 样例 p[3] 三个 span 齐偏 0.76；探针 _probe-inline：浏览器 canvas 逐字求和 = hmtx，
+                // 即浏览器根本不配这一对）。
+                var covered = new HashSet<int>(cov);
                 var by1 = new Dictionary<int, List<int>>();
                 var by2 = new Dictionary<int, List<int>>();
                 foreach (int g in kernable)
                 {
-                    int c1 = cd1.TryGetValue(g, out var v1) ? v1 : 0;
                     int c2 = cd2.TryGetValue(g, out var v2) ? v2 : 0;
-                    if (c1 < c1n) (by1.TryGetValue(c1, out var l1) ? l1 : (by1[c1] = [])).Add(g);
                     if (c2 < c2n) (by2.TryGetValue(c2, out var l2) ? l2 : (by2[c2] = [])).Add(g);
+                    if (!covered.Contains(g)) continue;
+                    int c1 = cd1.TryGetValue(g, out var v1) ? v1 : 0;
+                    if (c1 < c1n) (by1.TryGetValue(c1, out var l1) ? l1 : (by1[c1] = [])).Add(g);
                 }
                 foreach (var (c1, gs1) in by1)
                 {

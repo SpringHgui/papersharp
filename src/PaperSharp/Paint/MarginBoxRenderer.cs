@@ -23,22 +23,20 @@ public static class MarginBoxRenderer
             string text = BuildText(box, pageIndex, total);
             if (string.IsNullOrEmpty(text)) continue;
 
-            var typeface = FontManager.Get(box.FontFamily, box.FontWeight);
-            using var paint = new SKPaint
-            {
-                Color = box.Color,
-                TextSize = box.FontSize,
-                Typeface = typeface,
-                IsAntialias = true,
-                SubpixelText = true,
-                Style = SKPaintStyle.Fill,
-            };
+            var typeface = FontManager.Get(box.FontFamily, box.FontWeight, box.FontStyle);
+            using var paint = TextPainter.NewTextPaint(typeface, box.FontSize, box.FontStyle, box.Color, box.FontWeight);
 
             bool isTop = box.Position.StartsWith("top");
             float centerY = isTop ? spec.MarginTop / 2f : spec.PageH - spec.MarginBottom / 2f;
             float baseline = centerY + box.FontSize * 0.35f;
 
-            float w = paint.MeasureText(text);
+            // 宽度与落笔必须同口径：字距对既进居中/贴右的算式（否则整串偏半个配对量），也决定配对之后
+            // 每个字形的落点（否则页眉页脚那段字与正文同串的排布不一致）。
+            // 注：这里刻意不走 TextPainter.MeasureWidth —— 边距盒的串多是中文+计数器，MeasureWidth 会
+            // 拐进 TextShaper.WidthOf 的按字面切段分支，量出的宽与旧口径不同，m1/pct/report 三张的
+            // 页脚位置会跟着动（实测 45 红 vs 41 红）。那一刀要不要落，见台账 P2-9 末段。
+            // 与正文同一条宽度公式（MeasureWidth：hmtx + 字距 + 度量旗；复杂/回退串再走 WidthOf 切段）
+            float w = TextPainter.MeasureWidth(text, paint, 0f);
             float x = box.Position switch
             {
                 var p when p.EndsWith("left") => spanLeft,
@@ -46,7 +44,7 @@ public static class MarginBoxRenderer
                 _ => spanLeft + (spanW - w) / 2f, // center
             };
 
-            Pdf.PdfGlyphUsage.DrawText(canvas, text, x, baseline, paint);
+            Pdf.PdfGlyphUsage.DrawKerned(canvas, text, x, baseline, paint);
         }
     }
 

@@ -22,30 +22,47 @@ public sealed class MarginBoxSpec
     public float FontSize = 10f;
     public string FontFamily = "sans-serif";
     public int FontWeight = 400;
+    public string FontStyle = "normal";   // font-style：normal | italic | oblique
     public SKColor Color = SKColors.Gray;
 }
 
-/// <summary>解析后的 @page 规则：页面尺寸 + 页边距 + 页眉页脚边距盒。</summary>
+/// <summary>
+/// 解析后的 @page 规则：页面尺寸 + 页边距 + 页眉页脚边距盒。
+/// **本类的数字一律是 CSS px（96dpi）= 引擎的布局单位**，与盒模型同源；
+/// 出纸时才乘 <see cref="PtPerPx"/> 折算成 PDF 的 pt（72dpi）设备单位。
+/// </summary>
 public sealed class PageSpec
 {
-    public float PageW = 595.28f;   // 默认 A4（点）
-    public float PageH = 841.89f;
+    /// <summary>1pt 等于多少 CSS px（96/72）。@page 里的 pt/in/mm 先进布局、再随画布整体折算。</summary>
+    public const float PxPerPt = 96f / 72f;
+    /// <summary>1 CSS px 等于多少 pt：PDF 设备换算系数。</summary>
+    public const float PtPerPx = 72f / 96f;
+
+    public float PageW = 595.28f * PxPerPt;   // 默认 A4
+    public float PageH = 841.89f * PxPerPt;
     public float MarginLeft, MarginTop, MarginRight, MarginBottom;
     public List<MarginBoxSpec> Boxes = new();
     public bool HasRule;
 
     public float ContentW => PageW - MarginLeft - MarginRight;
     public float ContentH => PageH - MarginTop - MarginBottom;
+    /// <summary>PDF 页宽（pt）：布局 px × 0.75。</summary>
+    public float PdfPageW => PageW * PtPerPx;
+    /// <summary>PDF 页高（pt）：边注/书签的 PDF 坐标也以此为准。</summary>
+    public float PdfPageH => PageH * PtPerPx;
+
 }
 
 /// <summary>
 /// 手写 @page 解析器（CSS Paged Media 的实用子集）。直接从 CSS 文本里用花括号配对提取，
 /// 不依赖 AngleSharp 的分页媒体支持（其对 @bottom-center / counter() 覆盖不全）。
 /// 支持：size（关键字 / 两长度 / landscape）、margin 简写与 margin-*、嵌套 @top/bottom-*{content;font-*;color}。
-/// 长度单位换算到"点"（本引擎的布局单位）：px/pt→×1，mm→×72/25.4，cm→×72/2.54，in→×72。
+/// 长度单位换算到 CSS px（本引擎的布局单位，见 <see cref="PageSpec"/>）：
+/// px→×1，pt→×96/72，mm→×96/25.4，cm→×96/2.54，in→×96。出纸时再统一乘 0.75 折成 pt。
 /// </summary>
 public static class AtPageParser
 {
+    // 纸张标称尺寸（pt，ISO 216 / 常用美制），× PxPerPt 进布局单位。
     static readonly Dictionary<string, (float w, float h)> Sizes = new(StringComparer.OrdinalIgnoreCase)
     {
         ["a2"] = (1190.55f, 1683.78f),
@@ -55,6 +72,7 @@ public static class AtPageParser
         ["letter"] = (612f, 792f),
         ["legal"] = (612f, 1008f),
     };
+
 
     public static PageSpec Parse(string css, float defaultW, float defaultH)
     {
@@ -85,10 +103,10 @@ public static class AtPageParser
             {
                 case "size": ApplySize(spec, value); break;
                 case "margin": ApplyMarginShorthand(spec, value); break;
-                case "margin-top": spec.MarginTop = ToPoints(value); break;
-                case "margin-right": spec.MarginRight = ToPoints(value); break;
-                case "margin-bottom": spec.MarginBottom = ToPoints(value); break;
-                case "margin-left": spec.MarginLeft = ToPoints(value); break;
+                case "margin-top": spec.MarginTop = ToMarginPx(value); break;
+                case "margin-right": spec.MarginRight = ToMarginPx(value); break;
+                case "margin-bottom": spec.MarginBottom = ToMarginPx(value); break;
+                case "margin-left": spec.MarginLeft = ToMarginPx(value); break;
             }
         }
         foreach (var (name, inner) in nested)
@@ -109,7 +127,7 @@ public static class AtPageParser
         {
             if (Sizes.TryGetValue(p, out var s))
             {
-                spec.PageW = s.w; spec.PageH = s.h;
+                spec.PageW = s.w * PageSpec.PxPerPt; spec.PageH = s.h * PageSpec.PxPerPt;
                 if (landscape) (spec.PageW, spec.PageH) = (spec.PageH, spec.PageW);
                 return;
             }
@@ -120,8 +138,8 @@ public static class AtPageParser
                                     && !p.Equals("auto", StringComparison.OrdinalIgnoreCase)).ToList();
         if (lens.Count >= 2)
         {
-            spec.PageW = ToPoints(lens[0]);
-            spec.PageH = ToPoints(lens[1]);
+            spec.PageW = ToCssPx(lens[0]);
+            spec.PageH = ToCssPx(lens[1]);
             if (landscape) (spec.PageW, spec.PageH) = (spec.PageH, spec.PageW);
         }
     }
@@ -129,7 +147,7 @@ public static class AtPageParser
     static void ApplyMarginShorthand(PageSpec spec, string value)
     {
         var p = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        float T(string s) => ToPoints(s);
+        float T(string s) => ToMarginPx(s);
         float v0 = p.Length > 0 ? T(p[0]) : 0;
         float v1 = p.Length > 1 ? T(p[1]) : v0;
         float v2 = p.Length > 2 ? T(p[2]) : v0;
@@ -153,9 +171,11 @@ public static class AtPageParser
             switch (prop.ToLowerInvariant())
             {
                 case "content": box.Content = ParseContent(value); break;
-                case "font-size": box.FontSize = ToPoints(value); break;
+                // @page 边距盒的字号同口径：round 到 1/64（见 CssValueParser.SnapRound）
+                case "font-size": box.FontSize = CssValueParser.SnapRound(ToCssPx(value)); break;
                 case "font-family": box.FontFamily = value.Split(',')[0].Trim().Trim('\'', '"'); break;
                 case "font-weight": box.FontWeight = int.TryParse(value, out var w) ? w : (value.Trim().Equals("bold", StringComparison.OrdinalIgnoreCase) ? 700 : 400); break;
+                case "font-style": box.FontStyle = CssValueParser.ParseFontStyle(value, box.FontStyle); break;
                 case "color": box.Color = CssValueParser.ParseColor(value) ?? box.Color; break;
             }
         }
@@ -208,8 +228,8 @@ public static class AtPageParser
 
     // ── 工具 ────────────────────────────────────────────────
 
-    /// <summary>把带单位长度转成"点"（本引擎布局单位）。px/pt→×1，mm/cm/in→物理换算，无单位→px。</summary>
-    public static float ToPoints(string value)
+    /// <summary>把带单位长度转成 CSS px（本引擎布局单位）。px→×1，pt/in/mm/cm/pc/q→按 96dpi 折算，无单位→按 px。</summary>
+    public static float ToCssPx(string value)
     {
         value = value.Trim();
         if (value.Length == 0) return 0;
@@ -221,16 +241,14 @@ public static class AtPageParser
         string num = value[..cut];
         string unit = value[cut..].ToLowerInvariant();
         if (!float.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) return 0;
-        return unit switch
-        {
-            "px" or "pt" => v,
-            "mm" => v * 72f / 25.4f,
-            "cm" => v * 72f / 2.54f,
-            "in" => v * 72f,
-            "q" => v * 72f / 101.6f,
-            _ => v,
-        };
+        return CssValueParser.AbsoluteUnitFactor(unit) is { } f ? v * f : v;
     }
+
+    /// <summary>@page 边距：换到 CSS px 后再折到 Blink 的 1/64 网格（<b>截断</b>，作者长度口径）。
+    /// 为什么要紧（2026-09-30 取证，台账 P0-6）：毫米边距落在两个整数之间（16mm = 60.4724 → 浏览器
+    /// 存 60.46875），边距同时决定**内容宽**与**整页落笔相位**，引擎不折就和浏览器差 0.0073px 宽——
+    /// 页面上每条右对齐/靠 flex 分配的线都因此可能整体错 1 CSS px（report/pct 的残余位移带）。</summary>
+    static float ToMarginPx(string value) => CssValueParser.Snap(ToCssPx(value));
 
     static string StripComments(string s)
     {

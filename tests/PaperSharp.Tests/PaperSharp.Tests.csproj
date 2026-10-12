@@ -16,6 +16,11 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 
+  <!-- 注意：Svg.Skia 2.0.0 把本工程的 SkiaSharp 抬到 4.x，而 PaperSharp 类库按 2.88.9 编译。
+       4.x 已把 Typeface/TextSize/MeasureText 从 SKPaint 迁到 SKFont，所以测试里**不要**直接使
+       SKPaint 的这些成员（CS0117）。要断言排版口径，走 PaperSharp 自己的公开 API
+       （TextMeasurer / TextShaper / KernTable），例：KernPaintParityTests。 -->
+
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>

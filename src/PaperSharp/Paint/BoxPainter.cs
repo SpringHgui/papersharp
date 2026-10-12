@@ -9,7 +9,11 @@ namespace PaperSharp.Paint;
 /// </summary>
 public static class BoxPainter
 {
-    public static void PaintDecor(SKCanvas canvas, SKRect r, ComputedStyle s, bool backgroundClippedToText = false)
+    /// <param name="borderRect">描边用的矩形。默认与 <paramref name="r"/> 同；折叠表格的格子要传
+    /// <see cref="Layout.BlockBox.CollapsedBorderRect"/> —— 共享网格线的中心摆在边框盒的边上，
+    /// 而背景仍铺边框盒本身。</param>
+    public static void PaintDecor(SKCanvas canvas, SKRect r, ComputedStyle s, bool backgroundClippedToText = false,
+        int skipBorderSides = 0, SKRect? borderRect = null)
     {
         float opacity = s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity;
         if (opacity <= 0.001f) return;
@@ -51,7 +55,7 @@ public static class BoxPainter
         }
 
         // 边框
-        PaintBorder(canvas, r, s, radii, rounded, sq, opacity);
+        PaintBorder(canvas, borderRect ?? r, s, radii, rounded, sq, opacity, skipBorderSides);
     }
 
     /// <summary>inset box-shadow：把"盒形之外"的一圈涂成阴影色，再裁进盒内 —— 等价于内边缘往里的投影。</summary>
@@ -158,7 +162,10 @@ public static class BoxPainter
         DrawRR(canvas, sr, radii, rounded, sq, p);
     }
 
-    static void PaintBorder(SKCanvas canvas, SKRect r, ComputedStyle s, SKPoint[] radii, bool rounded, bool sq, float opacity)
+    /// <summary>画四边。<paramref name="skipSides"/> 按位跳过某条边：1=上 2=右 4=下 8=左。
+    /// 分页时跨页单元格的切缝那一头不该补横边框（box-decoration-break: slice），由调用方给。</summary>
+    static void PaintBorder(SKCanvas canvas, SKRect r, ComputedStyle s, SKPoint[] radii, bool rounded, bool sq, float opacity,
+        int skipSides = 0)
     {
         float t = s.BorderWidthTop, rt = s.BorderWidthRight, b = s.BorderWidthBottom, l = s.BorderWidthLeft;
         if (t <= 0 && rt <= 0 && b <= 0 && l <= 0) return;
@@ -171,6 +178,7 @@ public static class BoxPainter
             using var p = new SKPaint { Style = SKPaintStyle.Fill, IsAntialias = true };
             for (int side = 0; side < 4; side++)
             {
+                if ((skipSides & (1 << side)) != 0) continue;   // 切缝那条边整圈不描（圆角盒走的是整圈描边，做不到单边跳过——跨页格带圆角是够偏的角落，不为此改描边法）
                 float w = side switch { 0 => t, 1 => rt, 2 => b, _ => l };
                 string style = side switch { 0 => s.BorderStyleTop, 1 => s.BorderStyleRight, 2 => s.BorderStyleBottom, _ => s.BorderStyleLeft };
                 SKColor raw = side switch { 0 => s.BorderColorTop, 1 => s.BorderColorRight, 2 => s.BorderColorBottom, _ => s.BorderColorLeft };

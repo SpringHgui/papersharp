@@ -64,7 +64,11 @@ public static class StyleResolver
            不会像现在这样被这里的元素选择器反向压过重置；无作者声明才落到本表/内置 UA 默认值。 */
         div, section, article, header, footer, main { display: block; }
         /* 行内级元素默认 display:inline（AngleSharp 未必内置 UA 表，显式声明以驱动 inline 格式化上下文检测） */
-        a, span, em, i, strong, b, u, s, small, code, label, cite, abbr, mark, sub, sup, tt, kbd, var, q, ins, del, time { display: inline; }
+        a, span, em, i, strong, b, u, s, small, code, label, cite, abbr, mark, sub, sup, tt, kbd, var, q, ins, del, time, dfn { display: inline; }
+        /* 强调类标签的斜体默认值（HTML 渲染规范 §15.2.6 与 Chrome 内置 UA 一致；_probe-it 实测
+           em/i/cite/var/dfn/address 六个标签 computed font-style 都是 italic，其余行内标签不是）。
+           本表只声明 display，斜体全靠浏览器自己的 UA —— 引擎侧没有这行就是「斜体无效」。 */
+        i, cite, em, var, address, dfn { font-style: italic; }
         /* 替换元素同属行内级：缺了这条它按上面的兜底初值 block 定性，浏览器「图文混排立行盒 + 图片下方留 strut
            descent」的形态就整个丢了（作者真写了 display:block 的 <img> 由后注的作者表压过本表，仍然成块）。 */
         img, svg, picture, video, canvas { display: inline; }
@@ -104,7 +108,11 @@ public static class StyleResolver
         "overflow-wrap",
         // 同理 font-variant-caps 长写与 font-variant 的 petite-caps/all-small-caps 值 AngleSharp 不认，
         // 整条声明在解析期丢掉 → 小型大写整个不生效，只能靠原始 CSS 兜底表捞回。
-        "font-variant-caps", "font-variant" };
+        "font-variant-caps", "font-variant",
+        // font-style 的裸关键字（normal/italic/oblique）AngleSharp 认，但带角度的
+        // <c>oblique 14deg</c> 整条被丢（_probe-it 实测 computed 为空）→ 兜底表捞回，
+        // 否则这条在浏览器里斜、在引擎里站直。
+        "font-style" };
 
     // 不参与渲染的标签：不成盒、其文本不得混入正文（style 已在 BuildDocument 源头剥除，此处兜底）。
     static readonly HashSet<string> NonRenderingTags = new(StringComparer.OrdinalIgnoreCase)
@@ -249,8 +257,8 @@ public static class StyleResolver
                 var mm = Regex.Match(body, @"(?<![\w-])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
                 if (!mm.Success) continue;
                 var val = mm.Groups[1].Value.Trim().ToLowerInvariant();
-                // 逗号分开的选择器组逐段建键（P1-7）：只取整串末段时，".a,.b{overflow:clip}" 这种
-                // 没有空白的组会把带逗号的整串当键 → 谁都命不上，两段一起丢。
+                // 逗号分开的选择器组逐段建键（P1-7）：只取整串末段会把 ".a, .b{border-radius:9px}"
+                // 里的 .a 整个丢掉。每段各自约成「末 token + 伪元素后缀」，段与段互不相干。
                 foreach (var selPart in sel.Split(','))
                 {
                     var parts = Regex.Split(selPart.Trim(), @"[\s>+~]+").Where(x => x.Length > 0).ToArray();
@@ -262,41 +270,11 @@ public static class StyleResolver
         }
     }
 
-    /// <summary>取属性值：有 AngleSharp 结果就用；否则按元素 class/id/tag 命中兜底索引。</summary>
-    /// <summary>少数「UA 默认值由标签决定、但 AngleSharp 与作者 CSS 都读不到」的属性兜底。</summary>
-    static string? TagDefaultVerticalAlign(IElement el) => el.TagName.ToUpperInvariant() switch
-    {
-        "SUP" => "super",
-        "SUB" => "sub",
-        _ => null,
-    };
-
-    static string Lookup(string prop, IElement element, string current, DocContext ctx, string? pseudo = null)
-    {
-        if (string.IsNullOrWhiteSpace(current))
-        {
-            if (ctx.UnsupportedMap.TryGetValue(prop, out var map) && map.Count > 0)
-            {
-                var suf = PseudoKeySuffix(pseudo);
-                var cls = element.GetAttribute("class");
-                if (!string.IsNullOrWhiteSpace(cls))
-                    foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                        if (map.TryGetValue("." + c + suf, out var v)) return ExpandVars(v, element, ctx, pseudo);
-                var id = element.GetAttribute("id");
-                if (!string.IsNullOrWhiteSpace(id) && map.TryGetValue("#" + id + suf, out var iv)) return ExpandVars(iv, element, ctx, pseudo);
-                if (map.TryGetValue(element.TagName.ToLowerInvariant() + suf, out var tv)) return ExpandVars(tv, element, ctx, pseudo);
-            }
-            return current;
-        }
-        return ExpandVars(current, element, ctx, pseudo);
-    }
-
     /// <summary>
     /// 末段复合选择器 → (基 token, 伪元素后缀)。基 token 沿用历史口径：从第一个 <c>:</c> 或 <c>[</c>
     /// 起全剥（伪类与属性选择器不进键）。伪元素后缀单独留进键，于是 <c>.hero::after</c> 与 <c>.hero</c>
     /// 是两把键——旧口径把冒号后一律剥掉，伪元素声明会冒充宿主声明画到宿主身上
-    /// （login-page 的 <c>.hero</c> 因此吃了 <c>::after</c> 的 64px 圆角与白色内描边，Chrome 里两者都没有；
-    /// pricing-page 的 <c>.plan</c> 更是被 <c>.plan::before</c> 的 50% 挤掉了自己的 12px）。
+    /// （login-page 的 <c>.hero</c> 因此吃了 <c>::after</c> 的 64px 圆角与白色内描边，Chrome 里两者都没有）。
     /// 遗留单冒号写法 <c>:before/:after/:first-line/:first-letter</c> 同算伪元素。
     /// </summary>
     static (string Base, string Pseudo) SplitSelectorScope(string compound)
@@ -340,6 +318,37 @@ public static class StyleResolver
         return false;
     }
 
+    /// <summary>少数「UA 默认值由标签决定、但 AngleSharp 与作者 CSS 都读不到」的属性兜底。</summary>
+    static string? TagDefaultVerticalAlign(IElement el) => el.TagName.ToUpperInvariant() switch
+    {
+        "SUP" => "super",
+        "SUB" => "sub",
+        _ => null,
+    };
+
+    /// <summary>取属性值：有 AngleSharp 结果就用；否则按元素 class/id/tag 命中兜底索引。
+    /// <paramref name="pseudo"/> 非空时读的是伪元素自己的作用域——键带 <c>::before</c>/<c>::after</c> 后缀，
+    /// 与宿主两把键互不相通（CSS 里 border-radius / box-shadow / 背景这类非继承属性对两者各算一份层叠）。</summary>
+    static string Lookup(string prop, IElement element, string current, DocContext ctx, string? pseudo = null)
+    {
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            if (ctx.UnsupportedMap.TryGetValue(prop, out var map) && map.Count > 0)
+            {
+                var suf = PseudoKeySuffix(pseudo);
+                var cls = element.GetAttribute("class");
+                if (!string.IsNullOrWhiteSpace(cls))
+                    foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                        if (map.TryGetValue("." + c + suf, out var v)) return ExpandVars(v, element, ctx, pseudo);
+                var id = element.GetAttribute("id");
+                if (!string.IsNullOrWhiteSpace(id) && map.TryGetValue("#" + id + suf, out var iv)) return ExpandVars(iv, element, ctx, pseudo);
+                if (map.TryGetValue(element.TagName.ToLowerInvariant() + suf, out var tv)) return ExpandVars(tv, element, ctx, pseudo);
+            }
+            return current;
+        }
+        return ExpandVars(current, element, ctx, pseudo);
+    }
+
     /// <summary>
     /// overflow 值串里是否含裁剪关键字。auto/scroll/overlay 一律视同 hidden（定格输出不画滚动条）；
     /// 简写可能带两值（如 "visible hidden"），任一轴裁剪即整盒裁剪，故逐 token 判。
@@ -378,7 +387,10 @@ public static class StyleResolver
         }
     }
 
-    /// <summary>选择器 → 作用域 key：:root/html → "html"，* → "*"，其余取末段简单选择器（去伪类/属性段）。</summary>
+    /// <summary>选择器 → 作用域 key：:root/html → "html"，* → "*"，其余取末段简单选择器
+    /// （伪类/属性段剥掉，但**伪元素后缀留在键里**——见 <see cref="SplitSelectorScope"/>：
+    /// <c>.a::after{--pad:30px}</c> 只能被该伪元素自己看到，Chrome 里它既不上浮到宿主、
+    /// 也不横向泄给引用同名变量的兄弟元素）。</summary>
     static string? SelectorScopeKey(string sel)
     {
         if (sel.Length == 0 || sel.StartsWith("@")) return null;
@@ -516,8 +528,9 @@ public static class StyleResolver
         var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (Match block in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
         {
-            // 带伪元素的那段规则不算「全局唯一定值」：<c>.a::after{--pad:30px}</c> 只有该伪元素自己看得见，
-            // 内联进别处的 var(--pad) 等于把声明泄给兄弟元素（Chrome 取不到 → 该走回退值）。
+            // 带伪元素的那一段规则不算「全局唯一定值」：<c>.a::after{--pad:30px}</c> 只有该伪元素自己看得见，
+            // 把 --pad 内联进别处的 var(--pad) 等于把声明泄给兄弟元素（Chrome 取不到 → 该走回退值）。
+            // 跳过只是少一次内联优化，逐元素 FindVar 那条路已按伪元素键裁决。
             if (HasPseudoElementScope(block.Groups[1].Value)) continue;
             foreach (Match d in Regex.Matches(block.Groups[2].Value, @"(--[A-Za-z][\w-]*)\s*:\s*([^;}]+)"))
             {
@@ -713,7 +726,9 @@ public static class StyleResolver
         return null;
     }
 
-    /// <summary>按 CSS 继承语义查变量：从元素自身向上走，同级内联 style &gt; class &gt; id &gt; tag &gt; *。</summary>
+    /// <summary>按 CSS 继承语义查变量：从元素自身向上走，同级内联 style &gt; class &gt; id &gt; tag &gt; *。
+    /// <paramref name="pseudo"/> 非空时先在**起始元素这一跳**试伪元素作用域的键（<c>.a::after{--x:…}</c>），
+    /// 命中不了再退回宿主链上的普通键（伪元素继承宿主的变量，反向不行——所以伪元素键只在第一跳有效）。</summary>
     static string? FindVar(IElement el, string name, DocContext ctx, string? pseudo = null)
     {
         var varMap = ctx.VarMap;
@@ -727,16 +742,21 @@ public static class StyleResolver
                 if (m.Success) return m.Groups[1].Value.Trim();
             }
             var cls = e.GetAttribute("class");
-            // 伪元素自己声明的变量：键 = 末 token + "::before"/"::after"，只在起始元素这一跳有效
-            if (suf.Length > 0 && ReferenceEquals(e, el) && !string.IsNullOrWhiteSpace(cls))
-                foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                    if (varMap.TryGetValue("." + c + suf, out var pcm) && pcm.TryGetValue(name, out var pv)) return pv;
+            var id = e.GetAttribute("id");
+            var tag = e.TagName.ToLowerInvariant();
+            if (suf.Length > 0 && ReferenceEquals(e, el))
+            {
+                // 伪元素自己声明的变量：键 = 末 token + "::before"/"::after"，只对本伪元素可见
+                if (!string.IsNullOrWhiteSpace(cls))
+                    foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                        if (varMap.TryGetValue("." + c + suf, out var pcm) && pcm.TryGetValue(name, out var pv)) return pv;
+                if (!string.IsNullOrWhiteSpace(id) && varMap.TryGetValue("#" + id + suf, out var pim) && pim.TryGetValue(name, out var piv)) return piv;
+                if (varMap.TryGetValue(tag + suf, out var ptm) && ptm.TryGetValue(name, out var ptv)) return ptv;
+            }
             if (!string.IsNullOrWhiteSpace(cls))
                 foreach (var c in cls.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                     if (varMap.TryGetValue("." + c, out var cm) && cm.TryGetValue(name, out var v)) return v;
-            var id = e.GetAttribute("id");
             if (!string.IsNullOrWhiteSpace(id) && varMap.TryGetValue("#" + id, out var im) && im.TryGetValue(name, out var iv)) return iv;
-            var tag = e.TagName.ToLowerInvariant();
             if (varMap.TryGetValue(tag, out var tm) && tm.TryGetValue(name, out var tv)) return tv;
             if (varMap.TryGetValue("*", out var wm) && wm.TryGetValue(name, out var wv)) return wv;
             if (e.TagName.Equals("HTML", StringComparison.OrdinalIgnoreCase)) break; // 已到根，html 的 key 亦即 :root
@@ -1075,7 +1095,7 @@ public static class StyleResolver
             {
                 // ::marker 只放行 color 与字体族属性（Chrome 就是这样：写 background/margin 一律无效）。
                 var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var prop in new[] { "color", "font-family", "font-size", "font-weight", "letter-spacing", "text-transform" })
+                foreach (var prop in new[] { "color", "font-family", "font-size", "font-weight", "font-style", "letter-spacing", "text-transform" })
                 {
                     var pm = Regex.Match(body, @"(?:^|[;\s])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
                     if (pm.Success) props[prop] = pm.Groups[1].Value.Trim();
@@ -1135,8 +1155,6 @@ public static class StyleResolver
             yield return m.Value.ToLowerInvariant();
     }
 
-
-
     /// <summary>受「宿主→伪元素漏值」之害的盒尺寸属性（全部是非继承属性）。</summary>
     static readonly string[] SizeProps = { "width", "height", "min-width", "min-height", "max-width", "max-height" };
 
@@ -1155,6 +1173,7 @@ public static class StyleResolver
         if (!string.IsNullOrWhiteSpace(id) && Hit("#" + id)) return true;
         return Hit(el.TagName.ToLowerInvariant());
     }
+
     /// <summary>
     /// 该元素是否可能命中某条伪元素规则：按「末段简单选择器 token」保守筛（class &gt; id &gt; tag 任一命中即放行）。
     /// ctx.PseudoScope 为 null（CSS 里有 :is()/[attr]/* 之类无法约成 token 的末段）时一律放行，保持旧行为。
@@ -1248,6 +1267,7 @@ public static class StyleResolver
                     // 字号一律按「round 到 1/64」折（Chrome 口径与几何长度不同，见 CssValueParser.SnapRound）
                     case "font-size": o.FontSize = CssValueParser.FontToPixels(v, s.FontSize); break;
                     case "font-weight": o.FontWeight = CssValueParser.ParseFontWeight(v, s.FontWeight); break;
+                    case "font-style": o.FontStyle = CssValueParser.ParseFontStyle(v, s.FontStyle); break;
                     case "letter-spacing": o.LetterSpacing = v.Equals("normal", StringComparison.OrdinalIgnoreCase) ? 0 : CssValueParser.ToPixels(v, s.FontSize); break;
                     case "text-transform": o.TextTransform = v.ToLowerInvariant(); break;
                 }
@@ -1296,7 +1316,7 @@ public static class StyleResolver
             if (flat != null)
             {
                 var v = flat.Get(prop);
-                return v.Length == 0 ? "" : ExpandVars(v, element, ctx);
+                return v.Length == 0 ? "" : ExpandVars(v, element, ctx, pseudo);
             }
             return computedView!.Read(prop);
         }
@@ -1321,13 +1341,16 @@ public static class StyleResolver
             var sp = Spec(prop);
             if (sp.EndsWith("%") || sp.Contains("calc(", StringComparison.OrdinalIgnoreCase)) return sp;
             // em 例外（2026-09-29 探针 assets/_probe-em2.html 实测）：AngleSharp 的 computed 把
-            // top/left/width/height/border-*-width 上的 em 按**父字号**折，CSS 规定按**元素自己的**
-            // computed font-size。父 16px / 本元素 20px 的盒里：top:1.5em Chrome 30 / 引擎 24、
-            // width:2em Chrome 40 / 引擎 32、border-top:1em Chrome 20 / 引擎 16、top:5em Chrome 100 / 引擎 80。
+            // `top:1.5em` / `width:2em` / `border-top-width:1em` 上的 em 按**父字号**折了，
+            // CSS 规定按**元素自己的** computed font-size 折。font-size 20 的盒里：
+            //   top:1.5em → Chrome 30 / 引擎 24；left:1.5em → Chrome 30 / 引擎 24；
+            //   width:2em → Chrome 40 / 引擎 32；height:2em → Chrome 40 / 引擎 32；
+            //   border-top:1em → Chrome 20 / 引擎 16；top:5em → Chrome 100 / 引擎 80。
             // 差的是整像素（最大 20px），不是亚像素。这些属性一律改用声明值，交引擎按 s.FontSize
             // （此时已是本元素自己的计算字号）折算。
-            // font-size 自己排除：它的 em 恰恰必须按**父**字号折。rem 排除：走根字号且 AngleSharp 算对了
-            // （引擎的 rootFontSize 是写死的 16）。ex/ch 排除：引擎的 ToPixels 不认，退回声明值会把对的换成 0。
+            // font-size 自己排除在外：它的 em 恰恰必须按**父**字号折，而这里传的是本元素的。
+            // rem/ex/ch 也排除：rem 走根字号（AngleSharp 算对了，引擎的 rootFontSize 是写死的 16）；
+            // ex/ch/cap/ic/lh 引擎的 ToPixels 根本不认，退回声明值会把对的换成 0。
             if (prop != "font-size" && UsesOwnEm(sp)) return sp;
             var g = Get(prop);
             return string.IsNullOrEmpty(g) ? sp : g;
@@ -1402,8 +1425,19 @@ public static class StyleResolver
         // 字号落到 1/64 网格用 round（父字号已是折过的值，em/% 都基于它算，链式口径与 Chrome 一致）
         s.FontSize = CssValueParser.SnapRound(ParseFontSize(fsText, parent?.FontSize ?? 16f));
 
-        s.FontFamily = FirstNonEmpty(CssValueParser.ParseFirstFontFamily(Raw("font-family")), parent?.FontFamily, "sans-serif")!;
+        var famRaw = Raw("font-family");
+        s.FontFamily = FirstNonEmpty(CssValueParser.ParseFirstFontFamily(famRaw), parent?.FontFamily, "sans-serif")!;
+        s.FontFamilyList = string.IsNullOrWhiteSpace(famRaw) ? parent?.FontFamilyList ?? "" : famRaw;
         s.FontWeight = CssValueParser.ParseFontWeight(Raw("font-weight"), parent?.FontWeight ?? 400);
+        // font-style 可继承。AngleSharp 认裸关键字（normal/italic/oblique），带角度的
+        // <c>oblique 14deg</c> 整条在解析期就被丢掉，而 computed 这时已被父级的继承值占满
+        // （看不出作者到底写过没有）→ 先问「本元素自己的声明」（声明表 + 内联 style 属性），
+        // 再回看作者 CSS 兜底表（按 tag/class/id），都没有才用 computed（含继承）。
+        // 两保险：<em> 里没写样式的 <span> 靠继承拿到 italic（_probe-it 的 em > span 用例）。
+        var fsOwn = SpecOnly("font-style");
+        if (string.IsNullOrWhiteSpace(fsOwn)) fsOwn = Lookup("font-style", element, "", ctx, pseudo);
+        s.FontStyle = CssValueParser.ParseFontStyle(
+                            fsOwn.Length > 0 ? fsOwn : Raw("font-style"), parent?.FontStyle ?? "normal");
         s.Color = CssValueParser.ParseColor(Raw("color")) ?? parent?.Color ?? SKColors.Black;
         // background 简写用 var() 时（如 body { background: var(--bg) }），AngleSharp 不会把展开后的
         // 色值折进 computed background-color（拿到 transparent/空），导致页面背景不画、卡片像浮在白底上。
@@ -1420,10 +1454,10 @@ public static class StyleResolver
         var lhText = Val("line-height");
         var lhDeclared = Spec("line-height");
         if (lhDeclared.Contains("em", StringComparison.OrdinalIgnoreCase)) lhText = lhDeclared;
-        float lhFactor = CssValueParser.ParseLineHeight(lhText);
+        double lhFactor = CssValueParser.ParseLineHeight(lhText);
         s.LineHeightAbsPx = CssValueParser.ParseLineHeightLength(lhText, s.FontSize);
-        s.LineHeightNumeric = !float.IsNaN(lhFactor);
-        s.LineHeightFactor = float.IsNaN(lhFactor)
+        s.LineHeightNumeric = !double.IsNaN(lhFactor);
+        s.LineHeightFactor = double.IsNaN(lhFactor)
             ? PaperSharp.Layout.FontManager.NormalLineHeight(s.FontFamily, s.FontWeight)
             : lhFactor;
         // direction：computed 拿不到时按 CSS 继承语义手动取父级；RTL 段落里 text-align 的
@@ -1846,7 +1880,10 @@ public static class StyleResolver
 
     /// <summary>
     /// 每元素的属性读记忆化视图：同一个声明集合上每条属性**至多问 AngleSharp 一次**，
-    /// 结果（含 ExpandVars 后的Doc 里最大的单一开销。
+    /// 结果（含 ExpandVars 后的串、空串、以及「读取抛异常」= null）都进字典。
+    /// 动机（pgbuild §5.7 实测）：ReadStyle 的包装函数彼此不缓存——<c>Val</c> 恒先 Spec 再 Get
+    /// （2 次读）、<c>Raw</c>/Lookup 在 computed 为空时还会再 Spec 一遍，每元素实际发生 ~130 次
+    /// <c>GetPropertyValue</c>（去重后唯一属性只有 ~94 个），是 buildDoc 里最大的单一开销。
     /// 缓存安全的前提与 EagerStyleCollection 相同：渲染期间文档静态，同一声明的同一属性取值恒定。
     /// 单条读失败退回空串（下游都有 fallback），不让整个渲染崩。
     /// </summary>
@@ -1864,10 +1901,24 @@ public static class StyleResolver
             _ctx = ctx;
         }
 
+        /// <summary>
+        /// 简写名：这些名字在 <c>GetPropertyValue</c> 下会由已声明的 longhand 现拼出值，故声明枚举里没有
+        /// 它们也必须能读到。其余名字（longhand / 独立属性）没声明就是空串——实测 26 个样例 210 万次
+        /// <c>Read</c>：86% 落在枚举之外的名字上，其中仅 0.24% 返回非空，且全是这几个简写名。
+        /// 宁可多列（多列只是退回老路径逐个问），漏列才会把有值的简写成串判空。
+        /// </summary>
+        static readonly HashSet<string> ShorthandOnAsk = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "background", "border-color", "flex", "gap", "grid-column", "grid-row",
+            "list-style", "place-items", "place-self", "text-decoration",
+        };
+
         public string Read(string prop)
         {
-            var map = _map ??= new Dictionary<string, string?>(StringComparer.Ordinal);
+            var map = _map ??= BuildMap();
             if (map.TryGetValue(prop, out var cached)) return cached ?? "";
+            if (!ShorthandOnAsk.Contains(prop)) return "";
+            // 简写重组名按老路问一次并回填，语义与逐键读完全一致。
             string? v;
             try
             {
@@ -1877,6 +1928,36 @@ public static class StyleResolver
             catch { v = null; }
             map[prop] = v;
             return v ?? "";
+        }
+
+        /// <summary>
+        /// 冷路径一次枚举整份层叠声明，建 name→value 字典（一次性把「按键查找 + 值再解析」摊成顺序枚举）。
+        /// 收益的大头不在字典本身，而在它给了一个可靠的「这元素声明过哪些属性」集合：<c>Read</c> 里对声明外
+        /// 且非简写的名字直接判空，不再逐个问 <c>GetPropertyValue</c>——实测每个元素按 101 个属性名各读一次，
+        /// 其中只有约 22 个真在声明里，剩下八成每次都要走一遍 AngleSharp 的取值路径。
+        /// </summary>
+        Dictionary<string, string?> BuildMap()
+        {
+            var d = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            if (_decl is null) return d;
+            int n;
+            try { n = _decl.Length; } catch { return d; }
+            var props = new List<AngleSharp.Css.Dom.ICssProperty>(n);
+            try { foreach (var p in _decl) if (p?.Name is { Length: > 0 }) props.Add(p!); }
+            catch { return d; }
+            foreach (var p in props)
+            {
+                string name = p.Name, value;
+                try
+                {
+                    if (d.ContainsKey(name)) continue;   // 同名多项时保首个（与按键查找同序）
+                    value = p.Value;
+                }
+                catch { continue; }
+                try { d[name] = string.IsNullOrEmpty(value) ? "" : ExpandVars(value!, _element, _ctx); }
+                catch { d[name] = null; }   // 与逐键读一致：读失败缓存为 null→""
+            }
+            return d;
         }
     }
 

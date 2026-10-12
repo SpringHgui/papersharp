@@ -89,8 +89,10 @@ public static class Painter
     static void PaintBox(SKCanvas canvas, SKSurface? surface, BlockBox box)
     {
         var s = box.Style;
-        float bw = s.BorderWidthLeft + s.PaddingLeft + box.ContentWidth + s.PaddingRight + s.BorderWidthRight;
-        float bh = s.BorderWidthTop + s.PaddingTop + box.ContentHeight + s.PaddingBottom + s.BorderWidthBottom;
+        // 折叠表格的格子按半条共享线内缩内容（见 <see cref="BlockBox.EdgeL"/>）。
+        // 边框盒总宽不变（EdgeL+EdgeR 与 Style 的 BorderWidthLeft+Right 同和），所以描边矩形照旧。
+        float bw = box.EdgeL + s.PaddingLeft + box.ContentWidth + s.PaddingRight + box.EdgeR;
+        float bh = box.EdgeT + s.PaddingTop + box.ContentHeight + s.PaddingBottom + box.EdgeB;
         var borderRect = new SKRect(box.BorderX, box.BorderY, box.BorderX + bw, box.BorderY + bh);
 
         // backdrop-filter：先模糊盒背后已绘像素（仅光栅/PNG 路径），再画盒自身（半透明背景叠在毛玻璃上）
@@ -104,9 +106,9 @@ public static class Painter
         SKShader? fillShader = clipText ? s.Background?.BuildShader(borderRect, op) : null;
         SKColor? fillOverride = clipText && fillShader == null ? s.BackgroundColor : null;
 
-        BoxPainter.PaintDecor(canvas, borderRect, s, backgroundClippedToText: clipText);
+        BoxPainter.PaintDecor(canvas, borderRect, s, backgroundClippedToText: clipText, borderRect: box.CollapsedBorderRect(borderRect));
 
-        float contentX = box.BorderX + s.BorderWidthLeft + s.PaddingLeft;
+        float contentX = box.BorderX + box.EdgeL + s.PaddingLeft;
         float contentY = box.BorderY + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
 
         // 原生表单控件：checkbox/radio 作者样式通常无框，按浏览器观感自绘一个方框/圆框。
@@ -139,14 +141,16 @@ public static class Painter
         }
         if (imgClip >= 0) canvas.RestoreToCount(imgClip);
 
+        // 文字横向不折整（浏览器走次像素定位），把本盒以上累计的横向折整退回去再画字。
+        // PaintInlineAtoms 在纠正之外：inline-block / 行内 img 是**盒**，各自的背景该跟着自己的原点折。
+        int tsnap = PaintSnap.BeginText(canvas);
         if (box.WrappedLines != null)
             TextPainter.DrawLines(canvas, s, box.Typeface, box.WrappedLines, 0, box.WrappedLines.Length,
-                contentX, contentY, box.ContentWidth, box.LineLefts, fillShader, fillOverride);
+                contentX, contentY, box.ContentWidth, box.LineLefts, fillShader, fillOverride, box.LineBoxes);
         else if (box.Lines != null)
-        {
             TextPainter.DrawInlineLines(canvas, box, contentX, contentY, 0, box.Lines.Count, fillShader, fillOverride);
-            PaintInlineAtoms(canvas, surface, box);   // inline-block / 行内 img 各自成盒，按已定位坐标画整棵子树
-        }
+        PaintSnap.EndText(canvas, tsnap);
+        if (box.Lines != null) PaintInlineAtoms(canvas, surface, box);   // inline-block / 行内 img 各自成盒，按已定位坐标画整棵子树
         fillShader?.Dispose();
         VisualEffects.End(scope);
     }

@@ -92,6 +92,10 @@ def run(mod: str, args: list) -> None:
 # ── 字距表烘焙（PRKT）────────────────────────────────────────────────
 # 只保留双码位都在拉丁/希腊/西里尔/通用标点区间的对：CJK 字形是全宽字身，字距为 0（挤紧由 palt 管）。
 KERN_LIMIT = 0x2E80
+# 词分隔符：任何排版引擎/浏览器都**不跨空格配对字距**（空格是断词点）。但 GPOS 的类别式 pair-pos
+# 会把空格卷进 ClassDef2 的 class 0（「未列的任意字形」），_gpos_pairs 按 class0 全字集展开时就多烤出
+# 空格对（实测 Noto `' '→t` = −18/1000em，@64px 多压 1.15px），把整行压窄、逐字累积成重影。这里显式剔除。
+WORD_SEP = {0x20, 0x09, 0x0A, 0x0D, 0xA0, 0x2007, 0x202F, 0x3000}   # 半角/制表/换行/NBSP/数字窄空格/全角空格
 
 
 def _xa(value_record) -> int:
@@ -150,12 +154,19 @@ def _gpos_pairs(font, names: set) -> dict:
                         if v:
                             out[(fn, sn)] = out.get((fn, sn), 0) + v
             else:
-                # 类别式：先按类聚合我们要的字形，再只对非零单元做笛卡尔展开
+                # 类别式：先按类聚合我们要的字形，再只对非零单元做笛卡尔展开。
+                # Class1 侧只展开 Coverage 里列出的字形：PairPosFormat2 的 Coverage **就是** Class1 集，
+                # 不在其中的字形整体退出，而不是「ClassDef1 未列 → class 0」去吃 class0 的默认配对。
+                # 漏这一步会把 class0×class1 的负字距（Noto 里是 HT −0.063em）套到 Coverage 外的 H/M 上，
+                # 而浏览器根本不配这一对 → "HTML" 被压窄，连带其后每个行内盒的 x。
+                # Class2 侧相反：class 0 的含义是「ClassDef2 未列的任意字形」，所以全字集都参与。
+                cov1 = {nm(g) for g in st.Coverage.glyphs}
                 d1 = _class_map(st.ClassDef1, nm)
                 d2 = _class_map(st.ClassDef2, nm)
                 by1, by2 = {}, {}
                 for gname in names:
-                    by1.setdefault(d1.get(gname, 0), []).append(gname)
+                    if gname in cov1:
+                        by1.setdefault(d1.get(gname, 0), []).append(gname)
                     by2.setdefault(d2.get(gname, 0), []).append(gname)
                 for k1, gs1 in by1.items():
                     if k1 >= st.Class1Count:
@@ -209,7 +220,7 @@ def bake_kern(path: str, src: str | None = None, src_index: int | None = None) -
     rows = []
     for (a, b), v in pairs.items():
         c1, c2 = name2cp[a], name2cp[b]
-        if c1 >= KERN_LIMIT or c2 >= KERN_LIMIT:
+        if c1 >= KERN_LIMIT or c2 >= KERN_LIMIT or c1 in WORD_SEP or c2 in WORD_SEP:
             continue
         v = int(v)
         if v == 0 or not -32768 <= v <= 32767:
@@ -236,9 +247,15 @@ KERN_JOBS = [
 ]
 
 
-def bake_all() -> None:
-    """只重跑烘焙（子集已在位）：用于调 PRKT 格式时不重新裁剪一遍。"""
+def bake_all(only: list[str] | None = None) -> None:
+    """只重跑烘焙（子集已在位）：用于调 PRKT 格式时不重新裁剪一遍。
+
+    `only` 给出文件名时只烘那几份——Noto 两本子集的 PRKT 完全来自自身 GPOS，可以单独重烤；
+    雅黑那两本的 legacy kern 与源字体绑定，动它们会挪动所有 YaHei 样例的基线。
+    """
     for fn, src, idx in KERN_JOBS:
+        if only and fn not in only:
+            continue
         path = os.path.join(OUT_DIR, fn)
         if not os.path.exists(path):
             print(f"[skip] 子集不存在: {fn}", file=sys.stderr)
@@ -315,7 +332,7 @@ def write_license() -> None:
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "bake":
-        bake_all()
+        bake_all(sys.argv[2:] or None)
         return
     os.makedirs(OUT_DIR, exist_ok=True)
     charset = build_charset()

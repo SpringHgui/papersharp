@@ -109,8 +109,8 @@ public static class SvgWriter
         {
             var s = box.Style;
             if (s.Display == "none") return;
-            float bw = s.BorderWidthLeft + s.PaddingLeft + box.ContentWidth + s.PaddingRight + s.BorderWidthRight;
-            float bh = s.BorderWidthTop + s.PaddingTop + box.ContentHeight + s.PaddingBottom + s.BorderWidthBottom;
+            float bw = box.EdgeL + s.PaddingLeft + box.ContentWidth + s.PaddingRight + box.EdgeR;
+            float bh = box.EdgeT + s.PaddingTop + box.ContentHeight + s.PaddingBottom + box.EdgeB;
             if (bw <= 0 || bh <= 0) return;
             float x = box.BorderX, y = box.BorderY;
             float opacity = Clamp01(s.Opacity <= 0 ? 0 : s.Opacity);
@@ -175,7 +175,7 @@ public static class SvgWriter
                     $"fill=\"none\" stroke=\"{Color(s.BorderColor)}\" stroke-opacity=\"{F4(s.BorderColor.Alpha / 255f)}\" stroke-width=\"{F(bt)}\"{dash}"));
             }
 
-            float contentX = x + s.BorderWidthLeft + s.PaddingLeft;
+            float contentX = x + box.EdgeL + s.PaddingLeft;
             float contentY = y + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
 
             // 替换内容
@@ -356,21 +356,28 @@ public static class SvgWriter
         {
             var s = box.Style;
             var typeface = box.Typeface;
-            using var paint = new SKPaint { TextSize = s.FontSize, Typeface = typeface };
+            // 与光栅同一张文本 paint（AA+subpixel+斜体 skew 三样旗齐），否则这里量出的行宽与
+            // DrawLines 不是一回事，贴右/居中的 <text x> 就会与 PNG/PDF 分叉（P2-9）。
+            using var paint = TextPainter.NewTextPaint(typeface, s.FontSize, s.FontStyle, weight: s.FontWeight);
             float lineHeight = s.LineHeightPx();
-            float baseline = top + InlineLayout.FirstBaselineOffset(s);
+            var lb = box.LineBoxes;
+            float baseline = top + (lb is { Length: > 0 } ? lb[0].Asc : InlineLayout.FirstBaselineOffset(s));
             float width = box.ContentWidth;
             for (int i = 0; i < box.WrappedLines!.Length; i++)
             {
                 string line = box.WrappedLines[i];
-                if (line.Length == 0) { baseline += lineHeight; continue; }
+                float lh = lb != null ? lb[i].Asc + lb[i].Desc : lineHeight;
+                if (line.Length == 0) { baseline += lh; continue; }
                 float inset = box.LineLefts != null && i < box.LineLefts.Length ? box.LineLefts[i] : 0;
-                float textW = paint.MeasureText(line) + s.LetterSpacing * line.Length;
+                // 与 PNG/PDF 的 text-align 同一条宽度公式（TextPainter.MeasureWidth：hmtx + 字距对 + ls，
+                // 复杂/回退串走 WidthOf 按字面切段）。自己写 MeasureText + ls 会漏掉字距，
+                // 而 SVG 看图器排 <text> 时是按字体字距排的 —— 居中/贴右就偏半个配对量。
+                float textW = TextPainter.MeasureWidth(line, paint, s.LetterSpacing);
                 float x = left + inset;
                 if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
                 else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;
                 EmitText(line, x, baseline, s, s.FontSize, textW);
-                baseline += lineHeight;
+                baseline += lh;
             }
         }
 
@@ -413,6 +420,8 @@ public static class SvgWriter
             var c = s.Color;
             return $"<text x=\"{F(x)}\" y=\"{F(y)}\" font-family=\"{Escape(s.FontFamily)}\" font-size=\"{F(fontSize)}\"" +
                    (s.FontWeight >= 600 ? " font-weight=\"bold\"" : "") +
+                   // 斜体交给看图器：SVG 的 font-style 与 CSS 同名，真斜字面它自己选，没有就合成
+                   (s.FontStyle != "normal" ? $" font-style=\"{s.FontStyle}\"" : "") +
                    // small-caps 交回 SVG 的 font-variant（SVG 1.1 只有 normal|small-caps 两档，
                    // all-small-caps 退化成小写变换、大写保持原样，交给看图器按真 smcp 字形排）
                    (s.FontVariantCaps == "small-caps" ? " font-variant=\"small-caps\"" : "") +

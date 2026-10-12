@@ -26,6 +26,9 @@ public sealed class InlineFrag
     public string? Text;
     public BlockBox? Box;
     public float X, Width, FontSize, Ascent, Descent;
+    /// <summary>撑**行盒**用的上下伸出量：line-height:normal 时逐字回退到的字体也按自己的度量参与取最大
+    /// （见 <see cref="TextShaper.LineExtents"/>）。无回退时与 Ascent/Descent 相同。</summary>
+    public float LineAscent, LineDescent;
     public float PadLeft, PadRight;   // 仅文本片段：盒相对文字的左右外扩（padding+border）
     public bool HostText;             // 块自身文字：底色已由块盒铺过，绘制端不得再按行补背景（见 InlineAtom.HostText）
     public float AlignDY;   // vertical-align 生效后的基线下移量（文本 run 与原子盒同一约定，见 AlignShift）
@@ -170,7 +173,8 @@ public static class InlineLayout
             outFrags.Add(new InlineFrag
             {
                 Style = f.Style, Text = tok, Box = f.Box, FontSize = f.FontSize,
-                Ascent = f.Ascent, Descent = f.Descent, HostText = f.HostText, AlignDY = f.AlignDY,
+                Ascent = f.Ascent, Descent = f.Descent, LineAscent = f.LineAscent, LineDescent = f.LineDescent,
+                HostText = f.HostText, AlignDY = f.AlignDY,
                 PadLeft = pl, PadRight = pr, Width = pl + w + pr, X = x,
             });
             x += pl + w + pr;
@@ -264,19 +268,27 @@ public static class InlineLayout
         /// padding 只在两端各算一次），否则另起新 frag。</summary>
         void Place(InlineAtom at, string tok, float tw, float padL, float padR, bool sameRun)
         {
+            var st = at.Style;
+            var (asc, desc) = FontManager.TextExtents(st.FontFamily, st.FontWeight, st.FontSize);
+            // 撑行盒的那对与自己的盒分开算：掺了回退字体时浏览器让行盒长高、行内盒不变（见 LineExtents）
+            var (lAsc, lDesc) = st.IsNormalLineHeight
+                ? TextShaper.LineExtents(tok, FontManager.Get(st.FontFamily, st.FontWeight, st.FontStyle), st.FontSize,
+                    st.FontFamilyList, st.FontWeight, st.FontStyle)
+                : (asc, desc);
             var last = cur.Frags.Count > 0 ? cur.Frags[^1] : null;
             if (sameRun && last != null)
             {
                 float grow = tw + padR - last.PadRight;
                 last.Text += tok; last.Width += grow; curW += grow; last.PadRight = padR;
+                if (lAsc > last.LineAscent) last.LineAscent = lAsc;   // 合并进来的 token 可能带着更高的回退字体
+                if (lDesc > last.LineDescent) last.LineDescent = lDesc;
                 return;
             }
-            var st = at.Style;
-            var (asc, desc) = FontManager.TextExtents(st.FontFamily, st.FontWeight, st.FontSize);
             AddFrag(new InlineFrag
             {
                 Style = st, Text = tok, Width = padL + tw + padR, PadLeft = padL, PadRight = padR,
-                FontSize = st.FontSize, Ascent = asc, Descent = desc, HostText = at.HostText,
+                FontSize = st.FontSize, Ascent = asc, Descent = desc, LineAscent = lAsc, LineDescent = lDesc,
+                HostText = at.HostText,
             });
         }
 
@@ -377,12 +389,33 @@ public static class InlineLayout
         }
         if (b.WrappedLines is { Length: > 0 } ws)
         {
-            float lh = s.LineHeightPx();    // 与 MeasureBlock 那条折行同一口径
-            var (asc, _) = BoxOf(s);
-            return (lh - asc) + Math.Max(0, b.ContentHeight - ws.Length * lh) + deco;
+            // 与 MeasureBlock 那条折行同一口径（含回退字体撑高的行按各自行盒算）
+            return b.LineDescentAt(ws.Length - 1) + Math.Max(0, b.ContentHeight - b.TextFlowHeight()) + deco;
         }
         var kids = InFlowChildren(b);
         if (kids.Count == 0) return null;
+        // 行向 flex 容器（inline-flex 徽章等）：Blink 的基线取自**第一个 flex 项**，且要按它在
+        // 交叉轴对齐（align-items 等）之后的实际摆位算，而不是假设贴底堆叠。pricing 的
+        // <i class=info>（15px inline-flex 居中一个 10px 字母）因此差 1px：整行行盒 24 vs 23，
+        // 顺着 flex column 的 gap 往下滚成整列 −1.5 位移。
+        if (ComputedStyle.IsFlexDisplay(s.Display) && s.FlexDirection.StartsWith("row"))
+        {
+            var first = kids[0];
+            float? btt = BaselineToTop(first);
+            if (btt != null)
+            {
+                string align = first.Style.AlignSelf == "auto" ? s.AlignItems : first.Style.AlignSelf;
+                float free = b.ContentHeight - first.TotalHeight - first.Style.MarginTop - first.Style.MarginBottom;
+                float crossOff = align switch
+                {
+                    // 负自由空间：center 上下各溢一半（Blink 不钳 0），end 贴起点
+                    "center" => free / 2,
+                    "flex-end" or "end" => Math.Max(0, free),
+                    _ => 0,
+                };
+                return b.TotalHeight - (s.BorderWidthTop + s.PaddingTop + crossOff + first.Style.MarginTop + btt.Value);
+            }
+        }
         var last = kids[^1];
         return (BaselineToBottom(last) ?? 0f) + last.Style.MarginBottom + deco;
     }
@@ -399,8 +432,7 @@ public static class InlineLayout
         if (b.Lines is { Count: > 0 } ls) return deco + ls[0].Baseline;
         if (b.WrappedLines is { Length: > 0 })
         {
-            var (asc, _) = BoxOf(s);
-            return deco + asc;
+            return deco + b.FirstLineAscent();
         }
         var kids = InFlowChildren(b);
         if (kids.Count == 0) return null;
@@ -461,16 +493,18 @@ public static class InlineLayout
         {
             if (f.Style.IsListMarker) { w += f.Width; continue; }
             var (fAsc, fDesc) = BoxOf(f);
+            // 文本片段在 normal 行高下用「含回退字体」的那对撑行盒；vertical-align 的位移量仍按自己的盒算
+            var (uAsc, uDesc) = f.Text != null && f.Style.IsNormalLineHeight ? (f.LineAscent, f.LineDescent) : (fAsc, fDesc);
             w += f.Width;
             if (f.Style.VerticalAlign is "top" or "bottom")
             {
-                if (fAsc > asc) asc = fAsc;
-                desc = Math.Max(desc, fDesc);
+                if (uAsc > asc) asc = uAsc;
+                desc = Math.Max(desc, uDesc);
                 continue;
             }
             float dy = f.AlignDY = AlignShift(f, ln, fAsc, fDesc);
-            asc = Math.Max(asc, fAsc - dy);
-            desc = Math.Max(desc, fDesc + dy);
+            asc = Math.Max(asc, uAsc - dy);
+            desc = Math.Max(desc, uDesc + dy);
         }
         // strut（块自身的字体与行高）恒在每一行里：小图独占一行时行高也得不低于它
         if (strut != null)
@@ -633,8 +667,8 @@ public static class InlineLayout
 
     static float TextWidth(string s, ComputedStyle st)
     {
-        using var font = new SKFont(FontManager.Get(st.FontFamily, st.FontWeight), st.FontSize);
-        return TextMeasurer.LineWidth(s, font, st.LetterSpacing);
+        using var font = new SKFont(FontManager.Get(st.FontFamily, st.FontWeight, st.FontStyle), st.FontSize);
+        return TextMeasurer.LineWidth(s, font, st.LetterSpacing, st.FontVariantCaps);
     }
 
     static string ApplyTransform(string text, string mode)

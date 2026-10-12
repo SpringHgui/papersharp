@@ -23,8 +23,8 @@ public static class TextMeasurer
         if (s.TextWrap == "balance" && fc == null && maxWidth > 0 && lines.Length >= 2
             && s.WhiteSpace is not ("nowrap" or "pre"))
         {
-            float total = (lines.Length - 1) * TokenWidth(" ", font, s.LetterSpacing);
-            foreach (var ln in lines) total += LineWidth(ln, font, s.LetterSpacing);
+            float total = (lines.Length - 1) * TokenWidth(" ", font, s.LetterSpacing, s.FontVariantCaps);
+            foreach (var ln in lines) total += LineWidth(ln, font, s.LetterSpacing, s.FontVariantCaps);
             // 二分最小的“行长上限”W：贪心折行仍保持原行数（=最少行数），使各行尽量均匀
             float lo = total / lines.Length - 0.5f, hi = maxWidth;
             for (int iter = 0; iter < 8 && hi - lo > 1f; iter++)
@@ -37,6 +37,27 @@ public static class TextMeasurer
             if (rebal.Length <= lines.Length) { lines = rebal; lefts = rl; }
         }
         return lines;
+    }
+
+    /// <summary>
+    /// 纯文本块的逐行行盒（<c>line-height: normal</c> 才有意义）：某一行的文字若有用例回退到了别的字面
+    /// （Arial 里的中文、缺字的 emoji…），那一行按回退字体的度量长高，其余行不变——浏览器逐行取并集，
+    /// 块高若按「字号 × 统一行高」算，含回退的那一行往下每一行都短一截，正是整页越往下偏越多的重影来源。
+    /// 全部行都与主字体等高（纯拉丁、或主字体本身就覆盖）时返回 null，调用方保持原来的等高快路径。
+    /// </summary>
+    public static (float Asc, float Desc)[]? LineBoxesOf(string[] lines, SKTypeface tf, ComputedStyle s)
+    {
+        if (!s.IsNormalLineHeight || lines.Length == 0) return null;
+        var (pa, pd) = FontManager.ExtentsAt(tf, s.FontSize);
+        var arr = new (float Asc, float Desc)[lines.Length];
+        bool any = false;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var (a, d) = TextShaper.LineExtents(lines[i], tf, s.FontSize, s.FontFamilyList, s.FontWeight, s.FontStyle);
+            arr[i] = (a, d);
+            if (a != pa || d != pd) any = true;
+        }
+        return any ? arr : null;
     }
 
     static string[] WrapRaw(string text, float maxWidth, SKFont font, ComputedStyle s,
@@ -79,7 +100,7 @@ public static class TextMeasurer
         {
             var para = paras[pi];
             if (para.Length == 0) { TakeLine(""); continue; }
-            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, s.OverflowWrap, TakeLine, Query, pi == 0 ? indent : 0f);
+            WrapParagraph(para, maxWidth, font, ls, s.WordBreak, s.OverflowWrap, s.FontVariantCaps, TakeLine, Query, pi == 0 ? indent : 0f);
         }
         if (lines.Count == 0) TakeLine("");
         return Finish(lines, leftList, fc, out lefts);
@@ -140,7 +161,7 @@ public static class TextMeasurer
     }
 
     static void WrapParagraph(string para, float maxWidth, SKFont font, float ls, string wordBreak,
-        string overflowWrap, Action<string> take, Func<(float left, float right)> query, float firstIndent)
+        string overflowWrap, string caps, Action<string> take, Func<(float left, float right)> query, float firstIndent)
     {
         var current = new StringBuilder();
         float currentWidth = 0;
@@ -159,7 +180,7 @@ public static class TextMeasurer
         for (int i = 0; i < toks.Count; i++)
         {
             string token = toks[i];
-            float tokenWidth = TokenWidth(token, font, ls);
+            float tokenWidth = TokenWidth(token, font, ls, caps);
             // 只有当前行已有非空白内容时才换行；单独的空格允许溢出，避免留白行
             if (currentWidth + tokenWidth > lineMax && current.Length > 0 && !string.IsNullOrWhiteSpace(current.ToString()))
             {
@@ -171,16 +192,16 @@ public static class TextMeasurer
             if (maySplit && token != " " && tokenWidth > lineMax)
             {
                 string rest = token;
-                while (TokenWidth(rest, font, ls) > lineMax)
+                while (TokenWidth(rest, font, ls, caps) > lineMax)
                 {
-                    int cut = LongestFit(rest, lineMax, font, ls);
+                    int cut = LongestFit(rest, lineMax, font, ls, caps);
                     if (cut <= 0) break;
                     EmitLine(rest.Substring(0, cut));
                     rest = rest.Substring(cut);
                 }
                 if (rest.Length == 0) continue;
                 token = rest;
-                tokenWidth = TokenWidth(token, font, ls);
+                tokenWidth = TokenWidth(token, font, ls, caps);
             }
             current.Append(token);
             currentWidth += tokenWidth;
@@ -190,13 +211,13 @@ public static class TextMeasurer
 
     /// <summary>词内断行点：能放进 <paramref name="width"/> 的最长前缀长度（按字素簇，不吃 surrogate 半边）。
     /// 一个字素都放不下时仍返回第一个字素——Chrome 也至少塞一个字符进去，同时保证折行一定前进。</summary>
-    static int LongestFit(string word, float width, SKFont font, float ls)
+    static int LongestFit(string word, float width, SKFont font, float ls, string caps)
     {
         int len = 0, best = 0;
         foreach (var g in TextShaper.Graphemes(word))
         {
             int n = len + g.Length;
-            if (best > 0 && TokenWidth(word.Substring(0, n), font, ls) > width) break;
+            if (best > 0 && TokenWidth(word.Substring(0, n), font, ls, caps) > width) break;
             len = n;
             best = n;
         }
@@ -261,26 +282,28 @@ public static class TextMeasurer
     /// <summary>整串宽度（含 letter-spacing 与字体字距对）。空串→0。复杂文字/缺字形走 TextShaper 通路。
     /// letter-spacing 计**每个字符之后**都加一次（含末字符与词间空格）——Blink 就是把间距加在每个 cluster 上，
     /// 实测 "PDFBENCH X VISUAL CHALLENGE"@13 ls:1px：Chrome 233.05 = 206.04 + 27×1，按 n−1 只给 226.04。</summary>
-    public static float LineWidth(string s, SKFont font, float letterSpacing)
+    public static float LineWidth(string s, SKFont font, float letterSpacing, string caps = "normal")
     {
         if (string.IsNullOrEmpty(s)) return 0;
         float mono = TextShaper.MonoGridWidth(s, font.Typeface, font.Size, letterSpacing);
         if (mono >= 0) return mono;
+        float smcp = SmallCaps.Delta(s, font.Typeface, font.Size, caps);
         if (TextShaper.NeedsSpecial(s, font.Typeface))
-            return TextShaper.WidthOf(s, font.Typeface, font.Size, letterSpacing);
+            return TextShaper.WidthOf(s, font.Typeface, font.Size, letterSpacing) + smcp;
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
         return paint.MeasureText(s) + KernTable.Of(s, font.Typeface, font.Size)
-            + letterSpacing * s.Length;
+            + letterSpacing * s.Length + smcp;
     }
 
-    static float TokenWidth(string token, SKFont font, float ls)
+    static float TokenWidth(string token, SKFont font, float ls, string caps = "normal")
     {
         float mono = TextShaper.MonoGridWidth(token, font.Typeface, font.Size, ls);
         if (mono >= 0) return mono;
         if (TextShaper.NeedsSpecial(token, font.Typeface))
-            return TextShaper.WidthOf(token, font.Typeface, font.Size, ls);
+            return TextShaper.WidthOf(token, font.Typeface, font.Size, ls) + SmallCaps.Delta(token, font.Typeface, font.Size, caps);
         using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
-        return paint.MeasureText(token) + KernTable.Of(token, font.Typeface, font.Size) + ls * token.Length;
+        return paint.MeasureText(token) + KernTable.Of(token, font.Typeface, font.Size) + ls * token.Length
+            + SmallCaps.Delta(token, font.Typeface, font.Size, caps);
     }
 
     /// <summary>文本不换行时的自然宽度（取多行中最长的一行）。flex 主轴 base 用。</summary>
@@ -299,6 +322,7 @@ public static class TextMeasurer
                 ? TextShaper.WidthOf(line, font.Typeface!, font.Size, s.LetterSpacing)
                 : paint.MeasureText(line) + KernTable.Of(line, font.Typeface, font.Size)
                     + s.LetterSpacing * line.Length;
+            w += SmallCaps.Delta(line, font.Typeface, font.Size, s.FontVariantCaps);
             max = Math.Max(max, w);
         }
         return max;

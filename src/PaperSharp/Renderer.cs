@@ -1,4 +1,6 @@
 using SkiaSharp;
+using System.Text;
+using System.Text.RegularExpressions;
 using PaperSharp.Css;
 using PaperSharp.Layout;
 using PaperSharp.Paint;
@@ -19,7 +21,7 @@ public static class Renderer
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
         var (defW, defH) = GetPageSize(pageSize);
-        var spec = AtPageParser.Parse(css, defW, defH);   // 有 @page 则覆盖默认尺寸/边距
+        var spec = ParsePage(html, css, defW, defH);   // 有 @page 则覆盖默认尺寸/边距
         var (body, docInfo) = BuildMeasuredBody(html, css, spec.ContentW, animationTime, precomputed);
         var pages = Paginator.Paginate(body, spec);
         var (outlines, links) = Pdf.PdfSemantic.Collect(pages);   // M5：书签 + 链接注释
@@ -42,14 +44,18 @@ public static class Renderer
         //   ②真绘趟——字体换成只含这些字形的子集 face（GID 保持，度量/shaping 零漂移），Skia 只嵌这点字节。
         // 真绘趟逐字继续校验：见到录制趟没见过的字形即整趟作废、退回原始字体重绘（预期永不触发）。
         using var usage = Pdf.PdfGlyphUsage.Begin();
-        int pw = Math.Max(1, (int)Math.Ceiling(spec.PageW)), ph = Math.Max(1, (int)Math.Ceiling(spec.PageH));
+        // 设备页 = pt，绘制前把画布整体折到 pt（0.75），于是 Painter 与 PNG 路径一样按 CSS px 记账。
+        int pw = Math.Max(1, (int)Math.Ceiling(spec.PdfPageW)), ph = Math.Max(1, (int)Math.Ceiling(spec.PdfPageH));
         using (var scratch = SKSurface.Create(new SKImageInfo(pw, ph)))
             for (int i = 0; i < pages.Count; i++)
             {
                 scratch.Canvas.Clear(SKColors.White);
+                scratch.Canvas.Save();
+                scratch.Canvas.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);
                 // 与真绘趟逐字同参（含页码/总页数），否则录制出的字形集会偏
                 PagePainter.PaintPage(scratch.Canvas, pages[i], spec.PageW, spec.PageH);
                 MarginBoxRenderer.Render(scratch.Canvas, spec, i + 1, pages.Count);
+                scratch.Canvas.Restore();
             }
         usage.BuildSubsets();
 
@@ -60,7 +66,7 @@ public static class Renderer
             raw = EncodePdfPages(pages, spec, meta);
         }
         // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
-        return Pdf.PdfEnhancer.Enhance(raw, outlines, links, spec.PageH);
+        return Pdf.PdfEnhancer.Enhance(raw, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
     }
 
     static byte[] EncodePdfPages(List<Page> pages, PageSpec spec, SKDocumentPdfMetadata meta)
@@ -70,7 +76,8 @@ public static class Renderer
         {
             for (int i = 0; i < pages.Count; i++)
             {
-                using var canvas = pdfDoc.BeginPage(spec.PageW, spec.PageH);
+                using var canvas = pdfDoc.BeginPage(spec.PdfPageW, spec.PdfPageH);
+                canvas.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);   // 布局 px → 纸面 pt
                 PagePainter.PaintPage(canvas, pages[i], spec.PageW, spec.PageH);
                 MarginBoxRenderer.Render(canvas, spec, i + 1, pages.Count); // 页眉/页脚 + 页码
                 pdfDoc.EndPage();
@@ -277,7 +284,7 @@ public static class Renderer
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
         var (defW, defH) = GetPageSize(PageSize.A4);
-        var spec = AtPageParser.Parse(css, defW, defH);
+        var spec = ParsePage(html, css, defW, defH);
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
 
         var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed, width);
@@ -300,7 +307,7 @@ public static class Renderer
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
         var (defW, defH) = GetPageSize(PageSize.A4);
-        var spec = AtPageParser.Parse(css, defW, defH);
+        var spec = ParsePage(html, css, defW, defH);
         // 预览也按 @page 边距留白，视觉更接近成品页（页眉页脚不画，因为长图不分页）
         float mL = spec.MarginLeft, mR = spec.MarginRight, mT = spec.MarginTop, mB = spec.MarginBottom;
 
@@ -334,10 +341,25 @@ public static class Renderer
 
     static (float, float) GetPageSize(PageSize size) => size switch
     {
-        PageSize.A4 => (595.28f, 841.89f),
-        PageSize.Letter => (612f, 792f),
-        _ => (595.28f, 841.89f),
+        // 标称 A4/Letter 是 pt（ISO 216），引擎布局单位是 CSS px，故 ×96/72 进布局。
+        PageSize.A4 => (595.28f * PageSpec.PxPerPt, 841.89f * PageSpec.PxPerPt),
+        PageSize.Letter => (612f * PageSpec.PxPerPt, 792f * PageSpec.PxPerPt),
+        _ => (595.28f * PageSpec.PxPerPt, 841.89f * PageSpec.PxPerPt),
     };
+
+    /// <summary>
+    /// 解析 @page。除 css 参数外还要吃 html 里内嵌的 &lt;style&gt;：调用方常整份文档传进来，
+    /// 元素样式那边两条路已经合并（StyleResolver.BuildDocument），@page 只有这一份文本可读，
+    /// 不合并就等于把文档自己的纸张/页边距声明丢掉（Chrome 是读的）。顺序同元素侧：参数在前、内嵌在后。
+    /// </summary>
+    static PageSpec ParsePage(string html, string css, float defW, float defH)
+    {
+        var ms = Regex.Matches(html, @"<style[^>]*>(.*?)</style>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (ms.Count == 0) return AtPageParser.Parse(css, defW, defH);
+        var sb = new StringBuilder(css);
+        foreach (Match m in ms) sb.Append('\n').Append(m.Groups[1].Value);
+        return AtPageParser.Parse(sb.ToString(), defW, defH);
+    }
 }
 
 /// <summary>

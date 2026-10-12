@@ -223,19 +223,36 @@ public sealed class ComputedStyle
 
     // 文本
     public string FontFamily = "sans-serif";
+    /// <summary>声明的**整条** font-family 列表原文（未声明则继承父级的）。<see cref="FontFamily"/> 只留首项
+    /// （字面解析的口径），但浏览器逐字回退时会沿列表往后找——中文由列表里的雅黑承接时行盒不涨，
+    /// 由 generic 回退时涨一档，两者度量不同，见 <see cref="PaperSharp.Layout.TextShaper.LineExtents"/>。</summary>
+    public string FontFamilyList = "";
     public float FontSize = 14f;
     /// <summary>本节点读到的 font-size **声明原文**（未折算；没声明就是空串）。只用于伪元素：AngleSharp
     /// 会把宿主的声明漏进伪元素的读取结果，串与宿主的这份逐字相同即判为泄漏 → 按继承处理，
     /// 详见 <see cref="StyleResolver"/> 字号那段（判别探针 _probe-em）。</summary>
     public string FontSizeSpec = "";
     public int FontWeight = 400;
-    public float LineHeightFactor = 1.4f;
+    /// <summary>font-style 计算值（归一化：<c>normal</c> / <c>italic</c> / <c>oblique</c> /
+    /// <c>oblique 20deg</c>），继承属性。它对**布局**的唯一影响是字面选择（真斜字面的 advance 可能不同）：
+    /// 打包的 Noto/雅黑子集没有斜体字面，浏览器与引擎都改用同一量的合成错切（见
+    /// <see cref="PaperSharp.Layout.FontManager.SyntheticSkew"/>），**行宽一字不差**（无头 Edge 实测
+    /// italic 与 normal 的逐字 advance 完全相同）。绘制端是否错切由
+    /// <see cref="PaperSharp.Layout.FontManager.SkewFor"/> 结合落笔字面自己有没有斜身来定。</summary>
+    public string FontStyle = "normal";
+    /// <summary>数字/百分比行高倍数。必须是 double：float 的 1.3/1.4 落在真值**下方**（1.3f=1.29999995），
+    /// 与整字号相乘后掉出 1/64 网格，<see cref="LineHeightPx"/> 的向下量化就少一格（20px/1.3 → 25.984 而非 26），
+    /// 首行基线被抬 1px。double 的 1.3 在真值上方，乘 20 稳过 26。</summary>
+    public double LineHeightFactor = 1.4;
     /// <summary>CSS 是否显式给出数字/百分比行高。false = normal（走字体度量，浏览器对它不做 1/64 量化）。</summary>
-    public bool LineHeightNumeric;
-    /// <summary>带单位的行高（<c>line-height: 46px</c> / <c>1.5em</c>）折算成的绝对像素；NaN = 作者没写长度行高。
+    public bool LineHeightNumeric;    /// <summary>带单位的行高（<c>line-height: 46px</c> / <c>1.5em</c>）折算成的绝对像素；NaN = 作者没写长度行高。
     /// 浏览器里这类行高**不乘字号**，直接就是行盒高——按 normal 兜底会让定高盒里的文字整条基线抬高
     /// (L−normal)/2（m9 的 <c>height:46px; line-height:46px</c> 实测偏 11px，叠图上一眼可见的重影）。</summary>
     public float LineHeightAbsPx = float.NaN;
+
+    /// <summary>计算值是否 <c>line-height: normal</c>（作者没写任何行高）。只有 normal 才让回退字体的度量
+    /// 参与撑行盒，显式行高一律按主字体定基线（见 <see cref="PaperSharp.Layout.TextShaper.LineExtents"/>）。</summary>
+    public bool IsNormalLineHeight => float.IsNaN(LineHeightAbsPx) && !LineHeightNumeric;
 
     /// <summary>
     /// used line-height。Blink 的口径：font-size 先量化到 1/64px（就近），再对「量化后的 fs × 倍数」
@@ -333,6 +350,7 @@ public sealed class MarkerOverride
     public string? FontFamily;
     public float? FontSize;                  // 已折成 px
     public int? FontWeight;
+    public string? FontStyle;                // 归一化后的 font-style
     public float? LetterSpacing;             // px
     public string? TextTransform;
 }

@@ -140,7 +140,8 @@ public static class Benchmark
         {
             for (int i = 0; i < pages.Count; i++)
             {
-                using var canvas = doc.BeginPage(spec.PageW, spec.PageH);
+                using var canvas = doc.BeginPage(spec.PdfPageW, spec.PdfPageH);
+                canvas.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);
                 PagePainter.PaintPage(canvas, pages[i], spec.PageW, spec.PageH);
                 MarginBoxRenderer.Render(canvas, spec, i + 1, pages.Count);
                 doc.EndPage();

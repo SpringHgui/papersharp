@@ -33,14 +33,16 @@ public static class PdfEnhancer
 {
     static readonly Encoding Latin1 = Encoding.Latin1;
 
-    public static byte[] Enhance(byte[] pdf, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH)
+    /// <param name="pageH">PDF 页高（pt）。</param>
+    /// <param name="scale">布局 px → 纸面 pt 的折算系数（引擎坐标全部是 px，PDF 坐标全部是 pt）。</param>
+    public static byte[] Enhance(byte[] pdf, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH, float scale)
     {
         if (outlines.Count == 0 && links.Count == 0) return pdf;
-        try { return EnhanceCore(pdf, outlines, links, pageH); }
+        try { return EnhanceCore(pdf, outlines, links, pageH, scale); }
         catch { return pdf; }
     }
 
-    static byte[] EnhanceCore(byte[] pdf, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH)
+    static byte[] EnhanceCore(byte[] pdf, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH, float scale)
     {
         var text = Latin1.GetString(pdf);
 
@@ -91,7 +93,7 @@ public static class PdfEnhancer
             string Dest(int i)
             {
                 int pg = Math.Min(outlines[i].Page, pageObjs.Count - 1);
-                float y = Math.Max(0, pageH - outlines[i].YTop);
+                float y = Math.Max(0, pageH - outlines[i].YTop * scale);
                 return $"[{pageObjs[pg]} 0 R /XYZ null {F(y)} null]";
             }
             void EmitItem(int i, int parent, int first, int last, int prev, int nextSib, int count)
@@ -135,9 +137,9 @@ public static class PdfEnhancer
             {
                 int id = next++;
                 var r = l.Rect;
-                float x1 = Math.Min(r.Left, r.Right), x2 = Math.Max(r.Left, r.Right);
-                float y1 = Math.Max(0, pageH - Math.Max(r.Top, r.Bottom));
-                float y2 = Math.Min(pageH, pageH - Math.Min(r.Top, r.Bottom));
+                float x1 = Math.Min(r.Left, r.Right) * scale, x2 = Math.Max(r.Left, r.Right) * scale;
+                float y1 = Math.Max(0, pageH - Math.Max(r.Top, r.Bottom) * scale);
+                float y2 = Math.Min(pageH, pageH - Math.Min(r.Top, r.Bottom) * scale);
                 newObjs[id] = $"<</Type /Annot /Subtype /Link /Rect [{F(x1)} {F(y1)} {F(x2)} {F(y2)}] /Border [0 0 0] /A <</S /URI /URI ({PdfStr(l.Uri)})>>>>";
                 ids.Add(id);
             }

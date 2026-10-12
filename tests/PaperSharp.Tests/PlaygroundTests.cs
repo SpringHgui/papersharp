@@ -148,8 +148,8 @@ public class PlaygroundTests
     {
         var css = PlaygroundService.BuildPdfCss("@page{size:a2;margin:20mm 15mm}", 1284f, PdfPaper.SameWidth);
         var spec = AtPageParser.Parse(css, 595.28f, 841.89f);
-        var mV = AtPageParser.ToPoints("20mm");
-        var mH = AtPageParser.ToPoints("15mm");
+        var mV = AtPageParser.ToCssPx("20mm");
+        var mH = AtPageParser.ToCssPx("15mm");
 
         Assert.Equal(1284f, spec.PageW);                    // a2 被同宽档换掉
         Assert.Equal(841.89f, spec.PageH);                  // 高仍按 A4：分页位置才可比

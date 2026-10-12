@@ -55,7 +55,8 @@ public static class PagePainter
         if (it.DrawDecor)
         {
             var r = decorRect;
-            BoxPainter.PaintDecor(canvas, r, s, backgroundClippedToText: clipText);
+            BoxPainter.PaintDecor(canvas, r, s, backgroundClippedToText: clipText, skipBorderSides: it.BorderSkipSides,
+                borderRect: it.Box.CollapsedBorderRect(r));
 
             float cx = it.X + s.BorderWidthLeft + s.PaddingLeft;
             float cy = it.Y + s.BorderWidthTop + s.PaddingTop;
@@ -86,11 +87,14 @@ public static class PagePainter
             }
         }
 
+        // 文字横向不折整（与光栅路径同源，见 <see cref="PaintSnap.BeginText"/>）
+        int tsnap = PaintSnap.BeginText(canvas);
         if (it.HasText)
             TextPainter.DrawLines(canvas, s, it.Box.Typeface, it.Box.WrappedLines!,
-                it.FirstLine, it.LineCount, it.TextLeft, it.TextTop, it.TextWidth, it.Box.LineLefts, fillShader, fillOverride);
+                it.FirstLine, it.LineCount, it.TextLeft, it.TextTop, it.TextWidth, it.Box.LineLefts, fillShader, fillOverride, it.Box.LineBoxes);
         else if (it.Box.Lines != null && it.LineCount > 0)
             TextPainter.DrawInlineLines(canvas, it.Box, it.TextLeft, it.TextTop, it.FirstLine, it.LineCount, fillShader, fillOverride);
+        PaintSnap.EndText(canvas, tsnap);
         fillShader?.Dispose();
         VisualEffects.End(scope);
     }

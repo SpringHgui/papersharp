@@ -25,6 +25,28 @@ if (args.Length > 1 && args[0] == "kern")
     return;
 }
 
+// 字体解析自证：dotnet run -- face <family> <weight> [size] —— 打印命中的真实字面与该字号下的 normal 行盒。
+if (args.Length > 1 && args[0] == "face")
+{
+    var fam = args[1];
+    int wt = args.Length > 2 && int.TryParse(args[2], out var w2) ? w2 : 400;
+    float sz = args.Length > 3 && float.TryParse(args[3], out var s3) ? s3 : 10.5f;
+    var tf = PaperSharp.Layout.FontManager.Get(fam, wt);
+    var (a, d) = PaperSharp.Layout.FontManager.TextExtents(fam, wt, sz);
+    Console.WriteLine($"face [{fam}] w={wt} -> {tf.FamilyName} weight={tf.FontWeight} shared={PaperSharp.Layout.FontManager.IsSharedTypeface(tf)} prkt={PaperSharp.Layout.KernTable.HasTable(tf)} glyphs={tf.GlyphCount}");
+    Console.WriteLine($"  perEm asc={PaperSharp.Layout.FontManager.ExtentsPerEm(fam, wt).Ascent:0.####} desc={PaperSharp.Layout.FontManager.ExtentsPerEm(fam, wt).Descent:0.####}  @ {sz}px -> {a}+{d}={a + d}");
+    if (args.Length > 4 && args[4] == "sys")   // 顺带列出系统里该族按各字重匹配到的字面（排查字重匹配）
+        foreach (var wq in new[] { 100, 200, 300, 350, 380, 400, 500, 700 })
+        {
+            using var t = SKTypeface.FromFamilyName(fam, new SKFontStyle(
+                (SKFontStyleWeight)wq, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright));
+            if (t == null) { Console.WriteLine($"  sys w={wq}: null"); continue; }
+            var (sa, sd) = PaperSharp.Layout.FontManager.ExtentsAt(t, sz);
+            Console.WriteLine($"  sys req={wq} -> {t.FamilyName} w={t.FontWeight} slant={t.FontSlant} @ {sz}px {sa}+{sd}={sa + sd}");
+        }
+    return;
+}
+
 // 基准测试模式：dotnet run -- bench [iters]  /  dotnet run -- cold <sample>
 if (args.Length > 0 && args[0] == "bench")
 {
@@ -57,19 +79,31 @@ if (args.Length > 1 && args[0] == "html")
     Console.WriteLine($"  → {pdfPath}\n  → {pngPath}");
     return;
 }
-// 像素级重影对拍：dotnet run -- pixdiff <name> <browser2x.png> [width]
-// 浏览器侧截图由 tools/boxdiff.mjs --dsf 2 --shot 产出（含 .meta.json 的 body 原点）。
-if (args.Length > 2 && args[0] == "pixdiff")
+// Playground 口径的 PDF：dotnet run -- pgpdf <name> [排版宽]
+// 与 PlaygroundService.RenderPdfAsync 逐字同参——同名 .css 当 extraCss、注册进程级字体目录、
+// 同宽档追加 @page{size:Wpx 842px}。少了任一条，字体解析或纸型就跟页面不一样，量出来的体积是假数。
+if (args.Length > 1 && args[0] == "pgpdf")
 {
-    float pdW = args.Length > 3 && float.TryParse(args[3], out var pdw) ? pdw : 1284;
-    PixelDiff.Run(assets, outDir, args[1], Path.GetFullPath(args[2]), pdW);
-    return;
-}
-// 基线落位探针：dotnet run -- snap <name> <browser2x.png> [width]（逐行墨迹纵向质心，量两层各落在哪条设备行）
-if (args.Length > 2 && args[0] == "snap")
-{
-    float snW = args.Length > 3 && float.TryParse(args[3], out var snw) ? snw : 1284;
-    SnapProbe.Run(assets, outDir, args[1], Path.GetFullPath(args[2]), snW);
+    var name = args[1];
+    float pgW = args.Length > 2 && float.TryParse(args[2], out var pw) ? pw : 1284;
+    var fd = Path.Combine(assets, "fonts");
+    if (Directory.Exists(fd)) PaperSharp.Layout.FontManager.RegisterFontDirectory(fd);
+    var html = File.ReadAllText(Path.Combine(assets, name + ".html"));
+    var cssPath = Path.Combine(assets, name + ".css");
+    var css = (File.Exists(cssPath) ? File.ReadAllText(cssPath) : "")
+        + "\n@page{size:" + pgW.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "px 842px}";
+
+    byte[] pdf = Array.Empty<byte>();
+    for (int rep = 0; rep < (args.Length > 3 && int.TryParse(args[3], out var rp) ? rp : 1); rep++)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        pdf = Renderer.RenderPdf(html, css, baseDir: assets);
+        sw.Stop();
+        Console.WriteLine($"[pgpdf:{name}] 第 {rep + 1} 次 {pdf.Length / 1024.0 / 1024:0.00} MB · {sw.Elapsed.TotalMilliseconds:0} ms");
+    }
+    var pdfPath = Path.Combine(outDir, $"pg-{name}.pdf");
+    File.WriteAllBytes(pdfPath, pdf);
+    Console.WriteLine($"  → {pdfPath}");
     return;
 }
 // 像素级重影对拍：dotnet run -- pixdiff <name> <browser2x.png> [width]
@@ -88,8 +122,7 @@ if (args.Length > 2 && args[0] == "snap")
     return;
 }
 // 换 PNG 编码器前的一次性迁移取证：与已提交基准逐像素对账（跑完即可删除本模式）
-if (args.Length > 0 && args[0] == "goldcheck")
-{
+if (args.Length > 0 && args[0] == "goldcheck"){
     // 从 bin 输出向上找到放了 goldens 的测试工程目录（层数随 TFM/配置变化，不写死）
     var dir = new DirectoryInfo(baseDir);
     string? goldens = null;
@@ -127,6 +160,14 @@ if (args.Length > 0 && args[0] == "pgenc")
     int enIters = args.Length > 1 && int.TryParse(args[1], out var en) ? en : 3;
     string[]? enOnly = args.Length > 2 ? args[2..] : null;
     EncodeProbe.Run(assets, enIters, enOnly);
+    return;
+}
+// 行盒级探针：dotnet run -- lines <name> [width]（与 boxes 同口径：注册字体目录）
+if (args.Length > 1 && args[0] == "lines")
+{
+    var fd = Path.Combine(assets, "fonts");
+    if (Directory.Exists(fd)) PaperSharp.Layout.FontManager.RegisterFontDirectory(fd);
+    LineProbe.Run(assets, args[1], args.Length > 2 && float.TryParse(args[2], out var lw) ? lw : 1284);
     return;
 }
 // 画布生命周期专项：dotnet run -- pgalloc [iters] [样例名…]
@@ -176,6 +217,24 @@ if (args.Length > 2 && args[0] == "svgpng")
     Console.WriteLine($"svgpng {w}x{h} → {args[2]}");
     return;
 }
+// 取块放大：crop <in.png> <out.png> <x> <y> <w> <h> [zoom] —— 肉眼核对重影局部用（PowerShell 的 GDI 脚本参数易被 bash 吞）
+if (args.Length > 6 && args[0] == "crop")
+{
+    using var src = SKImage.FromEncodedData(File.ReadAllBytes(args[1])) ?? throw new InvalidDataException("PNG 解不开");
+    var rect = new SKRectI(int.Parse(args[3]), int.Parse(args[4]),
+        Math.Min(src.Width, int.Parse(args[3]) + int.Parse(args[5])), Math.Min(src.Height, int.Parse(args[4]) + int.Parse(args[6])));
+    using var sub = src.Subset(rect);
+    int z = args.Length > 7 && int.TryParse(args[7], out var zz) ? zz : 2;
+    using var small = SKBitmap.FromImage(sub);
+    using var big = new SKBitmap(sub.Width * z, sub.Height * z);
+    using (var cc = new SKCanvas(big))
+        cc.DrawBitmap(small, new SKRect(0, 0, big.Width, big.Height));   // 默认 filterQuality=None：放大不糊
+    using var im2 = SKImage.FromBitmap(big);
+    using var d2 = im2.Encode(SKEncodedImageFormat.Png, 100);
+    File.WriteAllBytes(args[2], d2.ToArray());
+    Console.WriteLine($"crop {rect.Width}x{rect.Height}@({rect.Left},{rect.Top}) ×{z} → {args[2]}");
+    return;
+}
 if (args.Length > 1 && args[0] == "tree")
 {
     var html = File.ReadAllText(Path.Combine(assets, args[1] + ".html"));
@@ -221,16 +280,33 @@ if (args.Length > 1 && args[0] == "boxes")
     var r = Renderer.RenderRasterWithBoxes(html, css, boxW, baseDir: assets, scale: 2f);
     File.WriteAllBytes(Path.Combine(outDir, $"boxes-{name}.png"), r.Bytes);   // 目视核对用（与金标同 2x 参数）
     File.WriteAllText(Path.Combine(outDir, $"boxes-{name}.json"),
-        System.Text.Json.JsonSerializer.Serialize(new { width = boxW, contentWidth = r.ContentWidth, bodyX = r.BodyX, bodyY = r.BodyY, boxes = r.Boxes },
+        System.Text.Json.JsonSerializer.Serialize(new
+        {
+            width = boxW, contentWidth = r.ContentWidth, bodyX = r.BodyX, bodyY = r.BodyY,
+            margin = new { top = r.MarginTop, right = r.MarginRight, bottom = r.MarginBottom, left = r.MarginLeft },
+            boxes = r.Boxes
+        },
             new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }));
 
     var baseHref = "file:///" + assets.Replace('\\', '/').TrimEnd('/') + "/";
+    // 预览文档必须带上 @page 边距，否则像素对拍量的不是同一份几何（见 docs/chrome-parity-todo.md P0-6）：
+    // 引擎把正文摆在页边距内（14mm = 52.9134px），浏览器预览按屏幕排版会整条丢掉 @page，
+    // 于是两边的**绝对落笔坐标**差一个小数相位——Blink 与引擎都把绘制原点折到整 CSS px，
+    // 差的这 0.9134 会让每个盒各自翻一格，polish/pct/report 三页因此凭空多出 4~11% 的「文字重影」。
+    // 补在 html 的 padding 上（UA 表已把 html/body 的 margin/padding 归零，这里覆盖一次即可还原页边距）。
+    // 边距已折在 1/64 网格上（AtPageParser.ToMarginPx），默认 float ToString 往返精确；显式不变文化，
+    // 别让逗号小数点的区域设置打出一份浏览器读不懂的 padding。
+    string N(float v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    var pagePad = r.MarginTop == 0 && r.MarginRight == 0 && r.MarginBottom == 0 && r.MarginLeft == 0
+        ? ""
+        : $"<style>html{{padding:{N(r.MarginTop)}px {N(r.MarginRight)}px {N(r.MarginBottom)}px {N(r.MarginLeft)}px}}</style>";
     var head = "<meta charset=\"utf-8\">" +
                $"<base href=\"{baseHref}\">" +
                $"<style>{PaperSharp.Css.StyleResolver.UaStylesheetForPreview}</style>" +
                (string.IsNullOrWhiteSpace(css) ? "" : $"<style>{css}</style>") +
                "<style>::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}" +
-               "html{scrollbar-width:none!important;-ms-overflow-style:none!important}</style>";
+               "html{scrollbar-width:none!important;-ms-overflow-style:none!important}</style>" +
+               pagePad;
     File.WriteAllText(Path.Combine(outDir, $"boxes-{name}.html"),
         $"<!doctype html><html><head>{head}</head><body>{html}</body></html>");
 

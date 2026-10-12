@@ -89,7 +89,7 @@ public static class ListMarkers
     /// <summary>marker 文本占用（含间隙）的横向尺寸。</summary>
     static float MarkerAdvance(ComputedStyle s, string text, float gap)
     {
-        using var font = new SKFont(FontManager.Get(s.FontFamily, s.FontWeight), s.FontSize);
+        using var font = new SKFont(FontManager.Get(s.FontFamily, s.FontWeight, s.FontStyle), s.FontSize);
         return TextMeasurer.LineWidth(text, font, s.LetterSpacing) + gap;
     }
 
@@ -118,9 +118,10 @@ public static class ListMarkers
         if (host.Marker is { } ov)
         {
             if (ov.Color is { } c) s.Color = c;
-            if (ov.FontFamily is { Length: > 0 } fam) s.FontFamily = fam;
+            if (ov.FontFamily is { Length: > 0 } fam) { s.FontFamily = fam; s.FontFamilyList = fam; }
             if (ov.FontSize is { } fs) s.FontSize = fs;
             if (ov.FontWeight is { } fw) s.FontWeight = fw;
+            if (ov.FontStyle is { Length: > 0 } fs2) s.FontStyle = fs2;
             if (ov.LetterSpacing is { } lsp) s.LetterSpacing = lsp;
             if (ov.TextTransform is { Length: > 0 } tt) s.TextTransform = tt;
         }

@@ -27,8 +27,8 @@ public static class CssValueParser
         "cm" => PxPerCm,
         "in" => 96f,
         "pc" => 16f,
-        // 1q = ¼ **毫米**（不是厘米）：Chrome 实测 top:1q → 0.9375 = 60/64 = PxPerMm/4 折网格。
-        // 原来写成 PxPerCm/4 = 9.4488px，整整大 10 倍（padding-top:1q 引擎 9.4375 / Chrome 0.9375）。
+        // 1q = ¼ **毫米**（不是厘米）：Chrome 实测 top:1q → 0.9375 = 60/64，而 0.9449px = PxPerMm/4。
+        // 原来写成 PxPerCm/4 = 9.4488px，整整大 10 倍（padding-top:1q 引擎给 9.4375、Chrome 给 0.9375）。
         "q" => PxPerMm / 4f,
         _ => null,
     };
@@ -54,26 +54,39 @@ public static class CssValueParser
 
     /// <summary>
     /// 把一条长度折到 Blink 的 <c>LayoutUnit</c> 网格（1 CSS px = 1/64），**向零截断**。
-    /// 规则是量出来的（探针 <c>assets/_probe-lu.html</c>，读 <c>getBoundingClientRect</c> 的 used 值，
-    /// 取 ×64 小数部分为 .25/.5/.75 的作者值让 floor 与 round 必然分道）：
-    ///   9.3828125(=600.5/64) → 9.375 ；9.38671875(=600.75/64) → 9.375 ；
-    ///   −9.38671875(=−600.75/64) → −9.375（向零，不是 −∞）；2.5mm → 9.4375 ；1q → 0.9375 ；
-    ///   33.333% of 1200 → 399.984375(=25599/64)。
-    /// 链式口径：<c>font-size:9.3828125px</c> 上的 <c>top:1.5em</c> Chrome 给 14.0625 = 1.5 × **9.375**
-    /// —— em 拿**已经折过的**字号乘，所以折点必须在字号换算之后。
-    /// 不动字体度量：Chrome 的 <c>line-height:normal</c> 行盒高实测在 13 个字号上全是整数，
-    /// 与引擎「ascent/descent 各自取整到整像素」逐位吻合（<c>assets/_probe-lh.html</c>）。
-    /// <c>PS_LU=0</c> 整体关掉做 A/B。
+    ///
+    /// 规则是量出来的，不是推的（探针 <c>assets/_probe-lu.html</c>，2026-09-29，
+    /// <c>node tools/boxdiff.mjs _probe-lu --probe …</c> 直接读 <c>getBoundingClientRect</c> 的 used 值）：
+    /// 取 <c>×64</c> 小数部分恰为 .25/.5/.75 的作者值，让 floor 与 round 必然分道——
+    ///
+    /// | 作者值 | ×64 | Chrome used |
+    /// |---|---|---|
+    /// | 9.3828125 | 600.500 | 9.375（=600/64，**不是** 601/64=9.390625）|
+    /// | 9.38671875 | 600.750 | 9.375 |
+    /// | −9.38671875 | −600.750 | −9.375（向零截断，不是 −∞ 取底）|
+    /// | 2.5mm | 604.724 | 9.4375 =604/64 |
+    /// | 1q | 60.472 | 0.9375 =60/64 |
+    /// | 33.333%（基准 1200）| 25599.744 | 399.984375 =25599/64 |
+    ///
+    /// 另一条要紧的链：<c>font-size:9.3828125px</c> 上的 <c>top:1.5em</c> Chrome 给 14.0625 =
+    /// 1.5 × **9.375** —— em 是拿**已经折过的** font-size 再乘的，所以折点必须在字号换算之后。
+    ///
+    /// 折的是**作者长度**这一层；字体度量（ascent/descent）另有自己的取整口径（实测 Chrome 的
+    /// <c>line-height:normal</c> 行盒高在 9.375/12.5/16.5/24.5/31.3px 等 13 个字号上全是**整数**，
+    /// 与引擎「ascent/descent 各自取整到整像素」逐位吻合，见 <c>assets/_probe-lh.html</c>，不动它）。
+    ///
+    /// <c>PS_LU=0</c> 整体关掉做 A/B（P2-7 当年在全局折法上翻过车，那时门还没修好，重测见台账）。
     /// </summary>
     public static float Snap(float px) => SnapLens ? (float)Math.Truncate((double)px * 64d) / 64f : px;
 
     /// <summary>
     /// <c>font-size</c> 专用：Chrome 把字号折到 1/64 时是**四舍五入**，与几何长度的截断不同。
     /// 探针 <c>assets/_probe-fs.html</c>（<c>line-height:1</c> 让块高 = N × 用值字号）：
-    ///   11pt = 14.666667px → 14.671875（=939/64；截断会给 938/64 = 14.65625）
-    ///   9.9999px → 10.000000；10.4921876px → 10.5（×64 = 671.5 是平局，**进位**）
-    /// 再由 <c>_probe-lhrule.html</c> 六个 (字号×行高) 组合反证：只有「字号 round、
-    /// 行高乘完 floor」6/6 全中。
+    ///   14.666667px(=11pt) → Chrome 14.671875 = 939/64（截断会给 938/64 = 14.65625）
+    ///   9.9999px → 10.000000 = 640/64（截断 639/64）
+    ///   10.4921876px → 10.5 = 672/64（×64 = 671.5 是平局，**进位**）
+    /// 再经 <c>_probe-lhrule.html</c> 六个 (字号×行高) 组合反证：只有「字号 round、行高乘完 floor」
+    /// 能 6/6 全中，「字号 floor」那条在 14.666667 与 9.9999 两处都差 1~2 个 1/64。
     /// </summary>
     public static float SnapRound(float px) => SnapLens ? (float)Math.Round((double)px * 64d, MidpointRounding.AwayFromZero) / 64f : px;
 
@@ -84,7 +97,8 @@ public static class CssValueParser
         => Snap(ToPixelsRaw(value, parentFontSize, rootFontSize));
 
     /// <summary>同 <see cref="ToPixels"/>，但按 <c>font-size</c> 的口径折（四舍五入到 1/64）。
-    /// pt 制式文档（发票/公文常用 11pt/14pt）里每个字号都会差这 1/64，乘上行数就是 m1 文末的 +58/64。</summary>
+    /// 字号换算一律走这条——pt 制式的文档（发票/公文常用 11pt/14pt）里每个字号都会差这 1/64，
+    /// 乘上行数就是 m1 文末 +58/64 的来路。</summary>
     public static float FontToPixels(string value, float parentFontSize, float rootFontSize = 16f)
         => SnapRound(ToPixelsRaw(value, parentFontSize, rootFontSize));
 
@@ -326,19 +340,24 @@ public static class CssValueParser
     }
 
     /// <summary>行高倍数。<c>normal</c>/未声明/带单位 → NaN（带单位的交给 <see cref="ParseLineHeightLength"/>；
-    /// normal 由调用方按字体度量取行距，勿在此凑一个经验值）。</summary>
-    public static float ParseLineHeight(string value)
+    /// normal 由调用方按字体度量取行距，勿在此凑一个经验值）。
+    /// 必须解析成 double：1.3/1.4 这类十进制写成 float 会**落到真值下方**（1.3f = 1.29999995），
+    /// 乘 20px 得 25.999999，再按 1/64 向下量化就掉一格到 25.9844，行盒比浏览器矮 1/64px——
+    /// <c>lead</c> 从 0 变负，首行基线整体抬起 1px（实测 20px/1.3、1.3@40、15px/1.4 全部踩中）。
+    /// 保留 double 后 20×1.3 = 26.0000000000000009，量化回 26；而 13.328125×1.6 = 21.325 仍按原口径
+    /// 掉到 21.3125（浏览器实测的表格行高就是这个数），只修了浮点误差、没改动量化律。</summary>
+    public static double ParseLineHeight(string value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value == "normal") return float.NaN;
+        if (string.IsNullOrWhiteSpace(value) || value == "normal") return double.NaN;
         var v = value.AsSpan().Trim();
         if (v.EndsWith("%", StringComparison.Ordinal))
         {
             var p = ParseFloat(v[..^1]);
-            return p > 0 ? p / 100f : float.NaN;
+            return p > 0 ? p / 100d : double.NaN;
         }
-        if (float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
-            return factor > 0 ? factor : float.NaN;
-        return float.NaN;   // 带单位（px/em/…）：见 ParseLineHeightLength
+        if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
+            return factor > 0 ? factor : double.NaN;
+        return double.NaN;   // 带单位（px/em/…）：见 ParseLineHeightLength
     }
 
     /// <summary>
@@ -395,6 +414,33 @@ public static class CssValueParser
     {
         int slot = Math.Clamp((parent + 50) / 100, 0, 9);
         return (bolder ? BolderByParent : LighterByParent)[slot];
+    }
+
+    /// <summary>
+    /// font-style 计算值，归一化成 <c>normal</c> / <c>italic</c> / <c>oblique</c> / <c>oblique 20deg</c>
+    /// （角度按 deg 原文留一档，是否真合成交给 <see cref="Layout.FontManager.SyntheticSkew"/> 判）。
+    /// 没写、写错、或写了 <c>inherit</c> 这类关键字 → 退回继承值。
+    /// <c>italic 20deg</c> 整条非法（computed 落回 normal，无头 Edge 实测），故 italic 只认裸关键字。
+    /// </summary>
+    public static string ParseFontStyle(string? value, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        var toks = value.Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (toks.Length == 0) return fallback;
+        switch (toks[0])
+        {
+            case "normal": return "normal";
+            case "italic": return toks.Length == 1 ? "italic" : fallback;
+            case "oblique":
+                if (toks.Length == 1) return "oblique";
+                // 只留 deg 档（grad/rad/turn 罕见，归到裸 oblique = 浏览器缺省 14deg 那一档）
+                var a = toks[1];
+                if (a.EndsWith("deg", StringComparison.Ordinal)
+                    && float.TryParse(a[..^3], NumberStyles.Float, CultureInfo.InvariantCulture, out var deg))
+                    return "oblique " + deg.ToString("0.###", CultureInfo.InvariantCulture) + "deg";
+                return "oblique";
+            default: return fallback;
+        }
     }
 
     /// <summary>font-variant-caps 长写与 font-variant 简写里的 caps 分量。两处都没写→null（交调用方继承）。

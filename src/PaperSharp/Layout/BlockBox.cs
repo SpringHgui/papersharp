@@ -20,6 +20,29 @@ public sealed class BlockBox
 
     /// <summary>本元素直属文本（如果有），已经通过 TextMeasurer.Wrap 折行。</summary>
     public string[]? WrappedLines;
+    /// <summary><c>line-height: normal</c> 且各行掺的回退字体不同时，逐行的 (基线以上, 基线以下)。
+    /// 浏览器让用了回退字体的那一行按回退字体的度量长高（见 <see cref="TextShaper.LineExtents"/>），
+    /// 于是同一个块里可能出现 15/19 混排。null = 各行等高，走 <see cref="ComputedStyle.LineHeightPx"/> 老路径。
+    /// 只有 <see cref="WrappedLines"/> 那条纯文本通路会填（IFC 通路逐行记在 <see cref="Lines"/> 里）。</summary>
+    public (float Asc, float Desc)[]? LineBoxes;
+    /// <summary>纯文本第 i 行的行盒高。</summary>
+    public float LineHeightAt(int i) => LineBoxes != null ? LineBoxes[i].Asc + LineBoxes[i].Desc : Style.LineHeightPx();
+    /// <summary>纯文本首行基线距内容盒顶的距离。</summary>
+    public float FirstLineAscent() => LineBoxes != null && LineBoxes.Length > 0
+        ? LineBoxes[0].Asc : InlineLayout.FirstBaselineOffset(Style);
+    /// <summary>纯文本第 i 行基线以下的高度。</summary>
+    public float LineDescentAt(int i) => LineBoxes != null
+        ? LineBoxes[i].Desc : Style.LineHeightPx() - InlineLayout.FirstBaselineOffset(Style);
+    /// <summary>全部 WrappedLines 占掉的流高。</summary>
+    public float TextFlowHeight()
+    {
+        int n = WrappedLines?.Length ?? 0;
+        if (n == 0) return 0;
+        if (LineBoxes == null) return n * Style.LineHeightPx();
+        float h = 0;
+        for (int i = 0; i < n; i++) h += LineHeightAt(i);
+        return h;
+    }
     public SKTypeface Typeface = null!;
 
     /// <summary>inline 格式化上下文：原子序列（Measure 前）与折好的行盒（Measure 后）。非 inline 块为 null。</summary>
@@ -40,6 +63,10 @@ public sealed class BlockBox
     /// <summary>表格布局中间结果（仅 display:table 盒使用），供 Position 复用，避免二次计算。</summary>
     public List<List<TCellInfo>>? TRows;
     public List<BlockBox>? TRowBoxes;   // 与 TRows 同序的行盒（table-row），定位时按下标取，免每行重遍历
+    /// <summary>与 TRows 同序：每行所属的**行组盒**（thead/tbody/tfoot）；裸 tr 直接挂 table 下时为 null。
+    /// 行组自己的 background/border 要铺在它那一段行带上，而且必须画在行背景之下
+    /// （CSS 表格绘制顺序：table 底 → 行组底 → 行底 → 格底）。缺了它，thead{background} 整条不落地。</summary>
+    public List<BlockBox?>? TRowGroupBoxes;
     public float[]? TColW;
     public float[]? TRowH;
     public float TSpacing;
@@ -53,6 +80,31 @@ public sealed class BlockBox
     public List<int> TFooterRows = new(); // tfoot 行索引
     public float THeaderHeight;          // thead 总高（含 spacing）
     public float TFooterHeight;          // tfoot 总高（含 spacing）
+    /// <summary>collapse 表里本格**内容布局**用的四条边宽 = 相邻两条折叠网格线各占半条
+    /// （Blink 把整条线骑跨在两格边界中线上）。只影响内容内缩与内容宽，**不影响描边**——
+    /// 描边仍按 <c>Style</c> 的整条由单格描一次（把线拆成两半各自抗锯齿会让线变软，
+    /// 边框占比高的样例反而回退，见 <c>LayoutBuilder.ApplyCollapseBorders</c>）。
+    /// 纵向不折半（格底/行高随之差 1px，整张表行线上下错位，实测更差），所以只有 L/R 两个访问器。
+    /// 非折叠格 <see cref="CellEdgeSet"/> 为假，回落到 Style。</summary>
+    public bool CellEdgeSet;
+    public float CellBwL, CellBwR;
+    public float EdgeL => CellEdgeSet ? CellBwL : Style.BorderWidthLeft;
+    public float EdgeR => CellEdgeSet ? CellBwR : Style.BorderWidthRight;
+
+    /// <summary>
+    /// 折叠表里本格所描的那几条线要<b>骑跨</b>在边框盒的边上：Blink 把共享网格线的中心摆在两格边界中线上，
+    /// 所以描边矩形 = 边框盒沿「自己拥有的线」方向各外扩半条（被清零的内部边不扩，那条由邻居描）。
+    /// 传进 <c>BoxPainter.PaintBorder</c> 时宽度仍用整条，于是斜接梯形的内外缘正好对称压在中线两侧。
+    /// 背景不跟扩 —— 背景铺的是边框盒本身。
+    /// </summary>
+    public SkiaSharp.SKRect CollapsedBorderRect(SkiaSharp.SKRect r) => CellEdgeSet
+        ? new SkiaSharp.SKRect(r.Left - Style.BorderWidthLeft / 2, r.Top - Style.BorderWidthTop / 2,
+                               r.Right + Style.BorderWidthRight / 2, r.Bottom + Style.BorderWidthBottom / 2)
+        : r;
+    // 纵向**不**折半：试过，行高/格底随之变 1px，整张表的行线上下错位，像素门反而回退
+    //（m1 1x 可见重影 21.02% → 26.44%）。共享线的纵向骑跨要连着行高分配一起改，另立 P1-17。
+    public float EdgeT => Style.BorderWidthTop;
+    public float EdgeB => Style.BorderWidthBottom;
 
     /// <summary>Flex 布局中间结果（仅 display:flex 盒使用）：分行信息，供 Position 复用。</summary>
     public List<FlexLine>? FlexLines;
@@ -92,10 +144,12 @@ public sealed class BlockBox
     public float BorderX;
     public float BorderY;
 
+    /// <summary>边框盒总宽。折叠表格的格子用 <c>Edge*</c>（每边半条共享线）而不是 <c>Style.BorderWidth*</c>：
+    /// 内容宽是按 Edge 口径从列宽里扣出来的，这里若换回整条，最后一列就会凭空多出 1px。</summary>
     public float TotalWidth =>
-        Style.MarginLeft + Style.BorderWidthLeft + Style.PaddingLeft
+        Style.MarginLeft + EdgeL + Style.PaddingLeft
         + ContentWidth
-        + Style.PaddingRight + Style.BorderWidthRight + Style.MarginRight;
+        + Style.PaddingRight + EdgeR + Style.MarginRight;
 
     public float TotalHeight =>
         Style.MarginTop + Style.BorderWidthTop + Style.PaddingTop

@@ -13,6 +13,8 @@ public sealed class DrawItem
     public bool DrawDecor = true;     // 是否画背景+边框
     public int FirstLine, LineCount;  // 文本：从第几行起、画几行
     public float TextLeft, TextTop, TextWidth; // 文本内容区起点与宽度
+    /// <summary>按位跳过边框：1=上 2=右 4=下 8=左。跨页单元格的切缝边用（见 Paginator 的分片绘制）。</summary>
+    public int BorderSkipSides;
     public bool HasText => LineCount > 0 && Box.WrappedLines != null;
 }
 
@@ -34,11 +36,12 @@ public static class Paginator
     public static List<Page> Paginate(BlockBox body, PageSpec spec)
     {
         var s = body.Style;
-        // 内容区 = @page 页边距 + body 自身 border/padding（无 @page 时页边距为 0，等价旧行为）
-        float padL = spec.MarginLeft + s.BorderWidthLeft + s.PaddingLeft;
-        float padR = spec.MarginRight + s.BorderWidthRight + s.PaddingRight;
-        float padT = spec.MarginTop + s.BorderWidthTop + s.PaddingTop;
-        float padB = spec.MarginBottom + s.BorderWidthBottom + s.PaddingBottom;
+        // 内容区 = @page 页边距 + body 自身 margin/border/padding（无 @page 时页边距为 0，等价旧行为）。
+        // body margin 必须算进来：浏览器里它会让正文离边，PDF 要与之同形（背景仍铺满 margin 区，同浏览器传播行为）。
+        float padL = spec.MarginLeft + s.MarginLeft + s.BorderWidthLeft + s.PaddingLeft;
+        float padR = spec.MarginRight + s.MarginRight + s.BorderWidthRight + s.PaddingRight;
+        float padT = spec.MarginTop + s.MarginTop + s.BorderWidthTop + s.PaddingTop;
+        float padB = spec.MarginBottom + s.MarginBottom + s.BorderWidthBottom + s.PaddingBottom;
 
         var ctx = new Ctx
         {
@@ -88,6 +91,15 @@ public static class Paginator
             _flowPrev = null;   // 换页即断开相邻关系：上一页那块的下 margin 不参与本页首块的坍缩
         }
 
+        /// <summary>
+        /// 「整块挪页」用的换页：当前页还什么都没放时不换——换出去只会留一页全空白的页首
+        /// （浏览器打印同样会就地起、页底裁）。显式的 break-before/after 不走这里，照换。
+        /// </summary>
+        void NewPageIfUsed()
+        {
+            if (CurY > ContentTop + 0.5f || Cur.Items.Count > 0) NewPage();
+        }
+
         public void Place(BlockBox box, float availW, float x)
         {
             var s = box.Style;
@@ -110,18 +122,18 @@ public static class Paginator
                 CurY += h;
             }
             // 当前页放不下、但整页放得下：只有「没有可拆分的内部结构」才整块挪到下一页。
-            // 能拆的（有多个子块或多行文本）就地起、页底断——Chrome printToPDF 打印 long 就是这个结果
-            // （.card 在页中被拆成两段，共 2 页）；一律整块挪会把 2 页变成 3 页，还把上一页留成空页。
+            // Chrome printToPDF 打印 long 就是这个结果（.card 在页中被拆成两段，共 2 页）；
+            // 一律整块挪会把 2 页变成 3 页，还把上一页留成空页。
             else if (h <= UsableH + 0.5f && !Splittable(box))
             {
-                NewPage();
+                NewPageIfUsed();
                 EmitWhole(box, x, CurY);
                 CurY += h;
             }
             // break-inside: avoid → 不碎片化，整块放到下一页
             else if (s.BreakInside == "avoid")
             {
-                NewPage();
+                NewPageIfUsed();
                 EmitWhole(box, x, CurY);
                 CurY += Math.Min(h, UsableH);
             }
@@ -129,7 +141,7 @@ public static class Paginator
             // 含原子盒的 inline 块同理整块放置。
             else if (box.IsReplaced || (box.IsInlineFC && box.HasInlineAtomic))
             {
-                NewPage();
+                NewPageIfUsed();
                 EmitWhole(box, x, CurY);
                 CurY += Math.Min(h, UsableH);
             }
@@ -138,7 +150,7 @@ public static class Paginator
             // BlockBox.OverflowClip 沿父链求交的前提就破了（表格若被裁，整表落一页）。
             else if (s.ClipsOverflow)
             {
-                NewPage();
+                NewPageIfUsed();
                 EmitWhole(box, x, CurY);
                 CurY += Math.Min(h, UsableH);
             }
@@ -179,13 +191,15 @@ public static class Paginator
 
         void EmitWalk(BlockBox box) => EmitInto(Cur.Items, box);
 
-        void EmitInto(List<DrawItem> list, BlockBox box)
+        /// <summary>把盒自己（装饰 + 自己的文本行）登记成一个绘制单元，不下钻。</summary>
+        static void AddItem(List<DrawItem> list, BlockBox box)
         {
             var s = box.Style;
-            float bw = s.BorderWidthLeft + s.PaddingLeft + box.ContentWidth + s.PaddingRight + s.BorderWidthRight;
-            float bh = s.BorderWidthTop + s.PaddingTop + box.ContentHeight + s.PaddingBottom + s.BorderWidthBottom;
+            // 折叠表格的格子按半条共享线内缩内容（见 <see cref="BlockBox.EdgeL"/>）；其余盒就是整条边框。
+            float bw = box.EdgeL + s.PaddingLeft + box.ContentWidth + s.PaddingRight + box.EdgeR;
+            float bh = box.EdgeT + s.PaddingTop + box.ContentHeight + s.PaddingBottom + box.EdgeB;
             int lines = box.Lines?.Count ?? box.WrappedLines?.Length ?? 0;
-            float textX = box.BorderX + s.BorderWidthLeft + s.PaddingLeft;
+            float textX = box.BorderX + box.EdgeL + s.PaddingLeft;
             float textY = box.BorderY + s.BorderWidthTop + s.PaddingTop + box.ValignDY;
 
             list.Add(new DrawItem
@@ -195,6 +209,12 @@ public static class Paginator
                 FirstLine = 0, LineCount = lines,
                 TextLeft = textX, TextTop = textY, TextWidth = box.ContentWidth,
             });
+        }
+
+        void EmitInto(List<DrawItem> list, BlockBox box)
+        {
+            AddItem(list, box);
+            var s = box.Style;
 
             // inline FC：原子盒（inline-block/行内 img）不是 Children，需各自作为绘制单元画出（已绝对定位）
             if (box.Lines != null)
@@ -248,13 +268,22 @@ public static class Paginator
         void FlowText(BlockBox box, float innerX)
         {
             var s = box.Style;
-            float lineHeight = s.LineHeightPx();
             var lines = box.WrappedLines!;
             int i = 0;
             while (i < lines.Length)
             {
                 float remaining = ContentBottom - CurY;
-                int fit = Math.Max(1, (int)Math.Floor(remaining / lineHeight));
+                // 行高可变：掺了回退字体的行比统一行高高（见 BlockBox.LineBoxes），逐行累加而不是除法取整。
+                // 首行永不丢弃（放不下也留在当前页），与原来的 Math.Max(1, …) 同口径。
+                int fit = 0;
+                float adv = 0;
+                while (i + fit < lines.Length)
+                {
+                    float h = box.LineHeightAt(i + fit);
+                    if (fit > 0 && adv + h > remaining) break;
+                    adv += h;
+                    fit++;
+                }
                 int count = Math.Min(fit, lines.Length - i);
 
                 // 孤行寡行控制：换页前检查
@@ -270,17 +299,19 @@ public static class Paginator
                         if (remainingLines < s.Widows && count > s.Orphans)
                             count = Math.Max(s.Orphans, lines.Length - i - s.Widows);
                     }
+                    adv = 0;
+                    for (int k = 0; k < count; k++) adv += box.LineHeightAt(i + k);
                 }
 
                 Cur.Items.Add(new DrawItem
                 {
-                    Box = box, X = innerX, Y = CurY, W = box.ContentWidth, H = count * lineHeight,
+                    Box = box, X = innerX, Y = CurY, W = box.ContentWidth, H = adv,
                     DrawDecor = false,
                     FirstLine = i, LineCount = count,
                     TextLeft = innerX, TextTop = CurY, TextWidth = box.ContentWidth,
                 });
                 i += count;
-                CurY += count * lineHeight;
+                CurY += adv;
                 if (i < lines.Length) NewPage();
             }
         }
@@ -366,6 +397,13 @@ public static class Paginator
                 if (!headerSet.Contains(r) && !footerSet.Contains(r))
                     bodyRows.Add(r);
 
+            // 所有跨行格：起点行 + 覆盖到的末行（末尾越界要夹住，rowspan 超出行数时按实际行数算）
+            var spans = new List<(TCellInfo Info, int To)>();
+            for (int r = 0; r < numRows; r++)
+                foreach (var info in table.TRows[r])
+                    if (info.RowSpan > 1)
+                        spans.Add((info, Math.Min(numRows - 1, r + info.RowSpan - 1)));
+
             int bodyIdx = 0;
             bool firstPage = true;
 
@@ -421,9 +459,18 @@ public static class Paginator
                 float decoTop = firstPage ? CurY + s.MarginTop : ContentTop;
                 Cur.Items.Insert(0, Band(table, bx, decoTop, bw, bandBottom - decoTop));
 
-                // 绘制行内容
+                // 行组（thead/tbody/tfoot）自己的底色：CSS 的表格绘制顺序是 table 底 → 行组底 → 行底 → 格底，
+                // 所以这条带要垫在行内容之前。曾经整条缺失——m1.css 的 thead{background:#e8f0f8} 在引擎里
+                // 根本不落地而 Chrome 有，两条表头带合计 40.4 万个 2x 差像素 = m1 全图差像素的 25.1%，
+                // Playground 叠加视图里那两条「整条表头重影」就是它（取证与数字见 docs/chrome-parity-todo.md P0-8）。
+                EmitRowGroupBands(table, pageRows);
+
+                // 绘制行内容。同一页里每个盒只登记一次。
+                var drawn = new HashSet<BlockBox>(ReferenceEqualityComparer.Instance);
                 foreach (var r in pageRows)
-                    EmitTableRow(table, r, innerX);
+                    EmitTableRow(table, r, pageRows, drawn);
+                // 被页缝切开的跨行格：逐页分片补上（见 EmitSpanFragments）
+                EmitSpanFragments(table, pageRows, gridStartY, spans, drawn);
 
                 CurY = bandBottom;
                 if (bodyIdx < bodyRows.Count) CurY = ContentBottom; // 当前页满
@@ -437,15 +484,123 @@ public static class Paginator
             }
         }
 
-        void EmitTableRow(BlockBox table, int rowIdx, float innerX)
+        /// <summary>
+        /// 把本页里连续属于同一行组的行并成一条背景带，垫在行内容之下（画在表格装饰带之后）。
+        /// 逐页算而不是在布局期一次定位好，是因为跨页续表会把同一个 thead 摆到每一页顶部——
+        /// 带子必须跟着这一页的那几行走，续页重复表头时底色才跟着重复。
+        /// </summary>
+        void EmitRowGroupBands(BlockBox table, List<int> pageRows)
+        {
+            var groups = table.TRowGroupBoxes;
+            if (groups == null || table.TRowBoxes == null || pageRows.Count == 0) return;
+            // collapse 表的行组边框参与折叠网格（由格子那圈统一描），这里只铺底色，免得框线被描两遍。
+            int skip = table.Style.BorderCollapse == "collapse" ? 15 : 0;   // 1上 2右 4下 8左
+
+            // 从最后一组往前，每次都插到 index 1（表格装饰带之后）→ 最终顺序与行序一致
+            for (int at = pageRows.Count; at > 0;)
+            {
+                int end = at - 1;
+                var sec = groups[pageRows[end]];
+                int start = end;
+                while (start > 0 && ReferenceEquals(groups[pageRows[start - 1]], sec)) start--;
+                if (sec != null)
+                {
+                    var first = RowBoxOf(table, pageRows[start]);
+                    var last = RowBoxOf(table, pageRows[end]);
+                    if (first != null && last != null)
+                    {
+                        float h = last.BorderY + last.ContentHeight - first.BorderY;
+                        Cur.Items.Insert(1, new DrawItem
+                        {
+                            Box = sec, X = first.BorderX, Y = first.BorderY, W = first.ContentWidth, H = h,
+                            DrawDecor = true, BorderSkipSides = skip, LineCount = 0,
+                        });
+                    }
+                }
+                at = start;
+            }
+        }
+
+        static BlockBox? RowBoxOf(BlockBox table, int rowIdx)
+            => table.TRowBoxes != null && rowIdx < table.TRowBoxes.Count ? table.TRowBoxes[rowIdx] : null;
+
+        /// <summary>
+        /// 落一页里的某一行：行盒只登记自己的装饰，单元格各自登记一次。
+        /// 曾经这里是 <c>EmitInto(行盒)</c> + 再逐格 <c>EmitInto(格)</c>——行盒的 Children 就是那些单元格，
+        /// 于是整行的字被画了两遍。两遍坐标完全相同，光栅上看不出来，但 PDF 里就是两段同样的文字：
+        /// 查看器（Edge/PDFium）按各自的取整各画一次，放大看就是字面重影，文件也白胖一截。
+        /// </summary>
+        void EmitTableRow(BlockBox table, int rowIdx, List<int> pageRows, HashSet<BlockBox> drawn)
         {
             if (table.TRows == null || rowIdx >= table.TRows.Count) return;
             // 行盒背景
             var rowBox = table.TRowBoxes != null && rowIdx < table.TRowBoxes.Count ? table.TRowBoxes[rowIdx] : null;
-            if (rowBox != null) EmitInto(Cur.Items, rowBox);
+            if (rowBox != null && drawn.Add(rowBox)) AddItem(Cur.Items, rowBox);
             // 各单元格
             foreach (var info in table.TRows[rowIdx])
-                EmitInto(Cur.Items, info.Cell);
+            {
+                // 尾巴被页缝切掉的跨行格不在这里画：整盒画出去只会让续页丢底、首页切半截字，
+                // 交给 EmitSpanFragments 按页分片。
+                if (info.RowSpan > 1 && rowIdx + info.RowSpan - 1 > pageRows[^1]) continue;
+                if (drawn.Add(info.Cell)) EmitInto(Cur.Items, info.Cell);
+            }
+        }
+
+        /// <summary>
+        /// 被页缝切开的跨行格（rowspan）逐页分片：每一片都要铺自己那截的背景与左右边框，
+        /// 切缝那一头的横边不描（box-decoration-break: slice），文字只落在起点那一片。
+        ///
+        /// 修前的样子：格只在它的起点行被画一次整盒 → 起点在上一页的格，续页那一截既没底色也没边框，
+        /// 只剩行背景的斑马纹穿过去；而格内文字按整格高度做 vertical-align，基线掉到页缝底下，
+        /// 首页上被切成半截字。Chrome 打印真值（探针 _probe-rspan，595×842）：黄底在页 1 高 49px、
+        /// 页 2 高 98px 连续两段，文字完整落在页 1 那一段的顶部。
+        /// </summary>
+        void EmitSpanFragments(BlockBox table, List<int> pageRows, float gridStartY,
+            List<(TCellInfo Info, int To)> spans, HashSet<BlockBox> drawn)
+        {
+            float spacingY = table.TSpacingY;
+            // 本页每行的上沿：与 LayoutBuilder.PositionTableRows 同一条累加式，两处口径不能各写各的
+            var rowTop = new Dictionary<int, float>();
+            float ry = gridStartY + table.TInsetT + spacingY;
+            foreach (var r in pageRows) { rowTop[r] = ry; ry += table.TRowH[r] + spacingY; }
+
+            foreach (var (info, to) in spans)
+            {
+                int from = info.Row;
+                var on = new List<int>();
+                foreach (var r in pageRows) if (r >= from && r <= to) on.Add(r);
+                if (on.Count == 0 || on.Count == to - from + 1) continue;   // 没跨到本页，或整格就在本页（已由逐格画过）
+                var cell = info.Cell;
+                if (!drawn.Add(cell)) continue;
+
+                bool first = on[0] == from;
+                var s = cell.Style;
+                float top = rowTop[on[0]];
+                float bottom = rowTop[on[^1]] + table.TRowH[on[^1]];
+                float bw = cell.EdgeL + s.PaddingLeft + cell.ContentWidth + s.PaddingRight + cell.EdgeR;
+                int lines = first ? cell.Lines?.Count ?? cell.WrappedLines?.Length ?? 0 : 0;
+
+                Cur.Items.Add(new DrawItem
+                {
+                    Box = cell, X = cell.BorderX, Y = top, W = bw, H = Math.Max(0, bottom - top),
+                    DrawDecor = true,
+                    // 切缝边：首片的下沿、续片的上沿都不描横边
+                    BorderSkipSides = (first ? 0 : 1) | (on[^1] == to ? 0 : 4),
+                    FirstLine = 0, LineCount = lines,
+                    // 文字贴这一片的顶：整格高已被页缝分给两页，按整格算 vertical-align 会把基线推到别页
+                    TextLeft = cell.BorderX + cell.EdgeL + s.PaddingLeft,
+                    TextTop = top + s.BorderWidthTop + s.PaddingTop,
+                    TextWidth = cell.ContentWidth,
+                });
+
+                // 格里的子盒/原子盒只随起点那一片画一次（它们的位置是整格布局定的，不随分页重排）
+                if (!first) continue;
+                if (cell.Lines != null)
+                    foreach (var ln in cell.Lines)
+                        foreach (var f in ln.Frags)
+                            if (f.Box != null) EmitInto(Cur.Items, f.Box);
+                foreach (var ch in cell.Children) EmitInto(Cur.Items, ch);
+            }
         }
 
         static DrawItem Band(BlockBox box, float x, float y, float w, float h) =>
