@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8">
+<style>
+body { font-family:"Segoe UI",Arial,sans-serif; margin:0; }
+div { white-space: nowrap; }
+</style>
+<div id="out"></div>
+<pre id="p10">MMMMMMMMMM</pre>
+<pre id="p20" style="font-size:20px">MMMMMMMMMM</pre>
+<div id="m10" style="font-family:monospace;font-size:10px">MMMMMMMMMM</div>
+<div id="m20" style="font-family:monospace;font-size:20px">MMMMMMMMMM</div>
+<div id="m20cn" style="font-family:'Courier New';font-size:20px">MMMMMMMMMM</div>
+<div id="m20ns" style="font-family:NSimSun;font-size:20px">MMMMMMMMMM</div>
+<script>
+const q = (id) => document.getElementById(id);
+const r = (id) => { const b = q(id).getBoundingClientRect(); return id+' '+b.width.toFixed(2)+'x'+b.height.toFixed(2); };
+q('out').textContent = ['p10','p20','m10','m20','m20cn','m20ns'].map(r).join(' | ');
+</script>

@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8">
+<style>
+body { font-family:"Segoe UI",Arial,sans-serif; font-size:20px; margin:0; }
+</style>
+<div id="out"></div>
+<hr id="hrr">
+<pre id="pr">PRE twenty</pre>
+<ul id="ul"><li id="li">LI</li></ul>
+<dl id="dl"><dd id="dd">DD</dd></dl>
+<blockquote id="bq">BQ</blockquote>
+<figure id="fg">FIG</figure>
+<h1 id="h1">H1</h1>
+<h6 id="h6">H6</h6>
+<script>
+const q = (id) => document.getElementById(id);
+const cs = (id) => { const s = getComputedStyle(q(id)); return id+'{fs='+s.fontSize+' mt='+s.marginTop+' mb='+s.marginBottom+' ml='+s.marginLeft+' pl='+s.paddingLeft+' ff='+s.fontFamily.slice(0,28)+'}'; };
+q('out').textContent = ['hrr','pr','ul','li','dd','bq','fg','h1','h6'].map(cs).join(' | ');
+</script>

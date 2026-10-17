@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; }
+  .page { width: 794px; }
+  .lbl { font-size: 8px; margin-bottom: 1px; }
+</style></head><body>
+<!-- A：纯 display:block 图片堆叠（无块级兄弟） -->
+<div class="page" id="A">
+  <img src="assets/photo.jpg" width="150" height="100" style="display:block">
+  <img src="assets/photo.jpg" width="150" height="100" style="display:block">
+</div>
+<!-- B：块级兄弟 + display:block 图片 -->
+<div class="page" id="B">
+  <div class="lbl">label</div>
+  <img src="assets/photo.jpg" width="150" height="100" style="display:block">
+</div>
+<!-- C：display:block 图片 + 兄弟文本 -->
+<div class="page" id="C">
+  text
+  <img src="assets/photo.jpg" width="150" height="100" style="display:block">
+</div>
+</body></html>

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 0; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif; color: #222; }
+  .page { width: 210mm; min-height: 297mm; overflow: hidden; padding: 12mm 14mm; }
+  .row { display: flex; width: 600px; background: #f4f6f7; margin-bottom: 10px; }
+  .cell { border: 1px solid #ddd; padding: 2px 4px; font-size: 12px; }
+</style></head><body>
+<div class="page">
+  <div class="row" data-f="f1"><div class="cell">A 左</div><div class="cell" style="margin-left:auto"><span style="font-size:9px">h3 → h1 右对齐抬升</span></div></div>
+  <div class="row" data-f="f2"><div class="cell">A 左</div><div class="cell" style="margin-left:auto">h3 → h1 右对齐抬升</div></div>
+  <div class="row" data-f="f3"><div class="cell">A 左</div><div class="cell" style="margin-left:auto"><span style="font-size:9px">plain ascii only</span></div></div>
+  <div class="row" data-f="f4"><div class="cell">A 左</div><div class="cell"><span style="font-size:9px">no auto</span> </div></div>
+  <div class="row" data-f="f5"><div class="cell">A 左</div><div class="cell"><span style="font-size:9px">no auto</span></div></div>
+  <div class="row" data-f="f6"><div class="cell">中文中文中文</div><div class="cell">tail space here </div></div>
+  <div class="row" data-f="f7"><div class="cell">中文中文中文</div><div class="cell">tail space here</div></div>
+</div>
+</body></html>

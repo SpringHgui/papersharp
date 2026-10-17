@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8">
+<style>
+body { font-family:"Segoe UI",Arial,sans-serif; margin:0; }
+div.m { display:inline-block; white-space:nowrap; }
+</style>
+<div id="out"></div>
+<div class="m" id="a" style="font-family:monospace;font-size:20px">MMMMMMMMMM</div>
+<div class="m" id="b" style="font-family:'Courier New';font-size:20px">MMMMMMMMMM</div>
+<div class="m" id="c" style="font-family:NSimSun;font-size:20px">MMMMMMMMMM</div>
+<div class="m" id="d" style="font-family:'Courier New'">MMMMMMMMMM</div>
+<div class="m" id="e" style="font-size:13px;font-family:'Courier New'">MMMMMMMMMM</div>
+<div class="m" id="f" style="font-size:20px;font-family:'Segoe UI'">MMMMMMMMMM</div>
+<div class="m" id="g" style="font-family:monospace">MMMMMMMMMM</div>
+<script>
+const q=(id)=>document.getElementById(id);
+const rows=[];
+for (const id of ['a','b','c','d','e','f','g']) {
+  const el=q(id), cs=getComputedStyle(el), box=el.getBoundingClientRect();
+  const fs=parseFloat(cs.fontSize);
+  rows.push(id+':'+cs.fontFamily.split(',')[0]+' fs='+fs+' w='+box.width.toFixed(2)+' em='+(box.width/10/fs).toFixed(4)+' h='+box.height.toFixed(2)+' hem='+(box.height/fs).toFixed(4));
+}
+q('out').textContent=rows.join(' | ');
+</script>

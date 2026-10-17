@@ -97,3 +97,13 @@ __pycache__/
 
 /.gate-va/
 /.crop.py
+
+# PdfBench 生成的对拍/缩放产物：渲染对比 PDF/PNG、图表、合成语料、采样 CSV——由 scale/gen.py、report.py 等脚本重跑再生，不入库
+benchmarks/PdfBench/out/
+benchmarks/PdfBench/scale/out/
+benchmarks/PdfBench/scale/corpus/
+benchmarks/PdfBench/scale/corpus_abl/
+benchmarks/PdfBench/scale/charts/
+benchmarks/PdfBench/report/charts/
+benchmarks/PdfBench/report/sample/
+benchmarks/PdfBench/sub_p1.png

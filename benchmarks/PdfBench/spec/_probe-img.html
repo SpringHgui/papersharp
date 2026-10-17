@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; }
+  .page { width: 794px; padding: 20px; }
+  .lbl { font-size: 8px; margin-bottom: 1px; }
+</style></head><body>
+<div class="page">
+  <!-- A. 属性宽高 + 边框：box-sizing:border-box 下 img 的外盒应等于属性值 -->
+  <img id="a" src="assets/photo.jpg" width="110" height="110" style="display:block;border:4px solid #27ae60">
+  <!-- B. 同上但只给 width -->
+  <img id="b" src="assets/photo.jpg" width="110" style="display:block;border:4px solid #27ae60">
+  <!-- C. 只给 height -->
+  <img id="c" src="assets/photo.jpg" height="60" style="display:block;border:4px solid #27ae60">
+  <!-- D. display:block 的 img 单独占块，不该有基线留白 -->
+  <div id="d" style="width:150px"><div class="lbl">label</div><img src="assets/photo.jpg" width="150" height="100" style="display:block"></div>
+  <!-- E. 默认 display:inline 的 img：应有基线下沉（对照 D） -->
+  <div id="e" style="width:150px"><div class="lbl">label</div><img src="assets/photo.jpg" width="150" height="100"></div>
+  <!-- F. CSS 写死宽高 + border-box -->
+  <img id="f" src="assets/photo.jpg" style="display:block;width:100px;height:80px;border:2px solid red;padding:6px">
+  <!-- G. content-box 显式改回 -->
+  <img id="g" src="assets/photo.jpg" style="display:block;box-sizing:content-box;width:100px;height:80px;border:2px solid red">
+  <!-- H. 无属性、无 CSS：用固有尺寸 -->
+  <img id="h" src="assets/photo.jpg" style="display:block">
+  <!-- I. max-width 收缩 -->
+  <img id="i" src="assets/photo.jpg" style="display:block;max-width:50px">
+</div>
+</body></html>

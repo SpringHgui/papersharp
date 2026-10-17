@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+body { font-family:"Segoe UI",Arial,sans-serif; margin:0; padding:12px; font-size:15px; }
+.page { width:520px; }
+/* A：line-height 缺省（normal）——只有「伪元素字号被二次乘 em」才会让 A 组虚高 */
+.a h3 { font-weight: normal; }
+.a h3.pseudo::before { content: "cnt "; color:#16a085; }
+/* B：line-height:1.7 —— 两个假设都会虚高，用作参照 */
+.b { line-height: 1.7; }
+.b h3 { font-weight: normal; }
+.b h3.pseudo::before { content: "cnt "; color:#16a085; }
+</style></head><body><div class="page">
+<section class="a"><h3 class="pseudo">A1 pseudo</h3><h3>A2 plain</h3></section>
+<section class="b"><h3 class="pseudo">B1 pseudo</h3><h3>B2 plain</h3></section>
+</div></body></html>

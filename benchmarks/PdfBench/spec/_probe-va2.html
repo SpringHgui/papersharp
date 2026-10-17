@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+* { margin:0; padding:0; }
+body { font-family:"Segoe UI",Arial,sans-serif; font-size:14px; line-height:1.5; padding:20px; }
+.page { width:500px; }
+.row { border:1px solid #ddd; margin-bottom:6px; padding:6px; }
+/* 父 28px/1.6，子 12px（自己的行高 = 12*1.6 = 19.2） */
+.p { font-size:28px; line-height:1.6; }
+.c { font-size:12px; }
+.v25 { vertical-align:25% } .v50 { vertical-align:50% } .v100 { vertical-align:100% }
+.vm { vertical-align:middle } .vt { vertical-align:text-top } .vb { vertical-align:text-bottom }
+.vt2 { vertical-align:top } .vb2 { vertical-align:bottom }
+.vsp { vertical-align:super } .vsb { vertical-align:sub }
+.v5 { vertical-align:5px } .vem { vertical-align:1.5em } .vne { vertical-align:-1.5em }
+/* 父行高用绝对值 40px */
+.q { font-size:28px; line-height:40px; }
+/* 父行高 normal */
+.n { font-size:28px; line-height:normal; }
+</style></head><body><div class="page">
+<p class="row p">R<span class="c vm">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vt">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vb">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vt2">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vb2">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vsp">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vsb">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c v5">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vem">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c vne">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c v25">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c v50">a</span><span class="c">a</span></p>
+<p class="row p">R<span class="c v100">a</span><span class="c">a</span></p>
+<p class="row q">R<span class="c v25">a</span><span class="c">a</span></p>
+<p class="row q">R<span class="c vm">a</span><span class="c">a</span></p>
+<p class="row n">R<span class="c v25">a</span><span class="c">a</span></p>
+<p class="row n">R<span class="c vm">a</span><span class="c">a</span></p>
+</div></body></html>

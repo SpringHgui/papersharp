@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif; color: #222; }
+  .page { width: 210mm; height: 297mm; overflow: hidden; position: relative; padding: 12mm 14mm 16mm; }
+  .row { display: flex; gap: 4mm; }
+</style>
+</head><body>
+<div class="page" id="p1">
+  <div class="row" data-f="shadow" style="align-items:center">
+    <div class="cell" style="width:36mm;height:16mm;margin-left:4mm">外阴影 模糊</div>
+    <div class="cell" style="width:36mm;height:16mm;margin-left:8mm">硬阴影 无模糊</div>
+    <div class="cell" style="width:36mm;height:16mm;margin-left:8mm">内阴影 inset</div>
+    <div class="cell" style="width:36mm;height:16mm;margin-left:8mm">三重阴影叠加</div>
+  </div>
+  <div class="row" data-f="nogap" style="margin-top:6mm">
+    <div style="width:60mm;height:10mm">a</div>
+    <div style="width:60mm;height:10mm;margin-left:20mm">b</div>
+    <div style="width:60mm;height:10mm;margin-left:20mm">c</div>
+  </div>
+</div>
+</body></html>
