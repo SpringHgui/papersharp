@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif; font-size: 15px; }
+  .row { display: inline-block; width: 240px; border: 1px solid #ccc; margin: 8px; vertical-align: top; }
+  .cell { width: 162px; font-size: 15px; line-height: 1.5; outline: 1px dashed red; position: relative; }
+  .cell .mark { display: inline-block; width: 0; height: 0; vertical-align: baseline; background: blue; }
+  .info {
+    display: inline-flex; vertical-align: -2px; margin-left: 4px;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid #b9bdc3; color: #9aa0a6;
+    align-items: center; justify-content: center; font-size: 11px;
+  }
+  .infoIB { display: inline-block; vertical-align: -2px; width: 15px; height: 15px; border: 1px solid #b9bdc3; }
+  .infoVA0 { display: inline-flex; vertical-align: 0px; width: 15px; height: 15px; border: 1px solid #b9bdc3; }
+  .infoBig { display: inline-flex; vertical-align: -2px; width: 24px; height: 24px; border: 1px solid #b9bdc3; }
+</style></head><body>
+  <!-- A: plain text + baseline marker -->
+  <div class="row"><div class="cell" id="A">续费送 1,000 Credits<span class="mark"></span></div></div>
+  <!-- B: text + i.info (exact fixture replica, inner font 11px like real? fixture inherits 15) -->
+  <div class="row"><div class="cell" id="B">续费送 1,000 Credits<i class="info" id="Bi">i</i><span class="mark"></span></div></div>
+  <!-- C: text + EMPTY i.info -->
+  <div class="row"><div class="cell" id="C">续费送 1,000 Credits<i class="info"></i><span class="mark"></span></div></div>
+  <!-- D: text + i.info inline-BLOCK instead of flex -->
+  <div class="row"><div class="cell" id="D">续费送 1,000 Credits<i class="infoIB"></i><span class="mark"></span></div></div>
+  <!-- E: text + i.info va:0 -->
+  <div class="row"><div class="cell" id="E">续费送 1,000 Credits<i class="infoVA0"></i><span class="mark"></span></div></div>
+  <!-- F: text + 24x24 i.info va:-2 (does line bottom track box bottom?) -->
+  <div class="row"><div class="cell" id="F">续费送 1,000 Credits<i class="infoBig"></i><span class="mark"></span></div></div>
+  <!-- G: fixture-accurate .info (no inner font-size override, no align) -->
+  <div class="row"><div class="cell" id="G">续费送 1,000 Credits<i class="info" style="align-items:stretch;justify-content:flex-start;font-size:15px">i</i><span class="mark"></span></div></div>
+  <!-- H: pure CJK plain text, marker -->
+  <div class="row"><div class="cell" id="H">更多的对话与智能体请求数<span class="mark"></span></div></div>
+  <!-- I: pure Latin plain text, marker -->
+  <div class="row"><div class="cell" id="I">2,000 Credits<span class="mark"></span></div></div>
+<pre id="out"></pre>
+<script>
+  function r(id){const e=document.getElementById(id);const b=e.getBoundingClientRect();return {top:b.top,h:b.height};}
+  function sub(id,sel){const e=document.querySelector('#'+id+' '+sel);const b=e.getBoundingClientRect();return {top:b.top,h:b.height};}
+  const out=[];
+  for(const id of ['A','B','C','D','E','F','G','H','I']){
+    const cell=r(id);
+    const mark=sub(id,'.mark');
+    const icon=document.querySelector('#'+id+' i');
+    out.push({id, cellTop:+cell.top.toFixed(3), cellH:+cell.h.toFixed(3),
+      baselineFromTop: mark? +(mark.top-cell.top).toFixed(3): null,
+      iconTop: icon? +(icon.getBoundingClientRect().top-cell.top).toFixed(3): null,
+      iconBottom: icon? +(icon.getBoundingClientRect().bottom-cell.bottom).toFixed(3): null});
+  }
+  const cs=getComputedStyle(document.querySelector('#B'));
+  const csB=getComputedStyle(document.body);
+  document.getElementById('out').textContent=JSON.stringify({out, cell:{lh:cs.lineHeight,fs:cs.fontSize,ff:cs.fontFamily}, bodyFf:csB.fontFamily},null,1);
+  document.title='PROBE-'+out.length;
+</script>
+</body></html>

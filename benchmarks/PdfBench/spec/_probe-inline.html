@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+@font-face { font-family:'SubSrcTest'; font-weight:400;
+  src: url('file:///G:/Github/papersharp/src/PaperSharpSamples/assets/fonts/YaheiSub-Regular.ttf') format('truetype'); }
+@font-face { font-family:'SubSrcTest'; font-weight:700;
+  src: url('file:///G:/Github/papersharp/src/PaperSharpSamples/assets/fonts/YaheiSub-Bold.ttf') format('truetype'); }
+body { margin:0; }
+#out { font:11px monospace; white-space:pre; }
+</style>
+<div id="stage"></div>
+<pre id="out"></pre>
+<script>
+const CASES = [
+  ['HTML@12 sans',      'HTML',        '12px sans-serif'],
+  ['CSS@12 sans',       'CSS',         '12px sans-serif'],
+  ['PDF@12 sans',       'PDF',         '12px sans-serif'],
+  ['HT-pair@12 sans',   'HT',          '12px sans-serif'],
+  ['TM-pair@12 sans',   'TM',          '12px sans-serif'],
+  ['ML-pair@12 sans',   'ML',          '12px sans-serif'],
+  ['SubSrcTest@14 b/SS','SubSrcTest',  'bold 14px SubSrcTest'],
+  ['SubSrcTest@14 r/SS','SubSrcTest',  '14px SubSrcTest'],
+  ['CJK6@14 b/SS',      '中文照常渲染', 'bold 14px SubSrcTest'],
+  ['SubSrcTest@14 YHb', 'SubSrcTest',  'bold 14px "Microsoft YaHei"'],
+];
+function box(text, font, kern) {
+  const stage = document.getElementById('stage');
+  const s = document.createElement('span');
+  s.style.cssText = 'position:absolute;left:0;top:0;white-space:pre;font:' + font + ';' + (kern ? 'font-kerning:' + kern + ';' : '');
+  s.textContent = text; stage.appendChild(s);
+  const run = s.getBoundingClientRect().width;
+  let per = 0, parts = [];
+  for (const ch of text) {
+    const c = document.createElement('span');
+    c.style.cssText = 'position:absolute;left:0;top:0;white-space:pre;font:' + font + ';';
+    c.textContent = ch; stage.appendChild(c);
+    const w = c.getBoundingClientRect().width; per += w; parts.push(ch + ':' + w.toFixed(4)); c.remove();
+  }
+  s.remove();
+  return { run, per, parts };
+}
+function canvas(font, text) {
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.font = font;
+  let per = 0; for (const ch of text) per += ctx.measureText(ch).width;
+  return { run: ctx.measureText(text).width, per };
+}
+function emit(L) { document.getElementById('out').textContent = L.join('\n'); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+window.onload = async () => {
+  let L = [];
+  L.push('phase1 (immediately, @font-face may not be ready yet)');
+  const run1 = [];
+  for (const [label, text, font] of CASES) {
+    const a = box(text, font, null), nk = box(text, font, 'none'), c = canvas(font, text);
+    run1.push([label.padEnd(18), JSON.stringify(text).padEnd(14), a.run.toFixed(4).padStart(9), a.per.toFixed(4).padStart(11),
+      (a.run - a.per).toFixed(4).padStart(9), c.run.toFixed(4).padStart(11), c.per.toFixed(4).padStart(12), nk.run.toFixed(4).padStart(10)].join(' '));
+    run1.push('        chars: ' + a.parts.join(' '));
+  }
+  L = L.concat(run1); emit(L);
+  try {
+    await Promise.race([Promise.all([document.fonts.load('700 14px SubSrcTest', 'SubSrcTest'),
+                                     document.fonts.load('400 14px SubSrcTest', 'SubSrcTest'),
+                                     document.fonts.ready]), sleep(1500)]);
+  } catch (e) { L.push('font load err: ' + e); }
+  await sleep(50);
+  L.push('');
+  L.push('dpr=' + devicePixelRatio + ' faces=' + Array.from(document.fonts).map(f => f.family + '/' + f.weight + '=' + f.status).join(',')
+       + ' check700=' + document.fonts.check('bold 14px SubSrcTest'));
+  L.push('phase2 (after fonts.load awaited)  [cols: DOM-run  DOM-perchar  kernDelta  canvas-run  canvas-perchar  kernnone-run]');
+  for (const [label, text, font] of CASES.filter(c => /SS|YHb/.test(c[0]))) {
+    const a = box(text, font, null), nk = box(text, font, 'none'), c = canvas(font, text);
+    L.push([label.padEnd(18), JSON.stringify(text).padEnd(14), a.run.toFixed(4).padStart(9), a.per.toFixed(4).padStart(11),
+      (a.run - a.per).toFixed(4).padStart(9), c.run.toFixed(4).padStart(11), c.per.toFixed(4).padStart(12), nk.run.toFixed(4).padStart(10)].join(' '));
+  }
+  emit(L);
+};
+</script>

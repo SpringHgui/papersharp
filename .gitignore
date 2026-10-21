@@ -1,0 +1,109 @@
+/bin
+/obj
+/src/PaperSharp/obj
+/src/PaperSharp/bin
+.vs/
+/src/PaperSharpSamples/obj
+/src/PaperSharpSamples/bin
+bin/
+obj/
+
+# 长路径删除失败的孤立产物（bun link 递归 junction 经 robocopy 实体化，超出 \?\ 32k 上限，需专用工具清理）
+.stray_jsjunk/
+
+# JS 工作区：依赖 + 构建产物（wasm/ 由 js/papersharp/build.mjs 从 dotnet publish 拷入）
+node_modules/
+js/papersharp/wasm/
+js/example/output.png
+
+# smoke.mjs 跑通所需的 _framework（dotnet publish 产物拷入）+ 它写出的样张
+src/PaperSharp.Wasm/_framework/
+src/PaperSharp.Wasm/smoke.png
+src/PaperSharp.Wasm/smoke.pdf
+src/PaperSharp.Wasm/smoke.svg
+
+# 浏览器插件：wasm 与中文字体由 extension/build.mjs 从 dotnet publish 产物同步；实测产物不入库
+/extension/papersharp/wasm/
+/extension/fonts/
+/extension/test/out/
+
+# 本地一次性落盘：dotnet build -o 的门禁输出、sweep/对拍明细、探针中间结果
+.gateout/
+.scratch/
+**/.scratch/
+TestResults/
+
+# 仓库根目录被工具写出的结果（下划线前缀 = 一次性脚本/转储；*.json/*.err = boxdiff 与 triage 落盘；png = 对拍截图）
+/_*
+/pb.sh
+/sw.sh
+/bench_*.txt
+/*.json
+/*.err
+/blend-*.png
+/*-m9.png
+
+# 探针工具与它们的输出（boxdiff/boxstats/sweep 等常用工具不带下划线，照常入库）
+tools/_*
+
+# 样例工程里的一次性内容：assets 下 _ 前缀的是判别探针页、拼装碎片、字体字符集转储；bench/pg 是 profiling 原始记录
+src/PaperSharpSamples/assets/**/_*
+src/PaperSharpSamples/bench_*.txt
+src/PaperSharpSamples/pg*.csv
+src/PaperSharpSamples/wt_pg*.csv
+
+# VS / MSBuild 本地用户设置
+*.user
+
+# 排查用的本地 git worktree（-*-wt 约定）与探针/对拍的一次性落盘
+# 注意：gitignore 的 * 不匹配开头的点，故 worktree 目录逐个点名
+/.fonts-wt/
+/.mb-wt/
+/.p27-wt/
+/.parity-wt/
+/.perf-base-wt/
+/.relcheck-wt/
+/.shaped-wt/
+/.subset-wt/
+/.gateout/
+/.fontbak/
+/.qoder-b/
+/.probe-*/
+/.ghost-head/
+.probe-cur.txt
+.bl-*.txt
+.br-lw*.txt
+.buildtry.txt
+.gateout_*.txt
+.ghost-*.txt
+.lh-tab.txt
+.m1lines.txt
+.m2lines.txt
+.msg_*.txt
+.pdiff_*.txt
+.rects.mjs
+.rows*.py
+.snap-rects.txt
+.sr_*.diff
+.sweep_*.txt
+.crop.png
+.hint*.png
+.m2band.png
+.playrun.log
+
+# 本地发布配置与 Python 缓存（含机器路径，不入库）
+src/PaperSharpBlazorApp/Properties/PublishProfiles/
+__pycache__/
+
+/.gate-va/
+/.crop.py
+
+# PdfBench 生成的对拍/缩放产物：渲染对比 PDF/PNG、图表、合成语料、采样 CSV——由 scale/gen.py、report.py 等脚本重跑再生，不入库
+benchmarks/PdfBench/out/
+benchmarks/PdfBench/scale/out/
+benchmarks/PdfBench/scale/corpus/
+benchmarks/PdfBench/scale/corpus_abl/
+benchmarks/PdfBench/scale/charts/
+benchmarks/PdfBench/report/charts/
+benchmarks/PdfBench/report/sample/
+benchmarks/PdfBench/sub_p1.png

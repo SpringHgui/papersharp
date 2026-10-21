@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif; color: #222; }
+  .page { width: 210mm; min-height: 297mm; overflow: hidden; position: relative; padding: 12mm 14mm; }
+  p { margin: 0 0 4mm; font-size: 12px; line-height: 16px; }
+  .j   { text-align: justify; width: 200px; background: #f7f7f7; }
+  .jc  { text-align: justify; width: 200px; background: #eef; }
+  .jal { text-align: justify; text-align-last: justify; width: 200px; background: #efe; }
+  .ow  { width: 120px; background: #fee; overflow-wrap: break-word; }
+  .owa { width: 120px; background: #fef; overflow-wrap: anywhere; }
+  .wb  { width: 120px; background: #ffe; word-break: break-all; }
+  .none{ width: 120px; background: #eee; }
+  ul { margin: 0 0 4mm; padding-left: 30px; font-size: 12px; }
+  .img-markers { list-style-image: url('assets/dot.png'); }
+  .i8 { font-size: 8px; }
+  .i16 { font-size: 16px; }
+  .i24 { font-size: 24px; }
+  .mk li::marker { color: #e74c3c; font-weight: 700; }
+  .mix li::marker { color: #1a7f37; }
+  .img-solid { list-style-image: url('assets/sq12.png'); }
+  .dec li::marker { color: #0000ff; }
+  .vp12 { list-style-image: url('assets/sq12.png'); }
+  .vp20 { list-style-image: url('assets/sq20.png'); }
+</style>
+</head><body>
+<div class="page">
+  <p class="j" data-f="j-latin">The quick brown fox jumps over the lazy dog and keeps running far away from the quiet village where nobody waits for anybody at all.</p>
+  <p class="jc" data-f="j-cjk">排版引擎需要把每一行的剩余空间按空格分配出去，中文与英文混排时 Chrome 只在词间空隙上拉伸，行末最后一行永远保持左对齐不拉伸。</p>
+  <p class="jal" data-f="j-last">短行也要拉开</p>
+  <p class="none" data-f="ow-none">supercalifragilisticexpialidociousandthensome more</p>
+  <p class="ow" data-f="ow-word">supercalifragilisticexpialidociousandthensome more</p>
+  <p class="owa" data-f="ow-any">supercalifragilisticexpialidociousandthensome more</p>
+  <p class="wb" data-f="wb-all">supercalifragilisticexpialidociousandthensome more</p>
+  <ul class="img-markers" data-f="ls-image"><li>图片项目符号一</li><li>图片项目符号二，这一项故意写得长一些以便看到悬挂缩进在图片符号下如何对齐</li></ul>
+  <ul class="img-markers i8" data-f="ls-image-8"><li>八号</li></ul>
+  <ul class="img-markers i16" data-f="ls-image-16"><li>十六号</li></ul>
+  <ul class="img-markers i24" data-f="ls-image-24"><li>二十四号</li></ul>
+  <ul class="mk" data-f="marker-style"><li>marker 上色加粗</li><li>第二条</li></ul>
+  <ol class="mix" data-f="marker-color-num"><li>十进制 marker 上色</li><li>第二条</li></ol>
+  <ul class="img-solid" data-f="ls-solid"><li style="font-size:8px">八号实心方块</li><li style="font-size:12px">十二号实心方块</li><li style="font-size:16px">十六号实心方块</li><li style="font-size:24px">二十四号实心方块</li></ul>
+  <ul data-f="vp"><li class="vp12" style="font-size:16px">fs16蓝12</li><li class="vp20" style="font-size:16px">fs16红20</li><li class="vp20" style="font-size:16px;line-height:40px">lh40红20</li><li class="vp12" style="font-size:16px;line-height:40px">lh40蓝12</li><li class="vp12" style="font-size:16px;line-height:40px;padding-left:60px">内缩lh40蓝12</li></ul>
+  <ol class="dec" data-f="dec-gutter"><li style="font-size:12px">十二</li><li style="font-size:24px">二十四</li></ol>
+</div>
+</body></html>

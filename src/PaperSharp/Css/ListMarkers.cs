@@ -1,0 +1,130 @@
+using SkiaSharp;
+using PaperSharp.Layout;
+
+namespace PaperSharp.Css;
+
+/// <summary>
+/// 列表标记（marker）：按文档序给每个 <c>display:list-item</c> 盒编号，并把 marker 做成宿主盒的
+/// <c>::before</c> 行内片段，交给 <see cref="PseudoContent"/> 注入。
+///
+/// 为什么不另起一条"标记层"绘制通路：本引擎的块盒有两条互斥的排版通路（块文本路径只收直接文本、
+/// inline-FC 路径收 InlinePieces），而分页裁切、浮动环绕、行内背景全都只认后者已有的实现。
+/// 复用伪元素片段 = 一次改动同时拿到折行、分页与 PDF/光栅两条绘制路径。
+/// </summary>
+public static class ListMarkers
+{
+    /// <summary>marker 盒右缘到正文起点的空隙。同一探针（_probe-mk，li 内容盒左缘 x=100）下
+    /// 墨迹右缘实测：字形符号 @fs 12/16/24/32 → 7.5/9/12/15px（= 3 + 0.375em，扣掉 • 自己的右侧空档
+    /// 就是这里的 3+0.3em）；十进制序号 → 4/5.5/8/10.5px = **1/3em 且不含常数**。引擎按
+    /// 「advance + gap」铺号，末尾句点的 advance 又比墨迹宽 0.075em，故 gap 取 1/4em 才落到 1/3em。</summary>
+    static float MarkerGap(ComputedStyle s, bool glyph) => glyph ? 3f + 0.3f * s.FontSize : s.FontSize / 4f;
+
+    /// <summary>跑一遍整棵树，注入 marker 片段。返回是否至少注入了一个（决定要不要跑 PseudoContent.Apply）。</summary>
+    public static bool Apply(ComputedStyle root)
+    {
+        bool any = false;
+        Visit(root, ref any);
+        return any;
+    }
+
+    static void Visit(ComputedStyle node, ref bool any)
+    {
+        bool isList = node.Tag is "ul" or "ol" or "menu";
+        if (!isList)
+        {
+            foreach (var c in node.Children) Visit(c, ref any);
+            return;
+        }
+        // 编号作用域 = 这个列表本身：直接子项按文档序 1,2,3…（<ol start=n> 的偏移已在 StyleResolver 折进
+        // ListStartOffset），嵌套列表在 li 里自成作用域，故递归下去互不干扰。
+        int index = node.ListStartOffset;
+        foreach (var c in node.Children)
+        {
+            if (c.Display == "list-item") Emit(c, ++index, ref any);
+            Visit(c, ref any);
+        }
+    }
+
+    /// <summary>给一个 list-item 盒发 marker：li 自己写的 list-style-type 优先，否则用列表容器的。
+    /// 写了 <c>list-style-image</c> 时符号是图片（图取不到才按 type 兜底），字形/序号则可被 <c>::marker</c> 改色改字重。</summary>
+    static void Emit(ComputedStyle item, int index, ref bool any)
+    {
+        string type = item.ListStyleType;   // StyleResolver 已把"自己的声明 > 继承列表容器 > 标签默认"排好
+        var img = ImageLoader.Load(item.ListStyleImage);
+        if (img == null && type == "none") return;
+        string glyph = img != null ? "" : Glyph(type);
+        string text = img != null ? "" : (glyph.Length == 0 ? CounterStyle.Format(index, type) + "." : glyph);
+        if (img == null && text.Length == 0) return;
+
+        // 图片 marker 与正文的间隙恒 ~3px（探针 fs=8/12/16/24 下图片右缘到正文都是 3px，不随字号走）；
+        // 字形符号（•/◦/▪）另有一条 3+0.3em 的规则，序号则是纯 1/3em——三者不是一条规则，见 MarkerGap。
+        float gap = img != null ? 3f : MarkerGap(item, glyph.Length > 0);
+        var gen = new PseudoGen
+        {
+            Style = MarkerStyle(item, img != null ? null : text, gap),
+            Runs = new List<ContentRun> { img != null
+                ? new ContentRun { Kind = ContentRunKind.Image, Url = item.ListStyleImage }
+                : new ContentRun { Kind = ContentRunKind.Literal, Text = text } },
+        };
+        if (item.Before == null) item.Before = gen;
+        else item.Before.Runs.Insert(0, gen.Runs[0]);   // 浏览器里 marker 排在 ::before 内容之前
+
+        // outside（默认）：marker 落在 li 内容盒**之外**，不占行内宽度。本引擎没有独立的标记层，
+        // 用负的 text-indent 让出这块悬挂区——首行起点左移 (markerW+gap)，首行可用宽相应 +（markerW+gap），
+        // 而 marker 自己的盒宽含 gap（见 MarkerStyle 的 padding-right），于是正文正好落回内容盒左缘，
+        // 折行结果与浏览器一致。用 -= 而不是 =：作者自己写的 text-indent 要与之叠加。
+        if (!item.ListStyleInside) item.TextIndent -= (img?.Width ?? 0) + MarkerAdvance(item, text, gap);
+        any = true;
+    }
+
+    /// <summary>无序 marker 的字形；有序（十进制/字母/罗马）返回空串，由调用方拼序号。</summary>
+    static string Glyph(string type) => type switch
+    {
+        "disc" => "•",       // U+2022
+        "circle" => "◦",     // U+25E6 白心小圆
+        "square" => "▪",     // U+25AA 小实心方块（U+25A0 在 CJK 字体里是全角大方块，明显偏大）
+        _ => "",
+    };
+
+    /// <summary>marker 文本占用（含间隙）的横向尺寸。</summary>
+    static float MarkerAdvance(ComputedStyle s, string text, float gap)
+    {
+        using var font = new SKFont(FontManager.Get(s.FontFamily, s.FontWeight, s.FontStyle), s.FontSize);
+        return TextMeasurer.LineWidth(text, font, s.LetterSpacing) + gap;
+    }
+
+    /// <summary>marker 盒的样式：继承宿主（字体/字色/行高），但盒级装饰一律清掉——marker 只是行内文字。
+    /// <c>::marker</c> 规则里那几条允许的属性（color / font-* / letter-spacing / text-transform）最后覆盖上去。</summary>
+    static ComputedStyle MarkerStyle(ComputedStyle host, string? text, float gap)
+    {
+        var s = host.CloneShallow();
+        s.Display = "inline";
+        s.IsListMarker = !host.ListStyleInside;   // inside 的 marker 真在行内，照常撑行盒
+        s.TextContent = text;
+        s.Children = new();
+        s.InlinePieces = new();
+        s.Before = s.After = null;
+        s.BackgroundColor = SKColor.Empty;
+        s.Background = null;
+        s.Shadows = null;
+        s.TextShadow = null;
+        s.TextIndent = 0;
+        s.BorderWidthTop = s.BorderWidthRight = s.BorderWidthBottom = s.BorderWidthLeft = 0;
+        // marker 是行内片段，其横向外扩 = 自己的 padding：宿主 li 的 padding 绝不能跟过来（会在正文前多出一截），
+        // 而右半边正是 marker→正文的空隙（InlineLayout.HDeco 据此算原子宽，正文才落在内容盒左缘）。
+        s.PaddingLeftCss = s.PaddingBottomCss = s.PaddingTopCss = CssSize.Abs(0);
+        s.PaddingRightCss = CssSize.Abs(gap);
+        s.HasGeneratedInline = false;
+        if (host.Marker is { } ov)
+        {
+            if (ov.Color is { } c) s.Color = c;
+            if (ov.FontFamily is { Length: > 0 } fam) { s.FontFamily = fam; s.FontFamilyList = fam; }
+            if (ov.FontSize is { } fs) s.FontSize = fs;
+            if (ov.FontWeight is { } fw) s.FontWeight = fw;
+            if (ov.FontStyle is { Length: > 0 } fs2) s.FontStyle = fs2;
+            if (ov.LetterSpacing is { } lsp) s.LetterSpacing = lsp;
+            if (ov.TextTransform is { Length: > 0 } tt) s.TextTransform = tt;
+        }
+        return s;
+    }
+}

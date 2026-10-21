@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PaperSharp · CSS 支持度设计简报</title>
+<style>
+  :root{
+    --bg:#111214; --panel:#17181b; --line:#2a2c31; --ink:#e9e7e2; --dim:#9a9891;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    --serif:Georgia,'Times New Roman','Songti SC',serif;
+    --ok:#5fd08a; --no:#ff6b6b; --warn:#f0b429; --accent:#c9c6be;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+    -webkit-font-smoothing:antialiased;padding:48px 24px 80px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-family:var(--serif);font-weight:600;font-size:44px;line-height:1.05;margin:0 0 6px;letter-spacing:-.5px}
+  h1 em{font-style:normal;color:var(--dim)}
+  .sub{color:var(--dim);font-size:16px;margin:0 0 8px}
+  .verdict{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:16px 18px;margin:22px 0 40px}
+  .verdict b{color:var(--ink)}
+  h2{font-family:var(--serif);font-weight:600;font-size:24px;margin:44px 0 4px;letter-spacing:-.2px}
+  h2 .n{color:var(--dim);font-family:var(--mono);font-size:15px;margin-right:8px}
+  .lead{color:var(--dim);margin:0 0 18px;font-size:14.5px}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 8px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.09em}
+  code{font-family:var(--mono);font-size:12.8px;background:#1e2024;border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;color:#d8d5cd;white-space:nowrap}
+  .cat{color:var(--dim);font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.1em}
+  .pill{display:inline-block;font:600 11px/1 var(--mono);letter-spacing:.04em;padding:5px 8px;border-radius:20px;white-space:nowrap}
+  .p-ok{color:var(--ok);background:rgba(95,208,138,.1);border:1px solid rgba(95,208,138,.3)}
+  .p-no{color:var(--no);background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3)}
+  .p-warn{color:var(--warn);background:rgba(240,180,41,.1);border:1px solid rgba(240,180,41,.3)}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .card h3{margin:0 0 4px;font-size:16.5px;font-family:var(--mono);font-weight:600}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:2px 0 10px}
+  .kv{color:var(--dim);font-size:12.5px}
+  .kv b{color:var(--accent);font-weight:600}
+  ul{margin:8px 0 0;padding-left:20px}
+  li{margin:5px 0}
+  .wire{font-family:var(--mono);font-size:12.5px;color:#c4c1b9;background:#141518;border:1px solid var(--line);
+    border-radius:8px;padding:11px 13px;margin-top:8px;line-height:1.75;overflow-x:auto}
+  .wire .f{color:var(--ok)} .wire .c{color:#6f6d67}
+  .fork{border:1px solid rgba(240,180,41,.35);background:rgba(240,180,41,.05);border-radius:10px;padding:18px 20px;margin:16px 0}
+  .opt{border-top:1px solid var(--line);padding:12px 0}
+  .opt:first-of-type{border-top:0}
+  .opt .t{font-weight:600}
+  .rec{font:600 10.5px/1 var(--mono);color:#111;background:var(--ok);padding:4px 7px;border-radius:5px;margin-left:8px;vertical-align:middle}
+  .rec2{background:var(--warn)}
+  .dec{border:1px solid var(--line);border-radius:10px;padding:4px 20px 16px;margin:14px 0;background:var(--panel)}
+  .dec .q{font-weight:600;margin:14px 0 6px}
+  .dec .q .id{font-family:var(--mono);color:var(--dim);margin-right:8px}
+  .foot{color:#6f6d67;font-size:12.5px;margin-top:48px;border-top:1px solid var(--line);padding-top:16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 28px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}h1{font-size:34px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>The CSS you write. <em>支持度盘点</em></h1>
+  <p class="sub">对照你贴的清单，逐项核实 PaperSharp 的真实支持状态 · 缺口接线点 · 待拍板决策</p>
+
+  <div class="verdict">
+    <b>结论先行：</b>清单里 24 项，<b>17 项已支持</b>（含 <code>:is()</code>/<code>:where()</code> —— 实测已确认走 AngleSharp 级联，无需改动）。
+    真正要做的只有 <b>3 个视觉/CSS 缺口</b>（<code>::before/::after</code>、<code>background-clip:text</code>、<code>backdrop-filter</code>）
+    和 <b>1 个架构分叉</b>（MOTION 动画）。其中伪元素对<b>文档渲染器价值最高</b>且接线最干净（实测 AngleSharp 已能给出伪元素 computed 样式含 <code>content</code>）。
+    动画与 PaperSharp「单帧静态、确定性输出」的定位存在<b>根本冲突</b>，必须先拍板范围再动手。
+  </div>
+
+  <!-- ── 1. 已核实矩阵 ── -->
+  <h2><span class="n">01</span>已核实能力矩阵</h2>
+  <p class="lead">状态来自源码通读 + 两次实测探针（渲染取文本 / AngleSharp 伪元素 computed），非 README 声称。</p>
+
+  <div class="grid2">
+    <div>
+      <table>
+        <tr><th colspan="2"><span class="cat">Layout</span></th></tr>
+        <tr><td><code>display: grid</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">子集</span></td></tr>
+        <tr><td><code>float</code></td><td><span class="pill p-ok">已支持</span></td></tr>
+        <tr><td><code>position: absolute</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">含 shrink-to-fit</span></td></tr>
+        <tr><td><code>calc()</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">线性式/%</span></td></tr>
+        <tr><td><code>z-index</code></td><td><span class="pill p-ok">已支持</span></td></tr>
+      </table>
+      <table>
+        <tr><th colspan="2"><span class="cat">Selectors</span></th></tr>
+        <tr><td><code>:is()</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">实测 HELLO</span></td></tr>
+        <tr><td><code>:where()</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">实测 HELLO</span></td></tr>
+        <tr><td><code>::before</code></td><td><span class="pill p-no">缺失</span></td></tr>
+        <tr><td><code>::after</code></td><td><span class="pill p-no">缺失</span></td></tr>
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th colspan="2"><span class="cat">Text</span></th></tr>
+        <tr><td>WOFF2 fonts</td><td><span class="pill p-ok">已支持</span></td></tr>
+        <tr><td>emoji</td><td><span class="pill p-ok">已支持</span> <span class="kv">ZWJ/字素</span></td></tr>
+        <tr><td>RTL scripts</td><td><span class="pill p-ok">已支持</span> <span class="kv">bidi run</span></td></tr>
+        <tr><td>multi-span inline</td><td><span class="pill p-ok">已支持</span> <span class="kv">真行盒</span></td></tr>
+      </table>
+      <table>
+        <tr><th colspan="2"><span class="cat">Motion</span></th></tr>
+        <tr><td><code>@keyframes</code></td><td><span class="pill p-warn">架构分叉</span></td></tr>
+        <tr><td><code>animation</code></td><td><span class="pill p-warn">架构分叉</span></td></tr>
+        <tr><td>Tailwind <code>animate-*</code></td><td><span class="pill p-warn">架构分叉</span></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <table>
+    <tr><th colspan="2"><span class="cat">Paint</span></th></tr>
+    <tr><td><code>mix-blend-mode</code></td><td><span class="pill p-ok">已支持</span></td>
+        <td><code>conic-gradient()</code></td><td><span class="pill p-ok">已支持</span></td></tr>
+    <tr><td><code>clip-path</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">inset/circle/polygon</span></td>
+        <td><code>mask</code></td><td><span class="pill p-ok">已支持</span> <span class="kv">mask-image 线性渐变</span></td></tr>
+    <tr><td><code>background-clip: text</code></td><td><span class="pill p-no">缺失</span></td>
+        <td><code>backdrop-filter</code></td><td><span class="pill p-no">缺失</span> <span class="kv">仅前景 filter</span></td></tr>
+  </table>
+
+  <!-- ── 2. 缺口接线 ── -->
+  <h2><span class="n">02</span>三个真实缺口 · 接线点</h2>
+  <p class="lead">按「文档渲染器价值」排序。每项标注落点文件:行、实现路径、成本。</p>
+
+  <div class="card">
+    <h3>① 伪元素 ::before / ::after</h3>
+    <div class="row"><span class="pill p-ok">接线干净</span><span class="kv">成本 <b>中</b></span><span class="kv">文档价值 <b>最高</b></span></div>
+    <p style="margin:2px 0 8px">实测确认 <code>window.GetComputedStyle(el,"::before")</code> 能返回 <code>content:'"PRE-"' / color / display</code>，<code>counter()</code> 以原文串返回。无需再走 README 里的原始 CSS 兜底扫描。</p>
+    <div class="wire">
+<span class="f">StyleResolver.cs:251</span> Walk()  —  每个元素算完 cs 后，追加读 ::before/::after 的 computed；<br>
+&nbsp;&nbsp;content≠none/normal 时，按 display 生成<b>匿名 inline 片段</b>插到 cs.InlinePieces 首/尾（块级伪元素→匿名块子盒）<br>
+<span class="f">StyleResolver.cs:338</span> ReadStyle()  —  复用现有 Get/Spec，多传 pseudo 参数即可<br>
+<span class="f">CssValueParser.cs</span>  —  新增 ParseContent()：字符串 / <code>attr(x)</code> / <code>counter()</code> / <code>open-quote</code> / <code>url()</code>(图片)<br>
+<span class="f">InlineLayout.cs:41</span> BuildAtoms()  —  已消费 InlinePieces，匿名片段自动流入折行<br>
+<span class="c"># 计数器 counter-reset/increment/counter() 需一个文档序求值子系统（@page 边距盒已单独有 counter(page)，可复用思路）</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>② background-clip: text（渐变文字）</h3>
+    <div class="row"><span class="pill p-ok">Skia 有原语</span><span class="kv">成本 <b>低–中</b></span><span class="kv">图卡价值 <b>高</b> / 文档价值 低</span></div>
+    <p style="margin:2px 0 8px">把背景渐变裁剪到文字字形轮廓——正是 m3.html「视觉全开」图卡风想要的标题效果。前景 filter/blend 已有 SaveLayer 骨架可套。</p>
+    <div class="wire">
+<span class="f">ComputedStyle.cs</span>  —  加字段 <code>BackgroundClip</code>（border-box | text）<br>
+<span class="f">StyleResolver.cs:533</span>  —  读 background-clip（走 Lookup 兜底，AngleSharp 未必序列化）<br>
+<span class="f">Painter.cs:63</span> PaintSelf() + <span class="f">BoxPainter.cs:12</span>  —  clip=text 时：SaveLayer→画背景→用文字以 <code>DstIn</code> 当遮罩→Restore
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>③ backdrop-filter（毛玻璃）</h3>
+    <div class="row"><span class="pill p-warn">需快照回绘</span><span class="kv">成本 <b>中</b></span><span class="kv">文档价值 <b>低</b> / 图卡价值 中</span></div>
+    <p style="margin:2px 0 8px">对「盒背后已画内容」做模糊，非前景 filter。SkiaSharp 托管层无 <code>saveLayer(backdrop)</code> 直绑，需把盒矩形内的已绘像素读成 SKImage→套 <code>SKImageFilter</code>→裁剪回绘。要处理 PNG 的 scale 与 PDF 画布两条路径。</p>
+    <div class="wire">
+<span class="f">ComputedStyle.cs</span>  —  加字段 <code>BackdropFilter</code>（复用 CssFilter 结构 + ParseFilter）<br>
+<span class="f">VisualEffects.cs:15</span> Begin()  —  在盒装饰之前插入 backdrop：ReadPixels→blur→DrawImage(clip=borderRect)<br>
+<span class="c"># 与前景 filter 共用解析；仅"图卡/半透明叠层"场景真正用到</span>
+    </div>
+  </div>
+
+  <!-- ── 3. MOTION 分叉 ── -->
+  <h2><span class="n">03</span>MOTION：唯一的架构冲突</h2>
+  <div class="fork">
+    <p style="margin:0 0 10px"><b>冲突本质：</b>PaperSharp 的整个产品承诺是「<b>单帧、静态、确定性输出</b>」（PNG/JPEG/WebP/SVG/PDF，同一输入恒定产物，财务级文档）。而 <code>@keyframes</code>/<code>animation</code> 是<b>时间轴</b>概念——一张静态图没有「第几帧」。清单里把 MOTION 与其余并列，是<b>浏览器引擎</b>的叙事，不是文档渲染器的。硬做会二选一：</p>
+
+    <div class="opt">
+      <div class="t">方案 A · 跳过动画<span class="rec rec2">与现定位一致</span></div>
+      <div class="kv">维持 ROADMAP「明确不做动画」。清单里 MOTION 三项标为「不适用静态渲染器」。零成本，但不满足「都要支持」。</div>
+    </div>
+    <div class="opt">
+      <div class="t">方案 B · 确定性取帧<span class="rec">推荐</span></div>
+      <div class="kv">解析 <code>@keyframes</code> + <code>animation</code>（name/duration/delay/timing/iteration/fill），在给定时刻 <code>t</code> 求值动画属性→当普通样式渲染<b>一帧</b>。渲染 API 加可选 <code>animationTime</code>（默认取 <code>fill-mode</code> 终态）。Tailwind <code>animate-*</code> 在 <code>tailwind.mjs</code> 映射到标准 keyframes。<b>输出仍单帧、仍确定性</b>，契合图卡「定格某个动画瞬间」，成本 中–高。</div>
+    </div>
+    <div class="opt">
+      <div class="t">方案 C · 动图输出</div>
+      <div class="kv">帧循环 + 编码 animated PNG/WebP/GIF/APNG。这是 takumi 主打的 OG 动画，等于<b>把 PaperSharp 变成另一个产品</b>：新编码器管线、PDF/SVG 无法承载、破坏「确定性单帧」卖点。成本 高，ROADMAP 已明确排除。</div>
+    </div>
+  </div>
+
+  <!-- ── 4. 决策清单 ── -->
+  <h2><span class="n">04</span>需拍板决策清单</h2>
+  <p class="lead">勾定范围后我按 Phase-1 直接落代码 + 补验收样例（assets/）+ 像素/语义回归。</p>
+
+  <div class="dec">
+    <div class="q"><span class="id">D1</span>MOTION 走哪个方案？</div>
+    <div class="kv">推荐 <b>B（确定性取帧）</b>——既「支持」动画 CSS，又不破坏静态/确定性内核。若你其实只想让清单「看起来全绿」而不在乎动画，则选 <b>A</b> 最省。</div>
+  </div>
+  <div class="dec">
+    <div class="q"><span class="id">D2</span>伪元素 <code>content</code> 做到多深？</div>
+    <div class="kv">Phase-1 建议 <b>字符串 + attr() + 引号 + url() 图片</b>；<b>counter()/counters() 自动编号</b>（图/表/章节号）对文档引擎价值最大但要多一个计数器求值子系统——要不要一并纳入 Phase-1？</div>
+  </div>
+  <div class="dec">
+    <div class="q"><span class="id">D3</span>三个缺口的取舍与顺序？</div>
+    <div class="kv">建议顺序 <b>①伪元素 → ②background-clip:text → ③backdrop-filter</b>。②③主要服务<b>图卡/营销</b>线（m3 风），对发票/报表线价值有限——若你只关心文档，可先只做①。</div>
+  </div>
+  <div class="dec">
+    <div class="q"><span class="id">D4</span>是否顺带触发 M6（自研级联替换 AngleSharp）？</div>
+    <div class="kv"><b>建议否。</b>实测证明伪元素/:is/:where 都吃 AngleSharp 现成能力，本轮<b>不依赖</b> M6，不必为加这几个特性去动级联内核（那是独立的高成本决策）。</div>
+  </div>
+
+  <p class="foot">
+    验收方式沿用仓内三层守门（结构 / 语义 / 像素 golden）+ 每项一个 <code>assets/mX.html</code> 样例。<br>
+    本简报为规划文档，未改动任何 <code>src/</code> 代码；两次实测探针为临时文件、跑完已删除。
+  </p>
+
+</div>
+</body>
+</html>

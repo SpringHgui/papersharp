@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>长文分页回归 · PaperSharp</title>
+<style>
+  body { margin: 0; padding: 28px 32px; background: #ffffff; color: #111827; font: 15px/1.75 "Microsoft YaHei", system-ui, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto }
+  h1 { font-size: 26px; margin: 0 0 16px }
+  h2 { font-size: 19px; margin: 26px 0 10px; border-left: 4px solid #2563eb; padding-left: 8px }
+  h3 { font-size: 16px; margin: 18px 0 6px }
+  p { margin: 0 0 12px }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 }
+  th, td { border: 1px solid #d1d5db; padding: 5px 8px; font-size: 13px }
+  thead th { background: #f3f4f6 }
+  .keep { border: 1px dashed #9ca3af; padding: 10px 12px; margin: 14px 0 }
+  a { color: #1d4ed8 }
+</style>
+</head>
+<body><div class="wrap">
+  <h1>长文分页回归</h1>
+  <p>这一页用来验证 PDF 的分页、跨页表格、书签层级与链接注释。<a href="https://example.com/intro">开头外链</a></p>
+  <div id="fill"></div>
+  <h2>跨页长表</h2>
+  <table>
+    <thead><tr><th>#</th><th>项目</th><th>数量</th><th>金额</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="keep"><h3>不要跨页拆开的块</h3><p>break-inside: avoid —— 若引擎正确，这个盒子应整体落在同一页。</p></div>
+  <script>
+    const words = ["加油站", "地磅收粮", "车牌识别", "IC 卡", "水分扣杂", "皮红冲", "站长授权", "班次日报", "串口读重", "离线渲染"];
+    const fill = document.getElementById("fill");
+    for (let s = 1; s <= 8; s++) {
+      const h = document.createElement("h2"); h.textContent = `第 ${s} 节 · 运行记录`; fill.appendChild(h);
+      for (let i = 0; i < 6; i++) {
+        const p = document.createElement("p");
+        p.textContent = `${s}-${i + 1}：` + Array.from({ length: 34 }, (_, k) => words[(k + s + i) % words.length]).join("、") +
+          "。这一段用来撑满页面并检查行盒折行、CJK 逐字断行与页面回流是否稳定。";
+        fill.appendChild(p);
+      }
+      const h3 = document.createElement("h3"); h3.textContent = `第 ${s} 节小结`; fill.appendChild(h3);
+      const p = document.createElement("p"); p.innerHTML = `详见 <a href="https://example.com/section/${s}">第 ${s} 节附件</a>。`; fill.appendChild(p);
+    }
+    const rows = document.getElementById("rows");
+    for (let i = 1; i <= 46; i++) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${i}</td><td>${words[i % words.length]} 记录 ${i}</td><td>${(i * 37) % 900}</td><td>¥ ${((i * 173) % 9000)}</td>`;
+      rows.appendChild(tr);
+    }
+  </script>
+</div></body>
+</html>

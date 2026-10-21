@@ -1,0 +1,476 @@
+/* Playground 三色约定：引擎=珊瑚红、浏览器=薄荷绿，两个窗格与 Δ 表描边共用同一套。 */
+
+.bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 16px;
+    height: 54px;
+    flex: none;
+    border-bottom: 1px solid #22262b;
+    background: #101317;
+}
+
+    .bar .brand { font-size: 15px; font-weight: 600; letter-spacing: .2px; margin-right: 6px; white-space: nowrap; }
+
+        .bar .brand b { color: #ff4d4d; font-weight: 700; }
+
+.ctl {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13.5px;
+    color: #9aa3ad;
+    white-space: nowrap;
+}
+
+    .ctl input[type=number] { width: 88px; }
+
+    .ctl .narrow { width: 64px; }
+
+    .ctl input[type=range] { width: 140px; accent-color: #ff4d4d; }
+
+    .ctl b { color: #e6e8ea; font-weight: 500; font-size: 13.5px; }
+
+.bar input, .bar select, .editor input, .editor select {
+    background: #171b20;
+    color: #e6e8ea;
+    border: 1px solid #2a2f36;
+    border-radius: 5px;
+    padding: 5px 9px;
+    font: inherit;
+}
+
+.seg {
+    display: flex;
+    border: 1px solid #2a2f36;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+    .seg button {
+        background: transparent;
+        color: #9aa3ad;
+        border: 0;
+        padding: 6px 15px;
+        font-size: 13.5px;
+        cursor: pointer;
+    }
+
+        .seg button + button { border-left: 1px solid #2a2f36; }
+
+        .seg button.on { background: #ff4d4d; color: #16130f; font-weight: 600; }
+
+.run {
+    background: #ff4d4d;
+    color: #16130f;
+    border: 0;
+    border-radius: 6px;
+    padding: 7px 20px;
+    font-weight: 700;
+    font-size: 13.5px;
+    cursor: pointer;
+}
+
+    .run:disabled { opacity: .5; cursor: default; }
+
+/* 未激活的工具栏开关：与 .run 同尺寸，只是不涂红，免得两个红钮抢「该点哪个」。 */
+.ghost {
+    background: transparent;
+    color: #9aa3ad;
+    border: 1px solid #2a2f36;
+    border-radius: 6px;
+    padding: 6px 15px;
+    font-size: 13.5px;
+    cursor: pointer;
+}
+
+    .ghost:hover { color: #e6e8ea; border-color: #3a4149; }
+
+    .bar .ghost, .bar .run { flex: none; }
+
+.split {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+}
+
+    /* 盒级差异要多一栏明细表，从编辑区里挤宽度，不挤比对区。
+       中栏一律 minmax(0,1fr)：iframe 带着 1284px 的硬宽度，用裸 1fr（= minmax(auto,1fr)）
+       会被撑到不肯收缩，把明细栏整个挤出视口右侧。 */
+    .split[data-mode="side"], .split[data-mode="overlay"] { grid-template-columns: minmax(440px, 34%) minmax(0, 1fr); }
+    .split[data-mode="diff"] { grid-template-columns: minmax(420px, 32%) minmax(0, 1fr) minmax(340px, 24%); }
+
+.editor {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid #22262b;
+    background: #101317;
+}
+
+.label {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #6f7983;
+    flex: none;
+}
+
+.hint { font-size: 12.5px; color: #5c656e; text-transform: none; letter-spacing: 0; }
+
+.code {
+    flex: 1;
+    min-height: 0;
+    resize: none;
+    border: 0;
+    outline: none;
+    padding: 14px;
+    background: #14171b;
+    color: #d7dade;
+    font: 14.5px/1.62 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    tab-size: 2;
+}
+
+.grow { flex: 1 1 auto; }
+
+.extra {
+    flex: none;
+    border-top: 1px solid #22262b;
+    background: #101317;
+}
+
+    .extra summary {
+        padding: 10px 14px;
+        font-size: 12.5px;
+        text-transform: uppercase;
+        letter-spacing: .6px;
+        color: #6f7983;
+        cursor: pointer;
+        list-style: none;
+    }
+
+        .extra summary::-webkit-details-marker { display: none; }
+
+    .extra .code { height: 170px; flex: none; border-top: 1px solid #22262b; }
+
+.stage {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    padding: 14px;
+    display: flex;
+}
+
+.compare {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.pane {
+    position: relative;
+    overflow: auto;
+    background: #fff;
+    border: 1px solid #22262b;
+    border-radius: 6px;
+    min-height: 0;
+}
+
+/* 上窗引擎、下窗浏览器：与 DOM 顺序相反，用 order 摆，避免挪动 iframe 触发重新加载 */
+.compare[data-mode="side"] .pane { flex: 1 1 50%; }
+.compare[data-mode="side"] .pane-engine { order: 1; }
+.compare[data-mode="side"] .pane-browser { order: 2; }
+
+/* 叠加/差异：两窗格脱流叠在一起，滚动交给 .compare，两侧才在同一个原点上看同一块内容。
+   position:relative 是必须的 —— 少了它，脱流窗格会拿 .stage 当包含块：.compare 内容高度塌成 0，
+   iframe 直接溢出盖掉右侧明细栏和底部状态栏（实测踩过）。 */
+.compare:not([data-mode="side"]) { position: relative; display: block; overflow: auto; border: 1px solid #22262b; border-radius: 6px; background: #fff; }
+.compare:not([data-mode="side"]) .pane { position: absolute; left: 0; top: 0; overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.compare:not([data-mode="side"]) .pane-browser { z-index: 1; }
+.compare:not([data-mode="side"]) .pane-engine { z-index: 2; }
+.compare:not([data-mode="side"]) .pane-tag { display: none; }
+
+.pane-tag {
+    position: sticky;
+    left: 0;
+    top: 0;
+    z-index: 4;
+    display: inline-block;
+    padding: 4px 11px;
+    margin: 0 0 -21px;
+    font-size: 12px;
+    letter-spacing: .8px;
+    color: #9aa3ad;
+    background: rgba(16, 19, 23, .82);
+    border-bottom-right-radius: 6px;
+}
+
+.shot { display: block; }
+.compare[data-mode="side"] .shot { position: relative; }
+.compare:not([data-mode="side"]) .shot { position: absolute; }
+
+iframe { display: block; border: 0; background: #fff; }
+
+/* 叠加/盒级差异：无头参照图盖住常驻的有头 iframe（absolute 天然浮于 static 之上，z-index 只是兜底）。 */
+.compare:not([data-mode="side"]) .pane-browser .shot-ref { z-index: 1; }
+.ref-wait {
+    position: absolute; left: 0; top: 0; right: 0; padding: 40px;
+    text-align: center; color: #5c656e; font: 14px/1.6 system-ui, sans-serif;
+    background: rgba(255, 255, 255, .92); z-index: 2;
+}
+
+.diff-boxes { position: absolute; left: 0; top: 0; z-index: 3; }
+
+.diff-box {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+}
+
+/* outline 而非 border：叠着的矩形互相覆盖时，边框会被吃掉，描边不会。
+   2px + 一实一虚：同一元素两侧矩形几乎重合时，靠颜色在窄缝里分不出谁是谁，线型能分。 */
+.diff-box-engine { outline: 2px dashed rgba(255, 77, 77, .95); }
+.diff-box-browser { outline: 2px solid rgba(46, 230, 168, .95); }
+
+.err {
+    position: absolute;
+    right: 18px;
+    top: 18px;
+    z-index: 9;
+    max-width: 46%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 11px;
+    border-radius: 6px;
+    background: #2a1517;
+    border: 1px solid #5c2226;
+    color: #ffb3b3;
+    font-size: 13px;
+}
+
+    .err b { color: #ff4d4d; }
+
+.report {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border-left: 1px solid #22262b;
+    background: #101317;
+}
+
+    .report table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .report thead th {
+        position: sticky;
+        top: 0;
+        background: #101317;
+        color: #6f7983;
+        font-weight: 500;
+        text-align: left;
+        padding: 6px 9px;
+        border-bottom: 1px solid #22262b;
+    }
+
+    .report tbody { overflow: auto; }
+
+    .report td {
+        padding: 5px 9px;
+        border-bottom: 1px solid #191d22;
+        color: #b9c0c7;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 1px;
+    }
+
+    .report .r { text-align: right; }
+
+    .report .path { color: #565e66; margin-left: 5px; }
+
+    .report .kind {
+        display: inline-block;
+        width: 34px;
+        color: #6f7983;
+        font-size: 11.5px;
+    }
+
+    .report tr.bad td { background: #2a1517; color: #ffd7d7; }
+    .report tr.mid td { background: #241d10; }
+    .report tr.orphan td { background: #14202a; color: #9fd2ff; }
+
+    /* 空状态：整行灰字，明确说「比过了，是一致的」，不是没跑 */
+    .report td.none {
+        color: #565e66;
+        text-align: center;
+        padding: 18px 10px;
+        white-space: normal;
+    }
+
+.cap { padding: 8px 14px; }
+
+.status {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 34px;
+    padding: 0 16px;
+    border-top: 1px solid #22262b;
+    background: #101317;
+    color: #7d868f;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+    .status .grow { flex: 1; }
+
+    .status .sep { color: #2f353c; }
+
+    .status .ok, .status .warn { padding: 2px 8px; border-radius: 4px; }
+
+    .status .ok { background: #14291f; color: #6ee7a8; }
+
+    .status .warn { background: #2a1517; color: #ff8f8f; }
+
+/* ── PDF 悬浮窗 ───────────────────────────────────────────────────────── */
+
+/* fixed 而非 absolute：脱开 .split 那套网格，浮在两窗与状态栏之上，位置只跟视口有关。
+   overflow:hidden 一是让 resize 生效（overflow:visible 的元素不出现把手），二是把 iframe 裁进圆角。
+   宽度按视口给（不是 430px 那种小票尺寸）：Chrome 的 PDF 查看器要把整页 A4 摆开，
+   窄了就先被它自己的工具条/侧栏吃掉一圈，页面缩成中间一小坨，看不出排版对不对。 */
+.pdfwin {
+    position: fixed;
+    right: 18px;
+    bottom: 50px;
+    z-index: 20;
+    width: min(72vw, 1040px);
+    height: min(82vh, 900px);
+    min-width: 420px;
+    min-height: 260px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 80px);
+    display: flex;
+    flex-direction: column;
+    resize: both;
+    overflow: hidden;
+    background: #101317;
+    border: 1px solid #2a2f36;
+    border-radius: 8px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .55);
+}
+
+/* 标题条即拖拽把手；条上的控件（纸张档、下载、关闭）按元素排除，见 playground.js makeDraggable。 */
+.pdfwin-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+    padding: 7px 8px 7px 12px;
+    background: #171b20;
+    border-bottom: 1px solid #22262b;
+    cursor: grab;
+    user-select: none;
+}
+
+    .pdfwin-bar.dragging { cursor: grabbing; }
+
+    .pdfwin-bar .grow { flex: 1; min-width: 6px; }
+
+.pdfwin-title {
+    color: #ff4d4d;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    flex: none;
+}
+
+.pdfwin-bar select {
+    flex: none;
+    background: #0f1216;
+    color: #c8ced4;
+    border: 1px solid #2a2f36;
+    border-radius: 5px;
+    padding: 3px 6px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.pdfwin-meta {
+    flex: none;
+    font-size: 13px;
+    color: #6f7983;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pdfwin-dl {
+    flex: none;
+    padding: 3px 9px;
+    border: 1px solid #2a2f36;
+    border-radius: 5px;
+    color: #9aa3ad;
+    font-size: 13px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+    .pdfwin-dl:hover { color: #e6e8ea; border-color: #3a4149; }
+
+.pdfwin-x {
+    flex: none;
+    padding: 2px 9px;
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    color: #9aa3ad;
+    font-size: 17px;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+    .pdfwin-x:hover { background: #2a1517; color: #ff8f8f; }
+
+.pdfwin-view {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    border: 0;
+    background: #fff;
+}
+
+/* 空态与错误态共用：把「还在生成」「生成失败」和「查看器在显示上一份」区分开。 */
+.pdfwin-msg {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 18px;
+    text-align: center;
+    color: #6f7983;
+    font-size: 13.5px;
+}
+
+    .pdfwin-msg b { color: #ff4d4d; }

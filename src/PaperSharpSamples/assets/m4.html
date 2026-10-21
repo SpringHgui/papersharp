@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>M4</title></head>
+<body>
+  <h1>M4 里程碑：CSS 变量、calc() 与字体工具</h1>
+
+  <h2>1. var() 设计令牌</h2>
+  <p>:root 统一定义品牌色 / 间距 / 圆角令牌，各组件引用；改一处全局生效。</p>
+  <div class="demo-row">
+    <div class="card"><b>卡片 A</b><br>背景、圆角、内边距、强调色全部来自变量。</div>
+    <div class="card accent2"><b>卡片 B</b><br>--accent 在本组件作用域覆盖为另一种颜色。</div>
+    <div class="hero">背景图 = var(--hero-grad)，值本身是一个 linear-gradient。</div>
+  </div>
+
+  <h2>2. 作用域 · 继承 · 兜底 · 嵌套</h2>
+  <div class="scoped">
+    容器内 <span class="accent-text">子元素继承 var(--accent)</span>；
+    <span class="fallback-text">未定义变量走兜底色 var(--nope, 棕色)</span>；
+    <span class="nested-text">嵌套引用 var(--tip-color → var(--accent)，按使用点作用域解析)</span>。
+  </div>
+
+  <h2>3. calc() 混合单位</h2>
+  <div class="calc-pair">
+    <div class="pane main-pane">width: calc(100% - 240px)</div>
+    <div class="pane side-pane">width: 220px（留 20px 列距）</div>
+  </div>
+  <div class="calc-box">
+    width calc(2rem + 100px) · padding calc(0.5em + 8px) · margin-top calc(20px + 0.5rem) ·
+    border-radius calc(18px - 0.5rem)
+  </div>
+  <div class="calc-strip">letter-spacing: calc(1px + 1pt) 的字距效果（calc 加宽）</div>
+  <div class="calc-strip plain">letter-spacing: 0 的对照效果（正常间距）</div>
+
+  <h2>4. flex / grid / margin 里的 calc()</h2>
+  <div class="flex-pair">
+    <div class="flex-cell">flex-basis: calc(50% - 10px) + gap 16px → 正好两列</div>
+    <div class="flex-cell">第二格</div>
+    <div class="flex-cell">第三格换行</div>
+    <div class="flex-cell">第四格</div>
+  </div>
+  <div class="grid3">
+    <div class="g-cell">repeat(3, calc(33.333% - 11px))</div>
+    <div class="g-cell">格 2</div>
+    <div class="g-cell">格 3</div>
+  </div>
+
+  <h2>5. 字体工具</h2>
+  <p class="subsrc">本段字体族为 <b>SubSrcTest</b>：@font-face 的 src 链指向 不存在的.woff2 → 真实 .ttf，
+  验证多 src 逐个回退。CJK 由字体目录注册的子集黑体承接 → <b>中文照常渲染</b>。</p>
+  <p class="gfont-demo">Google Fonts helper：拉取 Noto Serif SC 后离线复用；无网络时本行回退系统衬线字体。</p>
+  <p>字体目录 helper：<span class="dirfont">对 assets/fonts 目录一次 RegisterFontDirectory，按真实 family name 即可命中。</span></p>
+</body>
+</html>

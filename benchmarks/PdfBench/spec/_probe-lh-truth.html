@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+ body{margin:0;padding:8px;font-family:"Microsoft YaHei",sans-serif}
+ div{white-space:nowrap}
+ .g{font-family:Arial,sans-serif}
+</style></head><body><pre id="o"></pre>
+<script>
+const cases=[[16,''],[13,''],[10,''],[20,''],[14,''],[8,''],[10.5,''],[12,'g'],[12,''],[30,'']];
+let out=[];
+for(const [fs,cls] of cases){
+  const d=document.createElement('div');
+  if(cls) d.className=cls;
+  d.style.fontSize=fs+'px';
+  d.textContent='Hxng中永';
+  document.body.appendChild(d);
+  const r=d.getBoundingClientRect();
+  out.push(`${cls||'yahei'} ${fs} lh=${r.height}`);
+}
+document.getElementById('o').textContent=out.join('\n');
+</script></body></html>

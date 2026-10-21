@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:8px}</style></head>
+<body><pre id="o"></pre><script>
+const fams=['sans-serif','Arial','"Microsoft YaHei"','serif','monospace'];
+const sizes=[15,16,13];
+let out=[];
+for(const f of fams) for(const fs of sizes) for(const txt of ['Hxng','Hxng中永']){
+  const d=document.createElement('div');
+  d.style.fontFamily=f; d.style.fontSize=fs+'px'; d.style.whiteSpace='nowrap';
+  d.textContent=txt; document.body.appendChild(d);
+  out.push(`${f} ${fs} ${txt.length>4?'cjk':'lat'} lh=${d.getBoundingClientRect().height}`);
+}
+document.getElementById('o').textContent=out.join('\n');
+</script></body></html>

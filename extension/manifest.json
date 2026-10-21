@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "PaperSharp 网页导出",
+  "version": "0.1.0",
+  "description": "任意网页一键导出 PDF / PNG / JPEG / WebP / SVG / ICO：本机 .NET+WASM 真渲染，不是截图拼图，PDF 文字可选中可搜索，页面内容永不上传。",
+  "minimum_chrome_version": "116",
+  "permissions": ["offscreen", "downloads", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/capture.js", "content/panel.js", "content/main.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

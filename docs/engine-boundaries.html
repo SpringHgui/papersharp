@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PaperSharp · 引擎边界与管线契约</title>
+<style>
+  :root{
+    --bg:#111214; --panel:#17181b; --line:#2a2c31; --ink:#e9e7e2; --dim:#9a9891;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    --serif:Georgia,'Times New Roman','Songti SC',serif;
+    --ok:#5fd08a; --no:#ff6b6b; --warn:#f0b429; --accent:#c9c6be;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+    -webkit-font-smoothing:antialiased;padding:48px 24px 80px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-family:var(--serif);font-weight:600;font-size:44px;line-height:1.05;margin:0 0 6px;letter-spacing:-.5px}
+  h1 em{font-style:normal;color:var(--dim)}
+  .sub{color:var(--dim);font-size:16px;margin:0 0 8px}
+  .verdict{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:16px 18px;margin:22px 0 40px}
+  .verdict b{color:var(--ink)}
+  h2{font-family:var(--serif);font-weight:600;font-size:24px;margin:44px 0 4px;letter-spacing:-.2px}
+  h2 .n{color:var(--dim);font-family:var(--mono);font-size:15px;margin-right:8px}
+  .lead{color:var(--dim);margin:0 0 18px;font-size:14.5px}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 8px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.09em}
+  code{font-family:var(--mono);font-size:12.8px;background:#1e2024;border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;color:#d8d5cd;white-space:nowrap}
+  .cat{color:var(--dim);font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.1em}
+  .pill{display:inline-block;font:600 11px/1 var(--mono);letter-spacing:.04em;padding:5px 8px;border-radius:20px;white-space:nowrap}
+  .p-ok{color:var(--ok);background:rgba(95,208,138,.1);border:1px solid rgba(95,208,138,.3)}
+  .p-no{color:var(--no);background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3)}
+  .p-warn{color:var(--warn);background:rgba(240,180,41,.1);border:1px solid rgba(240,180,41,.3)}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .card h3{margin:0 0 4px;font-size:16.5px;font-family:var(--mono);font-weight:600}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:2px 0 10px}
+  .kv{color:var(--dim);font-size:12.5px}
+  .kv b{color:var(--accent);font-weight:600}
+  ul{margin:8px 0 0;padding-left:20px}
+  li{margin:5px 0}
+  .wire{font-family:var(--mono);font-size:12.5px;color:#c4c1b9;background:#141518;border:1px solid var(--line);
+    border-radius:8px;padding:11px 13px;margin-top:8px;line-height:1.75;overflow-x:auto;white-space:pre}
+  .wire .f{color:var(--ok)} .wire .c{color:#6f6d67}
+  .dec{border:1px solid var(--line);border-radius:10px;padding:4px 20px 16px;margin:14px 0;background:var(--panel)}
+  .dec .q{font-weight:600;margin:14px 0 6px}
+  .dec .q .id{font-family:var(--mono);color:var(--dim);margin-right:8px}
+  .foot{color:#6f6d67;font-size:12.5px;margin-top:48px;border-top:1px solid var(--line);padding-top:16px}
+  @media(max-width:760px){h1{font-size:34px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>One shot. <em>定格渲染的边界</em></h1>
+  <p class="sub">本文只回答一个问题：PaperSharp <b>负责到哪一步为止</b>。能力清单以 README 为准，差距与排期以 ROADMAP 为准，本文是两者的裁决依据。</p>
+
+  <div class="verdict">
+    <b>定位：</b>一次输入、一趟求解、一个定格产物。<code>html + css (+ animationTime)</code> → <code>PNG · JPEG · WebP · ICO · SVG · 矢量 PDF</code>。
+    <br><br>
+    <b>三条承诺：</b>①<b>无事件、无交互、无时间轴</b>——本引擎不实现「用户代理」中与用户有关的那一半；②<b>渲染期不联网</b>——资源只在调用方给定的 <code>baseDir</code> 与 <code>data:</code> URI 内解析，同一输入恒定产物（联网只有一处显式例外：字体预取 API，见 §1.1）；③<b>无头进程内嵌</b>——一个类库，不起子进程、不开调试端口、不依赖浏览器。
+    <br><br>
+    <b>这三条不是省事的借口，而是尺子的来源：</b>正因为产物定格且离线，"做完了没有"才能被钉成<b>逐字节断言</b>（见 §4），而不是"看起来挺像"。
+  </div>
+
+  <h2><span class="n">§1</span>不做清单</h2>
+  <p class="lead">以下每一项都是<b>裁决后的终态</b>，不是待办。写在这里的用意是：任何人（含 AI）再提"顺手支持一下"，答案在此可查，不必重开讨论。</p>
+
+  <table>
+    <tr><th style="width:26%">不做的能力</th><th style="width:37%">连带不做的义务（真正的成本）</th><th>与定位的冲突点</th></tr>
+    <tr>
+      <td>鼠标 / 键盘 / 焦点 / 滚动</td>
+      <td>hit-testing 树、焦点环与键盘导航、文本 selection 绘制层、光标与 IME 定位</td>
+      <td>需要<b>事件循环</b>：渲染不再是纯函数，输出取决于外部输入到达的顺序与时刻</td>
+    </tr>
+    <tr>
+      <td>滚动容器语义（<code>overflow: auto</code> / <code>scroll</code>）</td>
+      <td>滚动条几何与占位、滚动偏移、<code>scroll-behavior</code>、"当前滚到哪儿"参与出图</td>
+      <td>定格产物没有滚动位置 → 与 <code>hidden</code> 一样裁剪到 padding box（<b>不画滚动条</b>，也不为条子让位）。此为对外承诺，不是待办</td>
+    </tr>
+    <tr>
+      <td>增量布局失效与合成</td>
+      <td>脏矩形、保留式（retained）层树、合成器、滚动条几何</td>
+      <td>一次性求解的管线不需要缓存几何；引入失效即引入正确性黑洞</td>
+    </tr>
+    <tr>
+      <td>动画<b>播放</b>与多帧导出</td>
+      <td>时间轴推进本身、帧循环、APNG·GIF·animated WebP 编码管线。（<b>单帧取帧已支持</b>，见 §2，本行不否定它）</td>
+      <td>PDF 与 SVG 静态路径无法承载时间轴；多帧等于换产品（ROADMAP 已排除）</td>
+    </tr>
+    <tr>
+      <td><code>:hover</code> <code>:active</code> <code>:focus</code> <code>:visited</code></td>
+      <td>用户状态位、状态伪类的样式重算</td>
+      <td>本引擎无用户状态来源，<b>不承诺支持</b>这四个伪类。<code>Css/</code>、<code>Layout/</code> 内对它们零处理；AngleSharp 侧的匹配结果未实测，不作为本文依据</td>
+    </tr>
+  </table>
+
+  <p class="lead">对照常见的「浏览器渲染引擎模块清单」，本表删掉两项（事件与交互、独立的"渲染树构建"阶段），补上四项（级联求值、匿名盒生成、分页模型、双输出后端），并把"HTML 解析"从自研改为外购。</p>
+
+  <div class="card">
+    <div class="row"><h3>§1.1 已定边界的，不进上面的表</h3><span class="pill p-ok">已支持</span></div>
+    <div class="kv">判据：<b>值被接受且产物确定</b>，就是已支持——记在 README 能力表里，不算"不做"。下面几行都曾被误列进 §1，或仍挂在 ROADMAP 差距表上而实际行为早已定死。</div>
+    <table>
+      <tr><th style="width:24%">项</th><th style="width:40%">已定义的行为</th><th>落点 / 待同步</th></tr>
+      <tr>
+        <td><code>position: fixed</code> / <code>sticky</code></td>
+        <td>值被接受，恒按 <code>static</code> 参与布局。<code>Css/</code>、<code>Layout/</code> 内<b>无</b> fixed/sticky 分支（<code>CssSize.IsFixed</code> 指"宽度是否定值"，同名不同事）</td>
+        <td>README「定位」条已载。<b>ROADMAP 差距表仍把它列为 gap</b>（视口语义 · 中成本）——与已交付行为冲突，应改成"视口语义不做，静态降级已交付"或整行删除</td>
+      </tr>
+      <tr>
+        <td><code>overflow</code> 裁剪</td>
+        <td>开裁剪的祖先把自己的 padding box 罩到整棵子树：矩形求交沿 <code>BlockBox.Parent</code> 链现算，长图 / 分页 / SVG 三条路径共用同一几何来源；祖先带圆角则按圆角矩形裁；<b>裁剪盒不参与跨页碎片化</b>（否则祖先与条目不在同一页坐标系）</td>
+        <td>落点：<code>Layout/BlockBox.cs</code>（<code>OverflowClip</code>）· <code>Paint/VisualEffects.cs</code>（<code>ClipOverflow</code>）· <code>Painter</code> / <code>PagePainter</code> / <code>SvgWriter</code> / <code>Paginator</code>。实测 AngleSharp 不认 <code>clip</code>·<code>overlay</code>·两值简写（computed 与 declared 双空）→ 走 <code>UnsupportedProps</code> 原文兜底。<b>未做</b>：BFC（见 ROADMAP「布局/BFC」行）</td>
+      </tr>
+      <tr>
+        <td>网络 <code>src</code> / <code>url()</code></td>
+        <td>渲染期不联网：<code>ImageLoader</code> 遇 <code>http(s)://</code> 直接返回 <code>null</code>，不抓取、不重试、不产生超时不确定性，走图片自然回退</td>
+        <td><code>Layout/ImageLoader.cs:41</code>。联网的唯一显式例外是字体预取 <code>GoogleFonts.Fetch()</code>（<code>Css/GoogleFonts.cs:27</code>）：拉取后改写为本地缓存路径（<code>%LOCALAPPDATA%/PaperSharp/gfonts</code>），失败即回缓存、再无则返回空串由渲染端回退——<b>它是调用期 API，不在渲染路径上</b>，与承诺 ② 不冲突</td>
+      </tr>
+      <tr>
+        <td><code>&lt;script&gt;</code> 与外部 <code>&lt;link&gt;</code></td>
+        <td>非视觉标签不成盒；不执行脚本、不为外部样式表发请求，输入始终是调用方给定的那一段字符串</td>
+        <td>属输入面契约，不是待办。需要动态内容由调用方先生成 HTML</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2><span class="n">§2</span>看着像交互、实际必须保住的三项</h2>
+  <p class="lead">砍 §1 时容易顺手砍掉它们，但三者都是<b>渲染期一次算完的静态产物</b>，与事件循环无关。</p>
+
+  <div class="card">
+    <div class="row"><h3>PDF 书签 · 链接注释 · 内部锚点 · 元数据</h3><span class="pill p-ok">保住</span></div>
+    <div class="kv">从盒树收语义矩形（<b>Layout/Pdf/PdfSemantic.cs</b>，108 行），再在 PDF 尾部增量注入 outline / link annotation（<b>PdfEnhancer.cs</b>，343 行）。</div>
+    <ul>
+      <li>链接注释是 <b>PDF 对象</b>，不是 hit-testing——点击由阅读器实现，我们只负责把矩形和目的地写对。</li>
+      <li>财务级文档卖点（目录、跳转、可追溯元数据），砍掉即降级为"一张印在 PDF 里的图"。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="row"><h3>文本可选中、可搜索、可复制</h3><span class="pill p-ok">保住</span></div>
+    <div class="kv">矢量 PDF 路径里文字是<b>嵌入的 Type0/CID 字体 + ToUnicode 映射</b>（配合构建期 fonttools 子集，GB2312 常用字整包 ~2.5 MB），不是位图字形。</div>
+    <ul>
+      <li>它的正确性判据是"复制出来粘进文本编辑器是不是原文"——纯静态可断言，与选择/光标无关。</li>
+      <li>这是与"截图导出"路线的分水岭，也是最容易被误当成交互能力而被砍的一项。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="row"><h3><code>@keyframes</code> / <code>animation</code></h3><span class="pill p-warn">保住，但塌成一帧</span></div>
+    <div class="kv">解析全套（timing / iteration / direction / fill），渲染时传 <code>animationTime</code>（秒）→ <b>取该时刻的一帧</b>，对 opacity / 颜色 / 长度 / 圆角 / 字号 / 定位偏移按帧插值。</div>
+    <ul>
+      <li>与定位自洽：<b>调用方决定时刻</b>，引擎仍是纯函数，逐字节确定（<b>Css/Animation.cs</b> 374 行）。</li>
+      <li>边界：依赖 <code>transform</code> 的关键帧被解析但<b>不生效</b>（不做假变换），输出须与无动画逐字节一致——已有测试钉住。</li>
+    </ul>
+  </div>
+
+  <h2><span class="n">§3</span>管线与模块契约</h2>
+  <p class="lead">主链七段 + 两段横切。括号内是落点文件；行数是当前规模，用来标示复杂度实际堆在哪里——<b>级联、盒树/布局、文本</b>三处吃掉了一多半，而常见清单把这三格写成了三行字。</p>
+
+  <div class="wire"><span class="c">主链（严格单向，一次求解）</span>
+① HTML 解析<span class="f"> → IDocument</span>            AngleSharp（外购，不重建）
+② CSS 解析 + 级联求值<span class="f"> → ComputedStyle</span>   Css/StyleResolver.cs 927 · FlatCascade.cs 238 · CssValueParser.cs 616 · ComputedStyle.cs 222
+③ 盒树生成（含匿名盒）<span class="f"> → BlockBox 树</span>      Layout/LayoutBuilder.cs 1620
+④ 布局求解（measure/layout 双趟）<span class="f"> → 定尺盒树</span>  同上 + InlineLayout.cs 307 · FloatContext.cs 79 · CssSize.cs 56
+⑤ 分页<span class="f"> → 页序列 + 边距盒</span>             Layout/Paginator.cs 420 · Css/PageSpec.cs 303
+⑥ 绘制顺序与落笔<span class="f"> → SKPicture/位图/SVG</span>    Paint/Painter.cs 160 · PagePainter.cs · BoxPainter.cs · Visual.cs 113
+⑦ 后端封装<span class="f"> → 字节流</span>                    Pdf/PdfEnhancer.cs 343 · Paint/SvgWriter.cs 395
+
+<span class="c">横切（被 ②③④⑥ 共同调用，不是流水线上的一格）</span>
+Ⓐ 文本子系统   Layout/FontManager.cs 223 · TextShaper.cs 239 · TextMeasurer.cs 236 · Paint/TextPainter.cs 213
+Ⓑ 资源子系统   Layout/ImageLoader.cs 89 · Css/FontFaceParser.cs · GoogleFonts.cs · PseudoContent.cs 362 · CounterStyle.cs 131</div>
+
+  <table>
+    <tr><th style="width:22%">模块</th><th style="width:30%">契约（输入 → 输出）</th><th>为什么不能与相邻模块合并</th></tr>
+    <tr>
+      <td>① HTML 解析</td>
+      <td>字符串 → 容错过、带隐式 <code>html/body</code> 的 <code>IDocument</code></td>
+      <td>HTML5 是带错误恢复的有限状态机，投入产出比极低——<b>买不建</b>。M6 只替换它的层叠，DOM 与选择器继续用 AngleSharp。</td>
+    </tr>
+    <tr>
+      <td>② 级联求值</td>
+      <td>声明 + 元素 → <code>ComputedStyle</code>（值处理模型走完 specified→computed→used，含初始值、继承、UA 表、简写展开、特异度与层叠次序）</td>
+      <td>"解析 CSS" 与"算出样式"是两件事，中间隔着整个 Cascade。把它写成两格会漏掉最难的一半——M6 六步里 ①tokenizer、③属性元数据表、④值解析直连至今未做，只交付了 ②特异度+分桶。</td>
+    </tr>
+    <tr>
+      <td>③ 匿名盒生成</td>
+      <td>DOM+样式 → 盒树（块内裸文本→匿名块、table 内匿名行/格、inline 夹 block 的 split、<code>::before/::after</code> 各自成盒）</td>
+      <td>独立一格，因为它<b>不属于解析也不属于布局</b>，是两者之间的一次结构重写。漏做不报错，只表现为整体错位——是与真实浏览器逐盒对账时最容易假阳性的来源。</td>
+    </tr>
+    <tr>
+      <td>④ 布局求解</td>
+      <td>盒树 + 包含块 → 每个盒的 border/padding/content 矩形</td>
+      <td>此处<b>有环</b>：flex 交叉轴居中要先测子项、<code>%</code> 高度要等父项定尺、table 自动布局要两遍。所以是 measure/layout 双趟，不是一遍过。<b>砍掉交互并不会让这一格变薄</b>——它是数据依赖的循环，与事件无关。</td>
+    </tr>
+    <tr>
+      <td>⑤ 分页</td>
+      <td>定尺盒树 + <code>@page</code> → 页序列（跨页回流、<code>break-*</code>、<code>orphans/widows</code>、<code>&lt;thead&gt;</code> 重放、边距盒每页重绘）</td>
+      <td>面向屏幕的清单里没有这一格，对文档引擎它是核心。它反过来要求 ④ 可重入（同一段内容在不同页宽下重解）。</td>
+    </tr>
+    <tr>
+      <td>⑥ 绘制顺序</td>
+      <td>页 + 层叠上下文 → 落笔序列</td>
+      <td><b>不是独立阶段</b>：要不要画由 ② 的 <code>display/visibility</code> 决定，画的次序是层叠上下文树 × 布局结果的函数。常见清单把它列成与布局并列的一格，会诱导多余的中间树。</td>
+    </tr>
+    <tr>
+      <td>⑦ 双后端</td>
+      <td>落笔序列 → <b>光栅</b>（scale/DPI，Skia 直出）｜<b>矢量</b>（PDF 字体子集 + 语义尾注，SVG 录制）</td>
+      <td>两条路的正确性判据完全不同（像素 vs 文本层与结构）。清单只写"Skia 调用层"等于默认只出位图，那 PDF 卖点无从谈起。</td>
+    </tr>
+    <tr>
+      <td>Ⓐ 文本子系统</td>
+      <td>字符串 + 字体栈 → 字素簇 → shaping run → 行盒（基线、折行、回退）</td>
+      <td>Skia 只给 glyph 与 metrics，<b>不给 line breaker、不给 shaping、不给 bidi</b>。HarfBuzz 连写、扩展字素、字形级字体回退都在这格。已知边界：完整 UAX#9 嵌套双向、国旗 emoji、shaped run 的 letter-spacing。</td>
+    </tr>
+  </table>
+
+  <h2><span class="n">§4</span>确定性：承诺的边界与取证现状</h2>
+  <p class="lead">无交互 + 无网络换来最硬的一条 DoD：<b>同输入 → 逐字节同产物</b>。当前证据分三层，别混为一谈。</p>
+
+  <table>
+    <tr><th style="width:22%">断言</th><th style="width:20%">现状</th><th>依据 / 缺口</th></tr>
+    <tr>
+      <td>位图路径逐字节确定</td>
+      <td><span class="pill p-ok">已钉测试</span></td>
+      <td><code>AnimationTests.cs:61 Same_time_is_deterministic</code>（同一 <code>animationTime</code> 两次渲染字节一致）、<code>:116</code>（不同时刻互异 / 同刻一致）、<code>ConcurrencyTests.cs:24·41·59</code>（多线程与文档交错均等于串行基准）。</td>
+    </tr>
+    <tr>
+      <td>PDF 路径无时间破口</td>
+      <td><span class="pill p-ok">实测未见</span></td>
+      <td>取三份真实导出件（长文分页回归、加油站日报快照、Bootstrap Dashboard）检查：Info 字典内<b>只有</b> <code>/Producer</code>（UTF-16BE "PaperSharp…"），<b>无</b> <code>CreationDate</code> / <code>ModDate</code>，<b>无</b> trailer <code>/ID</code> 数组；「长文分页回归」两份导出 md5 相同。</td>
+    </tr>
+    <tr>
+      <td>PDF 路径逐字节确定</td>
+      <td><span class="pill p-warn">未钉断言</span></td>
+      <td>上表的 md5 相同发生在<b>同一浏览器会话内的两次导出</b>，不构成跨进程证明；测试侧 <code>PdfStructureTests.cs:23</code> 目前只断言 <code>%PDF-</code> 头。<b>待补</b>：同一输入两次 <code>RenderPdf</code> 的字节比对。</td>
+    </tr>
+  </table>
+
+  <p class="lead"><b>承诺范围（精确措辞）：</b>在<b>同一版本</b>的 PaperSharp、SkiaSharp / HarfBuzzSharp、fonttools 字体子集产物与 <code>baseDir</code> 资源树之下，同一 <code>(html, css, animationTime, width/scale, pageSize, precomputed)</code> 输入，任何线程、任何次序，输出逐字节相同。<b>不承诺</b>跨依赖版本或跨机器的字节相同（字体子集与 shaping 版本会变），那属于可复现性而非确定性。</p>
+
+  <h2><span class="n">§5</span>待拍板</h2>
+  <p class="lead">§1–§4 的裁决已定，以下是仍需拍板的执行细节。</p>
+
+  <div class="dec">
+    <div class="q"><span class="id">D1</span>PDF 的逐字节断言要不要现在补？</div>
+    <div class="kv"><b>建议：补。</b>一条 <code>Fact</code> 复用 <code>Fixture.RenderPdf</code> 连渲两次比 <code>SequenceEqual</code>，成本近乎零；不补则 §4 第三行永远停在"未见破口"而非"已钉住"，README 里"确定性输出"这句对外承诺就只覆盖位图。</div>
+  </div>
+
+  <div class="dec">
+    <div class="q"><span class="id">D2</span>状态伪类与未实现属性，静默忽略还是可诊断？</div>
+    <div class="kv"><b>建议：保持静默忽略（渲染结果确定性优先），但把"不支持"清单写进 README 能力表</b>，让它成为对外契约的一部分。反对意见是"报错更早发现问题"，代价是不认识的属性会中断整篇文档渲染，对导出真实网页快照的插件路径（扩展已把 <code>overflow:hidden</code> 近似成 <code>clip-path</code>、<code>background-image:url()</code> 合成 <code>&lt;img&gt;</code>）不可接受。</div>
+  </div>
+
+  <div class="dec">
+    <div class="q"><span class="id">D3</span>本文与 README / ROADMAP 的分工是否写死？</div>
+    <div class="kv"><b>建议：写死并互相加链接</b>——本文=边界裁决（为什么不做），README=能力表（做了什么），ROADMAP=排期（下一步做什么）。三处各答一个问题，任何一条能力从 ROADMAP 迁到本文 §1 时，三处同步改。</div>
+  </div>
+
+  <div class="foot">
+    维护约定：本文只在<b>边界</b>变化时改（新增一项"永久不做"、或一项从"不做"迁回待办）。单个 CSS 属性的支持状态变更请改 README 能力表与 ROADMAP 差距表，不要往本文加内容。
+    <br>核对方式：文中所有文件行数取自 <code>src/PaperSharp/</code> 当前工作树；PDF 取证样本在 <code>extension/test/out/downloads/</code>。
+  </div>
+
+</div>
+</body>
+</html>

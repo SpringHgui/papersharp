@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>M7 复杂文字验收</title>
+<link rel="stylesheet" href="m7.css">
+</head>
+<body>
+<h1>M7 · 复杂文字：阿拉伯连写 / 双向 / emoji</h1>
+
+<h2>一、阿拉伯文连写（HarfBuzz shaping）</h2>
+<div class="rtl box" dir="rtl">
+  <p class="big">السلام عليكم ورحمة الله وبركاته</p>
+  <p>محرك عرض المستندات بلغة سي شارب يحوّل HTML وCSS إلى PDF متجهي عالي الدقة دون الحاجة إلى متصفح.</p>
+</div>
+
+<h2>二、RTL 段落混排拉丁词与数字（bidi）</h2>
+<div class="rtl box" dir="rtl">
+  <p>مرحبا بالعالم World 123 مرحبا</p>
+  <p>سعر السلعة: $45.99 (USD) شامل الضريبة</p>
+  <p>القائمة: <span class="tag">CSS</span> و <span class="tag">HTML</span> و <span class="tag">PDF</span></p>
+</div>
+
+<h2>三、LTR 段落内嵌 RTL 片段</h2>
+<p class="ltr-mix">The Arabic greeting <span class="ar" dir="rtl">مرحبا بالعالم</span> and the
+Hebrew <span class="ar" dir="rtl">שלום עולם</span> both mean “hello world”;
+数字 2026 与标点混排应保持 LTR 基底。</p>
+
+<h2>四、组合符号与字素安全</h2>
+<p class="vi">Ti&#7879;ng Vi&#7879;t（分解式）: n&#769;&#777; (n+下附点+锐音符) — Hà Nội — 越南语多组合符不拆散。</p>
+<p class="vi">한국어与全角：！？，汉字와 가나다。</p>
+
+<h2>五、emoji</h2>
+<p class="emoji">单字: 😀 🚀 ｜ 家庭 ZWJ: &#x1F468;&#x200D;&#x1F469;&#x200D;&#x1F467;&#x200D;&#x1F466; ｜ 国旗: &#x1F1E8;&#x1F1F3; &#x1F1EF;&#x1F1F5; ｜ 肤色: 👍🏽 ｜ 文本混排: 完成 ✅ 通过 &#x2714;&#xFE0F;</p>
+
+<h2>六、RTL 行内 inline-block 与基线</h2>
+<div class="rtl box" dir="rtl">
+  <p>قبل المربع نص <span class="chip">inline-block</span> بعد المربع نص طويل ليمديد حتى السطر الثاني للتأكيد على ترتيب العناصر</p>
+</div>
+
+<h2>七、RTL 表格与数字列</h2>
+<table class="rtl-table" dir="rtl">
+  <thead><tr><th>اسم</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
+  <tbody>
+    <tr><td>电阻 10kΩ</td><td class="num">50,000</td><td class="num">¥1,000.00</td></tr>
+    <tr><td>电容 100μF</td><td class="num">30,000</td><td class="num">¥4,500.00</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>

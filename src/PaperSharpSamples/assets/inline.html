@@ -1,0 +1,44 @@
+<h1>Inline Formatting Context</h1>
+<p style="color:#6b7280">文本与行内片段混排 · 自动折行 · 图文同排</p>
+
+<h2>带样式的行内 run</h2>
+<p>
+  普通文字中间可以嵌入<span class="hl">高亮底纹</span>、
+  <span class="red">红色</span>、<span class="blue">蓝色</span>、
+  <span class="bolder">加粗</span>、<em>斜体强调</em>、
+  <a class="link">下划线链接</a>、<span class="strike">删除线</span>、
+  <span class="cap">字距加宽</span> 以及
+  <span class="big">大号字</span>，
+  它们都<span class="badge">像行内文字</span>一样参与折行，而不会各起一行。
+</p>
+
+<h2>强制换行 &lt;br&gt; 与多个标签</h2>
+<p>
+  第一行<span class="tag">HTML</span><span class="tag">CSS</span><span class="tag">PDF</span><br>
+  第二行用 &lt;br&gt; 断在这里，前面的行内块<span class="hl">不会</span>把它们拆开。
+</p>
+
+<h2>图文混排（行内图片随文字流动）</h2>
+<p>
+  这一行的行首有一个小圆点
+  <img class="dot" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAYAAAA6/NlyAAABVklEQVR4nO2bzbHDIAyEV1tH+nk1p5/0oXfNJA4W5scS4rt5zIhdJMwBGdhsNpGRSfOoF03ixOQ0feLQ5FCtMsvo8/E4DfL3eg3XLBhk1mKwYQHkLsM6wqjRuMw0rDOMjjDOKGYL8+jIDKtBwBQOsi29M6xezP6YX0eVNO4226KDxnHqzewPPdrDsCIW2mJY3x+8ZffKfmZDUFdY9XGhUjbp5wrZrdFJJIPRjqHWY4pIBpEMLvh1LvphaWS0/WvRTSSDSAaRDCIZRDKIZBDJIJLBDnc97ijp5o13xrOQ94dd0qvDszKIto8/9Mrn+13SR0TJskUnC++if60P9ZtL2nuWrfpYs0peTdfcFdMQL1ppF/WyNoi3LJ8dQ12OJS+mr+hgxVhX+/lqj4dE6uLp0brEC3N+BZ+V7R59WtKoIU0nXtpey5TdtCn7pdN2xLv/52GzwVr8A+SpcFytPd6hAAAAAElFTkSuQmCC" />
+  紧跟在文字之间，后面还有更多文字来验证图片确实占用行内宽度并推动后续内容折行，
+  而不是单独占据一整行。
+</p>
+
+<h2>对齐作用于整个行内容器</h2>
+<div class="card">
+  <p class="center"><span class="badge">居中</span> 居中的行内内容<span class="badge">BADGE</span></p>
+  <p class="right">右对齐的文字 <span class="hl">和行内片段</span></p>
+  <p>左对齐的普通段落，用来对比三种 <span class="blue">text-align</span> 下同一批行内 run 的水平排布差异。</p>
+</div>
+
+<h2>长段自动折行（证明按宽度回流）</h2>
+<p>
+  这是一段刻意写得足够长的中文文字，用来验证混排了
+  <span class="red">彩色片段</span>、<span class="hl">高亮片段</span>、
+  <span class="bolder">加粗片段</span> 之后，整段仍然会在容器右边界处
+  平滑地折行续排，行高由每段中<span class="big">最大的字号</span>决定，
+  而不是像早期版本那样把每个行内元素都当成块级、各自另起一行。
+  这正是 inline formatting context 要解决的核心问题。
+</p>

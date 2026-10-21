@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 分段计时工具：把「快照 → 成品」拆成 层叠/建盒树/度量/定位/绘制/编码 六段，定位渲染慢在哪一段。
+       用法见 Program.cs 顶部注释。 -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>SnapshotProfile</AssemblyName>
+    <RootNamespace>SnapshotProfile</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PaperSharp\PaperSharp.csproj" />
+  </ItemGroup>
+
+</Project>

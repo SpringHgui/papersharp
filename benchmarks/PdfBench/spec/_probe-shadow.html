@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8">
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; margin: 0; padding: 10px; background: #fff; }
+  .row { display: flex; flex-wrap: wrap; gap: 26px; margin-bottom: 26px; }
+  .c { width: 90px; height: 46px; background: #fff; flex: none; }
+  .tint { background: #eaf2f8; }
+  .one { box-shadow: 4px 4px 8px rgba(44,62,80,.6); }
+  .inset { box-shadow: inset 3px 3px 5px rgba(0,0,0,0.5); }
+  .ring { box-shadow: 0 0 0 2px #2980b9, 3px 3px 6px rgba(44,62,80,0.6), inset 0 -4px 0 #e8f6f3; }
+  .both { box-shadow: 6px 6px 0 #f39c12, inset 0 0 6px rgba(39,174,96,.9); }
+  .brd { border: 3px solid #34495e; box-shadow: inset 2px 2px 4px rgba(0,0,0,.4); }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="c one"></div>
+    <div class="c inset"></div>
+    <div class="c ring"></div>
+    <div class="c both"></div>
+    <div class="c brd"></div>
+    <div class="c tint one"></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:"Segoe UI",Arial,sans-serif; font-size:14px; padding:20px; }
+.page { width:560px; }
+/* 只用拉丁字形：混合字体的行高度量是另一条已知缺口，会污染本探针的判读 */
+.row { border:1px solid #ddd; margin-bottom:6px; }
+.vaMid { vertical-align:middle } .vaSup { vertical-align:super } .va18 { vertical-align:18px }
+.ib { display:inline-block; width:46px; height:17px; background:#8cf; }
+.cell td, .cell th { border:1px solid #cbd5e1; padding:6px 10px; }
+.cell table { border-collapse:collapse; }
+.badge { display:inline-block; background:#6366f1; color:#fff; padding:0 8px; font-size:12px; }
+.ok { font-weight:700; }
+</style></head><body><div class="page">
+<p class="row">A<span>B</span>A plain</p>
+<p class="row vaMid">A<span>B</span>A block owns middle</p>
+<p class="row vaSup">A<span>B</span>A block owns super</p>
+<p class="row va18">A<span>B</span>A block owns 18px</p>
+<p class="row">x<span class="vaSup">up<i>inner</i>tail</span>z</p>
+<p class="row">x<span class="vaMid">mid<i>inner</i>tail</span>z</p>
+<p class="row">x<span class="ib"></span>z atom baseline</p>
+<p class="row">x<span class="ib vaMid"></span>z atom middle</p>
+<div class="cell"><table><tbody>
+<tr><th>Component</th><th>Status</th></tr>
+<tr><td>Payway</td><td><span class="ok">OK</span> - delay <span class="badge">12ms</span></td></tr>
+<tr><td>Stock</td><td>running with <span>highlight</span> and <em>italic</em></td></tr>
+</tbody></table></div>
+</div></body></html>

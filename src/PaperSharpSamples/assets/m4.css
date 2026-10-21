@@ -1,0 +1,91 @@
+/* M4：var() / calc() / 字体工具。:root 令牌 + 组件级覆盖 + calc 线性式。 */
+
+/* 多 src 回退链：第一个 woff2 故意不存在 → 落到真实 ttf（字体目录注册见 Program.cs） */
+@font-face {
+  font-family: 'SubSrcTest';
+  font-weight: 400;
+  src: url('fonts/__missing__.woff2') format('woff2'),
+       url('fonts/YaheiSub-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'SubSrcTest';
+  font-weight: 700;
+  src: url('fonts/YaheiSub-Bold.ttf') format('truetype');
+}
+
+:root {
+  --brand: #2f6f4f;
+  --ink: #1b1b1b;
+  --pad: 14px;
+  --radius: 10px;
+  --accent: #77b3d4;
+  --hero-grad: linear-gradient(135deg, #77b3d4, #2f6f4f);
+  --panel-gap: 20px;
+  --tip-color: var(--accent);
+}
+
+body { font-family: 'Microsoft YaHei', sans-serif; color: var(--ink); font-size: 14px; line-height: 1.6; }
+h1 { font-size: 26px; color: var(--brand); border-bottom: calc(2px + 1pt) solid var(--accent); padding-bottom: var(--pad); }
+h2 { font-size: 17px; color: var(--brand); margin: calc(1rem + 8px) 0 10px; }
+
+.demo-row { display: flex; gap: var(--panel-gap); }
+.card {
+  flex: 1;
+  background: #f7f7f5;
+  border: 1px solid #ddd;
+  border-radius: var(--radius);
+  padding: var(--pad);
+  color: var(--accent);
+}
+.accent2 { --accent: #b41e1e; }        /* 组件作用域覆盖同名变量 */
+.hero {
+  flex: 1;
+  border-radius: var(--radius);
+  padding: var(--pad);
+  color: #fff;
+  background-color: var(--brand);
+  background-image: var(--hero-grad);  /* 变量装渐变：走 background-image 兜底链 */
+}
+
+.scoped {
+  --accent: #8a2be2;                    /* 作用域变量：容器内的引用全部变色 */
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  padding: var(--pad);
+}
+.accent-text { color: var(--accent); font-weight: bold; }
+.fallback-text { color: var(--nope, #8a5a00); font-weight: bold; }
+.nested-text { color: var(--tip-color); font-weight: bold; }
+
+/* ── calc() ─────────────────────────────────────────────── */
+.calc-pair { overflow: hidden; }
+.pane { background: #eef4ef; border: 1px solid var(--brand); border-radius: 6px; padding: 10px; }
+.main-pane { float: left; width: calc(100% - var(--panel-gap) - 220px); }
+.side-pane { float: right; width: 220px; }
+.calc-box {
+  width: calc(2rem + 100px);
+  padding: calc(0.5em + 8px);
+  margin-top: calc(20px + 0.5rem);
+  border-radius: calc(18px - 0.5rem);
+  background: var(--hero-grad);
+  color: #fff;
+}
+.calc-strip {
+  letter-spacing: calc(1px + 1pt);
+  background: #f0ede6;
+  padding: 6px calc(10px - 0.25em);
+  border-left: 4px solid var(--accent);
+  margin-top: 8px;
+}
+.calc-strip.plain { letter-spacing: 0; }
+
+.flex-pair { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; }
+.flex-cell { box-sizing: border-box; flex: 0 0 calc(50% - 10px); background: #e7eef7; border: 1px solid #9db8d8; border-radius: 6px; padding: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, calc(33.333% - 11px)); gap: 16px; margin-top: 12px; }
+.g-cell { background: #f3e9dc; border: 1px solid #cfa46a; border-radius: 6px; padding: 8px; }
+
+/* ── 字体 ───────────────────────────────────────────────── */
+.subsrc { font-family: 'SubSrcTest', 'Microsoft YaHei', sans-serif; }
+.gfont-demo { font-family: 'Noto Serif SC', serif; }
+.dirfont { font-family: 'YaheiSub', 'Microsoft YaHei', sans-serif; }

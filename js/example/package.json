@@ -1,0 +1,11 @@
+{
+  "name": "papersharp-example",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  },
+  "dependencies": {
+    "papersharp": "*"
+  }
+}

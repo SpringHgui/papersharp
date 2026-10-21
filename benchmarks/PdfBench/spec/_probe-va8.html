@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8">
+<style>
+body { font-family: sans-serif; font-size: 14px; margin: 0; line-height: normal; }
+.A { vertical-align: super; }
+.blk { display: block; vertical-align: super; }
+.badge { display: inline-block; padding: 0 8px; font-size: 12px; }
+</style>
+<div id="out"></div>
+<div id="d1"><span class="A" id="a1">up<i id="i1">inner</i></span> base</div>
+<p class="blk" id="d2">block with va:super own text</p>
+<p id="d3">control own text</p>
+<table><tbody><tr><td id="c1">cell <span class="badge" id="b1">12ms</span> tail</td><td id="c2">plain cell</td></tr></tbody></table>
+<div id="d4">ctl <span class="badge" id="b2">12ms</span> tail</div>
+<script>
+const q = (id) => document.getElementById(id);
+const va = (el) => getComputedStyle(el).verticalAlign;
+const r = (el) => { const b = el.getBoundingClientRect(); return b.y.toFixed(2) + '+' + b.height.toFixed(2); };
+const rows = [
+  'innerI_va=' + va(q('i1')),
+  'a1_va=' + va(q('a1')),
+  'd2_ownVa=' + va(q('d2')),
+  'rectA1=' + r(q('a1')) + ' rectI1=' + r(q('i1')),
+  'rectD1=' + r(q('d1')) + ' rectD2=' + r(q('d2')) + ' rectD3=' + r(q('d3')),
+  'c1=' + r(q('c1')) + ' c2=' + r(q('c2')),
+  'b1=' + r(q('b1')) + ' b2=' + r(q('b2')) + ' d4=' + r(q('d4')),
+  'lh14=' + getComputedStyle(q('d3')).lineHeight,
+  'lhBadge=' + getComputedStyle(q('b1')).lineHeight + '/' + getComputedStyle(q('b1')).height,
+];
+q('out').textContent = rows.join(' | ');
+</script>

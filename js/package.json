@@ -1,0 +1,8 @@
+{
+  "name": "papersharp-js-workspace",
+  "private": true,
+  "workspaces": [
+    "papersharp",
+    "example"
+  ]
+}

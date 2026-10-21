@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif; font-size: 15px; }
+  .cell { width: 200px; font-size: 15px; line-height: 1.5; outline: 1px dashed red; }
+  .cell .mark { display: inline-block; width: 0; height: 0; vertical-align: baseline; }
+  /* EXACT fixture .info */
+  .info {
+    display: inline-flex; vertical-align: -2px; margin-left: 4px;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid #b9bdc3; color: #9aa0a6;
+    font-size: 10px; align-items: center; justify-content: center; font-style: normal;
+  }
+  .infoNoCenter { align-items: flex-start; }        /* remove centering */
+  .infoNoBorder { border-width: 0; }
+  .infoVa0 { vertical-align: 0px; }
+  .infoVa3 { vertical-align: 3px; }
+  .ib { display:inline-block; width:15px; height:15px; border:1px solid #333; font-size:10px; line-height:1; vertical-align:-2px; }
+</style></head><body>
+  <div class="cell" id="A">text<i class="info">i</i><span class="mark"></span></div>
+  <div class="cell" id="B">text<i class="info infoNoCenter">i</i><span class="mark"></span></div>
+  <div class="cell" id="C">text<i class="info infoNoBorder">i</i><span class="mark"></span></div>
+  <div class="cell" id="D">text<i class="info infoVa0">i</i><span class="mark"></span></div>
+  <div class="cell" id="E">text<i class="info infoVa3">i</i><span class="mark"></span></div>
+  <div class="cell" id="F">text<i class="ib">i</i><span class="mark"></span></div>
+<pre id="out"></pre>
+<script>
+  const res=[];
+  for(const id of ['A','B','C','D','E','F']){
+    const cell=document.getElementById(id).getBoundingClientRect();
+    const m=document.querySelector('#'+id+' .mark').getBoundingClientRect();
+    const ic=document.querySelector('#'+id+' i').getBoundingClientRect();
+    res.push({id, h:+cell.height.toFixed(2), baseline:+(m.top-cell.top).toFixed(2),
+      iconTop:+(ic.top-cell.top).toFixed(2), iconBottomMinusBaseline:+((ic.bottom-m.top)).toFixed(2)});
+  }
+  document.getElementById('out').textContent=JSON.stringify(res,null,1);
+</script>
+</body></html>

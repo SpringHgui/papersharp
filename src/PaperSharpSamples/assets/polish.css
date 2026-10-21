@@ -1,0 +1,140 @@
+@page { size: A4; margin: 14mm; }
+
+body {
+  font-family: "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  color: #1f2937;
+  line-height: 1.5;
+}
+
+/* @font-face：自定义 family → 打包的粗体子集文件 */
+@font-face {
+  font-family: "DemoHead";
+  font-weight: 700;
+  src: url("fonts/YaheiSub-Bold.ttf") format("truetype");
+}
+
+h1 {
+  font-family: "DemoHead", "Microsoft YaHei", sans-serif;
+  font-size: 22px;
+  letter-spacing: 2px;          /* 字距 */
+  text-transform: uppercase;    /* 全大写 */
+  margin: 0 0 4px 0;
+}
+.sub { color: #6b7280; margin: 0 0 16px 0; }
+
+.section-title { font-weight: bold; color: #1e40af; margin: 18px 0 8px 0; }
+
+.grid { display: flex; flex-direction: row; gap: 14px; }
+.cell { flex: 1; }
+
+/* 圆角 + 阴影 + 渐变 */
+.card {
+  background-color: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  padding: 14px;
+}
+
+/* 线性渐变 */
+.lg {
+  background-image: linear-gradient(to right, #6366f1, #ec4899);
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 14px;
+}
+/* 径向渐变 */
+.rg {
+  background-image: radial-gradient(circle, #fef3c7, #f59e0b);
+  color: #78350f;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+/* 透明度 */
+.faded {
+  background-color: #10b981;
+  color: #ffffff;
+  opacity: 0.4;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+/* 文本装饰 */
+.u { text-decoration: underline; }
+.s { text-decoration: line-through; color: #dc2626; }
+
+/* nowrap + ellipsis（截断）
+   overflow:hidden 是必需的：text-overflow 只在行尾方向被裁剪时才生效，Chrome 实测
+   overflow:visible（默认）下整行原样溢出、不加省略号（探针 assets/_ell.html 的 A/D 两行）。 */
+.trunc {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  width: 150px;
+  background-color: #f3f4f6;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* pre：保留空格与换行 */
+.code {
+  white-space: pre;
+  background-color: #0f172a;
+  color: #a5f3fc;
+  padding: 10px 12px;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+
+/* word-break: break-all 长串换行 */
+.brk {
+  word-break: break-all;
+  width: 120px;
+  background-color: #fef2f2;
+  padding: 8px;
+  border-radius: 6px;
+}
+
+/* min/max 约束：三个盒子给相同 flex 但被 min/max 夹住 */
+.minmax { display: flex; flex-direction: row; gap: 8px; align-items: stretch; }
+.mm { background-color: #ddd6fe; height: 40px; }
+.mm-a { width: 20px; min-width: 60px; }        /* 被 min-width 撑到 60 */
+.mm-b { width: 400px; max-width: 90px; }       /* 被 max-width 收到 90 */
+.mm-c { width: 80px; }                          /* 正常 */
+
+/* 定位：relative 挪动 + absolute 角标/水印 */
+.stage {
+  position: relative;
+  height: 120px;
+  background-color: #eef2ff;
+  border-radius: 10px;
+  padding: 12px;
+}
+.shifted {
+  position: relative;
+  left: 24px;
+  top: 10px;
+  display: inline-block;
+  background-color: #c7d2fe;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.badge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  background-color: #ef4444;
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.watermark {
+  position: absolute;
+  left: 40%;
+  top: 46px;
+  font-size: 30px;
+  color: #6366f1;
+  opacity: 0.18;
+  letter-spacing: 4px;
+}

@@ -1,0 +1,38 @@
+/* M8 · 伪元素 ::before/::after 与 CSS 计数器验收 */
+body { font-family: "Microsoft YaHei", sans-serif; font-size: 15px; color: #222; margin: 28px; line-height: 1.7; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; color: #2c3e50; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #eee; }
+code { font-family: Consolas, monospace; background: #f0f0f0; padding: 0 4px; border-radius: 3px; }
+p { margin: 6px 0; }
+ol, ul { list-style: none; padding-left: 0; margin: 6px 0; }
+li { margin: 3px 0; }
+
+/* 一、行内 content：标记 / 引号 / attr() */
+.note::before { content: "※ "; color: #c0392b; font-weight: bold; }
+.cite::before { content: open-quote; color: #888; font-size: 20px; }
+.cite::after  { content: close-quote; color: #888; font-size: 20px; }
+.kv::before   { content: attr(data-label) "："; color: #7f8c8d; font-weight: bold; }
+
+/* 二、章节自动编号 counter()，中文数字 */
+.doc { counter-reset: sec; }
+.doc h3 { counter-increment: sec; font-weight: normal; }
+.doc h3::before { content: "第 " counter(sec, cjk-ideographic) " 节　"; color: #16a085; }
+
+/* 三、多级有序列表 counters() */
+ol.outline, ol.outline ol { counter-reset: item; }
+ol.outline li { counter-increment: item; }
+ol.outline li::before { content: counters(item, ".") "  "; color: #2980b9; font-weight: bold; }
+ol.outline ol { padding-left: 26px; }
+
+/* 四、块级伪元素：装饰条（空 content 成块） */
+.card { padding: 12px 14px; background: #f7f7f7; }
+.card::before { content: ""; display: block; height: 6px; background: linear-gradient(90deg, #e74c3c, #c0392b); }
+.card::after  { content: ""; display: block; height: 6px; background: linear-gradient(90deg, #3498db, #2c3e50); }
+
+/* 五、url() 图片伪元素（行内替换） */
+.with-icon::before { content: url(imgs/qr.png); width: 18px; height: 18px; }
+
+/* 六、content 计数徽标 */
+ul.tags { counter-reset: tag; }
+ul.tags li { counter-increment: tag; display: inline-block; margin-right: 10px; padding: 2px 8px; background: #ecf0f1; border-radius: 10px; }
+ul.tags li::after { content: " " counter(tag); color: #e67e22; font-weight: bold; }

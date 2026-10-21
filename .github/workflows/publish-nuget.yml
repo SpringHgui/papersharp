@@ -1,0 +1,40 @@
+name: Publish NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write # NuGet Trusted Publishing (OIDC)，无需 API Key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # 三个视觉对照类依赖本机字体集（golden 在本地 UPDATE_GOLDENS 重生成），
+      # CI 字体环境不同必然全红，故发版门禁只跑非视觉用例
+      - name: Run tests
+        run: dotnet test tests/PaperSharp.Tests/PaperSharp.Tests.csproj -c Release --filter "FullyQualifiedName!~BoxGoldenTests&FullyQualifiedName!~PngGoldenTests&FullyQualifiedName!~PdfRasterTests"
+
+      - name: Pack
+        shell: bash # Windows 默认 shell 是 pwsh，${VAR#v} 会展开为空
+        run: dotnet pack src/PaperSharp/PaperSharp.csproj -c Release -p:Version=${GITHUB_REF_NAME#v} -o ./nupkg
+
+      - name: NuGet login (OIDC → 1 小时临时 API Key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: Gui.H
+
+      - name: Push to nuget.org
+        shell: bash
+        run: dotnet nuget push nupkg/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

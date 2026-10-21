@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:"Segoe UI",Arial,sans-serif; font-size:14px; line-height:1.5; padding:20px; }
+.page { width:500px; }
+/* 每行独立成盒，读它自己的 height 就知道行盒是否被偏移内容撑高 */
+.a { font-size:14px; line-height:1.5; border:1px solid #ddd; margin-bottom:6px; }
+.c12 { font-size:12px } .c20 { font-size:20px }
+.u18 { vertical-align:18px } .d18 { vertical-align:-18px }
+.u40 { vertical-align:40px } .d40 { vertical-align:-40px }
+.sub { vertical-align:sub } .sup { vertical-align:super }
+.ib { display:inline-block; width:20px; height:10px; background:#8cf; font-size:12px; }
+.ibv { vertical-align:middle } .ibd { vertical-align:-25% }
+.mid { vertical-align:middle }
+</style></head><body><div class="page">
+<p class="a">A<span class="c12">n</span>A</p>
+<p class="a">A<span class="c12 u18">up</span>A</p>
+<p class="a">A<span class="c12 d18">dn</span>A</p>
+<p class="a">A<span class="c20 u40">up</span>A</p>
+<p class="a">A<span class="c20 d40">dn</span>A</p>
+<p class="a">A<span class="c12 sub">s</span>A</p>
+<p class="a">A<span class="c20 sup">S</span>A</p>
+<p class="a">A<span class="ib"></span>A</p>
+<p class="a">A<span class="ib ibv"></span>A</p>
+<p class="a">A<span class="ib ibd"></span>A</p>
+<p class="a">A<span class="c12 mid">m</span>A</p>
+</div></body></html>

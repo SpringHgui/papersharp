@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PdfBench Visual Challenge</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif; color: #222222; }
+  .page {
+    width: 210mm; height: 297mm; overflow: hidden; position: relative;
+    padding: 12mm 14mm 16mm; page-break-after: always; background: #ffffff;
+  }
+  .page:last-child { page-break-after: auto; }
+  .hdr { display: flex; justify-content: space-between; align-items: baseline;
+         border-bottom: 2px solid #34495e; padding-bottom: 2mm; margin-bottom: 4mm; }
+  .hdr .brand { font-size: 13px; font-weight: 700; color: #34495e; letter-spacing: 1px; }
+  .hdr .tag { font-size: 10px; color: #7f8c8d; }
+  .ftr { position: absolute; left: 14mm; right: 14mm; bottom: 6mm; display: flex;
+         justify-content: space-between; align-items: center; font-size: 9px; color: #7f8c8d;
+         border-top: 1px solid #bdc3c7; padding-top: 1.5mm; }
+  .ftr .pageno { width: 34px; height: 16px; line-height: 15px; text-align: center;
+                 border: 1px solid #34495e; border-radius: 8px; color: #34495e; font-weight: 700; }
+  h1 { font-size: 20px; margin: 0 0 3mm; color: #34495e; }
+  h2 { font-size: 14px; margin: 3.5mm 0 2mm; color: #2c3e50; border-left: 4px solid #3498db; padding-left: 6px; }
+  h3 { font-size: 11px; margin: 3mm 0 1.5mm; color: #7f8c8d; }
+  p  { margin: 0 0 2.5mm; font-size: 10.5px; }
+  .lbl { font-size: 8px; color: #95a5a6; margin-bottom: 1px; }
+  .row { display: flex; gap: 4mm; }
+  .cell { padding: 2.5mm; font-size: 9px; }
+  .tint { background: #ecf0f1; }
+</style>
+</head>
+<body>
+
+<!-- ================= PAGE 1 : TYPOGRAPHY / TEXT / LISTS ================= -->
+<div class="page" id="p1">
+  <div class="hdr"><span class="brand">PDFBENCH · VISUAL CHALLENGE</span><span class="tag">Page 1 — Typography &amp; Text</span></div>
+
+  <h1>排版与文字 Rendering Test</h1>
+
+  <h2>1.1 层级与字重</h2>
+  <div class="row" data-f="headings" style="align-items:flex-end">
+    <div><h3 style="margin:0">H3 subtitle</h3></div>
+    <div style="margin-left:auto"><span style="font-size:9px;color:#95a5a6">h3 → h1 右对齐抬升</span></div>
+  </div>
+  <p data-f="weights">字重：<b>粗体 bold</b>、<i>斜体 italic</i>、<b><i>粗斜体</i></b>、
+    <span style="font-weight:300">细体 light 300</span>、<u>下划线</u>、<s>删除线</s>、
+    <span style="font-variant:small-caps">Small Caps 效果</span>。</p>
+  <p data-f="codechip">行内代码芯片：<span style="background:#f3e5f5;color:#8e24aa;border:1px solid #ce93d8;border-radius:3px;padding:0 4px;font-family:Consolas,monospace;font-size:9.5px">PdfGenerator.Render()</span>
+    与 <span style="background:#e3f2fd;color:#1565c0;border-radius:3px;padding:0 4px;font-family:Consolas,monospace;font-size:9.5px">spec.json</span> 混排于行文中。</p>
+
+  <h2>1.2 中西混排与行高</h2>
+  <p data-f="cjk" style="line-height:1.8">中文段落混合 English words 与数字 0123456789，标点，以及括号（半角）与全角符号。
+    中英文基线对齐是渲染引擎的常见短板，The quick brown fox 应跳 over the lazy dog 而不断行错位。</p>
+  <div data-f="lineheight">
+    <div class="lbl">line-height: 1.0</div>
+    <p style="line-height:1.0;background:#fdf6ec;margin:0 0 1mm">密集行距示例 The quick brown fox jumps over the lazy dog 中文密集行示例，行与行可能粘连。</p>
+    <div class="lbl">line-height: 1.4</div>
+    <p style="line-height:1.4;background:#fdf6ec;margin:0 0 1mm">正常行距示例 The quick brown fox jumps over the lazy dog 中文正常行距示例，阅读舒适。</p>
+    <div class="lbl">line-height: 2.2</div>
+    <p style="line-height:2.2;background:#fdf6ec;margin:0">宽松行距示例 The quick brown fox 中文宽松行距示例。</p>
+  </div>
+  <div data-f="letterspacing" style="font-size:12px;margin-top:2mm">
+    <div>normal: tracking 字距</div>
+    <div style="letter-spacing:2px">wide 2px: tracking 字距</div>
+    <div style="letter-spacing:5px">wider 5px: tracking 字距</div>
+  </div>
+  <p data-f="textindent" style="text-indent:2em">首行缩进两个字符：这是段落首行缩进的验证文本，缩进应恰好为 2 个全角字符宽度且仅作用于首行。</p>
+
+  <h2>1.3 文字效果与对齐</h2>
+  <p data-f="textshadow" style="font-size:16px;font-weight:700;color:#2c3e50;text-shadow:2px 2px 0 #f5b7b1">阴影文字 Text Shadow</p>
+  <p data-f="coloredtext"><span style="color:#e74c3c">红</span> <span style="color:#27ae60">绿</span> <span style="color:#2980b9">蓝</span> <span style="color:#f39c12">橙</span> <span style="color:#8e44ad">紫</span> —— 五色文字，纯色无渐变。</p>
+  <div class="row" data-f="align">
+    <div class="cell tint" style="flex:1;text-align:left">左对齐 left 文</div>
+    <div class="cell tint" style="flex:1;text-align:center">居中 center 文</div>
+    <div class="cell tint" style="flex:1;text-align:right">右对齐 right 文</div>
+    <div class="cell tint" style="flex:1.6;text-align:justify">两端对齐 justify：This paragraph is justified so that both left and right edges form clean lines across its full width 无论中英文。</div>
+  </div>
+
+  <h2>1.4 列表与嵌套</h2>
+  <div class="row">
+    <div style="flex:1">
+      <div class="lbl">unordered disc，marker 着色</div>
+      <ul data-f="ul" style="margin:0;font-size:10px">
+        <li style="color:#2c3e50"><span style="color:#e74c3c">项目一：</span>无序列表 disc 符号</li>
+        <li>项目二：Marker 颜色独立于文字</li>
+        <li>项目三：三级嵌套入口
+          <ul style="margin:1px 0">
+            <li>嵌套层 A
+              <ul style="list-style-type:square;margin:1px 0"><li>方块 square 层</li></ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+    <div style="flex:1">
+      <div class="lbl">ordered decimal / lower-alpha / upper-roman</div>
+      <ol data-f="ol" style="margin:0;font-size:10px">
+        <li>十进制 ordered</li>
+        <li>第二项
+          <ol type="a" style="margin:1px 0"><li>lower-alpha 子项</li><li>子项二</li></ol>
+        </li>
+      </ol>
+      <ol type="I" style="margin:1px 0;font-size:10px"><li>upper-roman 独立编号</li><li>应为 II</li></ol>
+    </div>
+    <div style="flex:1">
+      <div class="lbl">自定义 marker：circle + 无标记</div>
+      <ul data-f="liststyle" style="margin:0;font-size:10px;list-style:circle">
+        <li>circle 空心圈</li>
+        <li style="list-style:none">none：无标记但有缩进对齐</li>
+        <li>circle 第二项</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="ftr"><span>PdfBench · challenge.html · generated by spec v0.1</span><span class="pageno">1 / 3</span></div>
+</div>
+
+<!-- ================= PAGE 2 : BORDERS / RADIUS ================= -->
+<div class="page" id="p2">
+  <div class="hdr"><span class="brand">PDFBENCH · VISUAL CHALLENGE</span><span class="tag">Page 2 — Borders &amp; Corners</span></div>
+
+  <h1>边框家族与圆角</h1>
+
+  <h2>2.1 四种线型 × 三种宽度</h2>
+  <div class="row" data-f="border-styles" id="bstyles">
+    <div class="cell" style="border:2px solid #e74c3c">solid 2px</div>
+    <div class="cell" style="border:4px solid #e74c3c">solid 4px</div>
+    <div class="cell" style="border:8px solid #e74c3c">solid 8px</div>
+  </div>
+  <div class="row" style="margin-top:1.5mm">
+    <div class="cell" style="border:2px dashed #2980b9">dashed 2px</div>
+    <div class="cell" style="border:4px dashed #2980b9">dashed 4px</div>
+    <div class="cell" style="border:8px dashed #2980b9">dashed 4px+</div>
+  </div>
+  <div class="row" style="margin-top:1.5mm">
+    <div class="cell" style="border:2px dotted #27ae60">dotted 2px</div>
+    <div class="cell" style="border:4px dotted #27ae60">dotted 4px</div>
+    <div class="cell" style="border:8px double #8e44ad">double 8px</div>
+  </div>
+  <div class="row" style="margin-top:1.5mm">
+    <div class="cell" style="border:4px double #8e44ad">double 4px</div>
+    <div class="cell" style="border:4px groove #d35400">groove 4px</div>
+    <div class="cell" style="border:4px ridge #16a085">ridge 4px</div>
+  </div>
+
+  <h2>2.2 逐边异构</h2>
+  <div class="row" data-f="per-side">
+    <div class="cell" style="flex:1;border-top:3px solid #2980b9;border-right:3px dashed #e74c3c;border-bottom:3px dotted #27ae60;border-left:4px double #f39c12;padding:5mm 3mm">四边四线型：上实/右虚/下点/左双</div>
+    <div class="cell" style="flex:1;border:3px solid;border-color:#e74c3c #2980b9 #27ae60 #f39c12;padding:5mm 3mm">四边同线型异色：上红/右蓝/下绿/左橙</div>
+    <div class="cell" style="flex:1;color:#c0392b;border:2px solid currentColor;padding:5mm 3mm">currentColor 边框：边色随字色变红</div>
+  </div>
+  <div class="row" style="margin-top:1.5mm" data-f="single-side">
+    <div class="cell tint" style="flex:1;border-bottom:3px solid #8e44ad;padding:2mm 3mm">仅底边：文章式分隔线</div>
+    <div class="cell tint" style="flex:1;border-left:5px solid #27ae60;padding:2mm 3mm">仅左边：引文强调条</div>
+    <div class="cell" style="flex:1;border-top:2px solid #2980b9;border-bottom:2px solid #2980b9;padding:2mm 3mm">上下边：band 样式</div>
+  </div>
+
+  <h2>2.3 圆角</h2>
+  <div class="row" data-f="radius" style="align-items:center">
+    <div class="cell" style="width:26mm;height:18mm;background:#d6eaf8;border:2px solid #2980b9;border-radius:0">r=0</div>
+    <div class="cell" style="width:26mm;height:18mm;background:#d6eaf8;border:2px solid #2980b9;border-radius:4px">4px</div>
+    <div class="cell" style="width:26mm;height:18mm;background:#d6eaf8;border:2px solid #2980b9;border-radius:10px">10px</div>
+    <div class="cell" style="width:26mm;height:18mm;background:#d6eaf8;border:2px solid #2980b9;border-radius:8px 2px">8/2 对角</div>
+    <div class="cell" style="width:26mm;height:18mm;background:#d6eaf8;border:2px solid #2980b9;border-radius:14px 2px 14px 2px">四角异值</div>
+  </div>
+  <div class="row" data-f="circle-pill" style="margin-top:2mm;align-items:center">
+    <div style="width:18mm;height:18mm;background:#fadbd8;border:2px solid #c0392b;border-radius:50%"></div>
+    <div class="lbl" style="margin:0 2mm">50% 正圆</div>
+    <div style="width:11mm;height:18mm;background:#d5f5e3;border:2px solid #27ae60;border-radius:50%"></div>
+    <div class="lbl" style="margin:0 2mm">50% 椭圆</div>
+    <div style="width:34mm;height:10mm;background:#fdebd0;border:3px solid #d35400;border-radius:5mm;display:flex;align-items:center;justify-content:center;font-size:9px">胶囊 pill r=高度/2</div>
+    <div style="width:26mm;height:18mm;background:#d6eaf8;border:3px dashed #8e44ad;border-radius:10px"></div>
+    <div class="lbl" style="margin:0 0 0 2mm">圆角+虚线复合</div>
+  </div>
+  <div class="row" data-f="compound" style="margin-top:2mm;align-items:center">
+    <div style="flex:1;padding:3mm;border:6px solid #34495e;border-radius:14px;background:#f8f9f9;font-size:9px">厚边框(6px)+大圆角(14px)+内边距+背景色 复合盒：边框与背景的圆角必须同心，内边距把内容从边框推开。</div>
+    <div style="flex:1;padding:0;border:2px solid #27ae60;border-radius:10px;overflow:hidden;font-size:9px">
+      <div style="background:#27ae60;color:#fff;padding:2mm 3mm;font-weight:700">裁切过头圆角</div>
+      <div style="padding:2mm 3mm">overflow:hidden 子元素背景填满左上圆角</div>
+    </div>
+  </div>
+
+  <h2>2.4 边框即图形</h2>
+  <div class="row" data-f="border-triangle" style="align-items:center">
+    <div style="width:0;height:0;border-left:14mm solid transparent;border-right:14mm solid transparent;border-bottom:18mm solid #e74c3c"></div>
+    <div class="lbl" style="margin:0 3mm 0 0">border 三角形（等腰）</div>
+    <div style="width:0;height:0;border-top:12mm solid transparent;border-left:16mm solid #f39c12"></div>
+    <div class="lbl" style="margin:0 3mm 0 0">直角三角形（右向）</div>
+    <div style="width:0;height:0;border-left:14mm solid transparent;border-right:14mm solid transparent;border-top:18mm solid #2980b9"></div>
+    <div class="lbl">倒三角</div>
+  </div>
+
+  <div class="ftr"><span>PdfBench · challenge.html · generated by spec v0.1</span><span class="pageno">2 / 3</span></div>
+</div>
+
+<!-- ================= PAGE 3 : EFFECTS / IMAGES / FLEX / TABLE ================= -->
+<div class="page" id="p3">
+  <div class="hdr"><span class="brand">PDFBENCH · VISUAL CHALLENGE</span><span class="tag">Page 3 — Effects, Images, Layout</span></div>
+
+  <h1>效果、图像与布局</h1>
+
+  <h2>3.1 阴影 box-shadow</h2>
+  <div class="row" data-f="shadow" style="align-items:center">
+    <div class="cell tint" style="width:36mm;height:16mm;margin-left:4mm;box-shadow:2px 2px 5px rgba(0,0,0,0.45)">外阴影 模糊</div>
+    <div class="cell" style="width:36mm;height:16mm;background:#fff;border:1px solid #f1c40f;margin-left:8mm;box-shadow:5px 5px 0 #f1c40f">硬阴影 无模糊</div>
+    <div class="cell tint" style="width:36mm;height:16mm;margin-left:8mm;box-shadow:inset 3px 3px 5px rgba(0,0,0,0.5)">内阴影 inset</div>
+    <div class="cell" style="width:36mm;height:16mm;background:#fff;margin-left:8mm;box-shadow:0 0 0 2px #2980b9, 3px 3px 6px rgba(44,62,80,0.6), inset 0 -4px 0 #e8f6f3">三重阴影叠加</div>
+  </div>
+
+  <h2>3.2 渐变与透明</h2>
+  <div class="row" data-f="gradient" style="align-items:center">
+    <div style="flex:1;height:16mm;background:linear-gradient(45deg,#e74c3c,#f1c40f 50%,#27ae60)"></div>
+    <div style="flex:1;height:16mm;margin-left:3mm;background:linear-gradient(90deg,#34495e,#ecf0f1)"></div>
+    <div style="flex:1;height:16mm;margin-left:3mm;background:radial-gradient(circle at 30% 40%,#ffffff 10%,#2980b9 90%)"></div>
+    <div style="flex:1;height:16mm;margin-left:3mm;background:linear-gradient(180deg,rgba(231,76,60,0.8),rgba(41,128,185,0.2))">
+      <span style="font-size:8px;color:#fff">渐变+alpha</span></div>
+  </div>
+  <div class="row" data-f="transparency" style="margin-top:2mm;align-items:center">
+    <div style="position:relative;width:46mm;height:26mm;flex:none">
+      <div style="position:absolute;left:0;top:0;width:22mm;height:22mm;background:rgba(231,76,60,0.55)"></div>
+      <div style="position:absolute;left:9mm;top:0;width:22mm;height:22mm;background:rgba(39,174,96,0.55)"></div>
+      <div style="position:absolute;left:4.5mm;top:8mm;width:22mm;height:22mm;background:rgba(41,128,185,0.55)"></div>
+    </div>
+    <div class="lbl" style="margin:0 3mm">半透明三色叠加（重叠区混色）</div>
+    <div class="cell" style="background:#2980b9;color:#fff;opacity:0.4;width:30mm;height:18mm">opacity 0.4 整块淡出</div>
+    <div class="cell" style="width:34mm;height:18mm;background:#f8f9f9;border:1px solid #d5d8dc">
+      <span style="background:rgba(241,196,15,0.4)">行内半透明背景高亮（文字保持全不透明）</span></div>
+  </div>
+
+  <h2>3.3 图像</h2>
+  <div class="row" data-f="images" style="align-items:center">
+    <div>
+      <div class="lbl">JPEG 400×267 缩放显示</div>
+      <img src="assets/photo.jpg" width="150" height="100" style="display:block">
+    </div>
+    <div style="margin-left:5mm">
+      <div class="lbl">PNG alpha 透明通道（深色底验证）</div>
+      <div style="background:#2c3e50;padding:2mm"><img src="assets/logo-alpha.png" width="120" height="60" style="display:block"></div>
+    </div>
+    <div style="margin-left:5mm">
+      <div class="lbl">图片圆角+边框复合</div>
+      <img src="assets/photo.jpg" width="110" height="110" style="display:block;border-radius:50%;border:4px solid #27ae60">
+    </div>
+  </div>
+
+  <h2>3.4 Flex 布局</h2>
+  <div class="row" data-f="flex" style="align-items:stretch">
+    <div style="flex:2;display:flex;flex-direction:column;gap:2mm">
+      <div style="display:flex;justify-content:space-between">
+        <div class="cell" style="background:#e74c3c;color:#fff">space-between 左</div>
+        <div class="cell" style="background:#2980b9;color:#fff">中</div>
+        <div class="cell" style="background:#27ae60;color:#fff">右</div>
+      </div>
+      <div style="display:flex">
+        <div class="cell" style="background:#8e44ad;color:#fff">flex-start</div>
+        <div class="cell" style="background:#d35400;color:#fff;margin-left:auto">margin-left:auto 顶右</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:2px">
+        <div class="cell" style="width:47%;background:#d6eaf8">wrap A</div>
+        <div class="cell" style="width:47%;background:#fadbd8">wrap B</div>
+        <div class="cell" style="width:47%;background:#d5f5e3">wrap C 换行</div>
+      </div>
+      <div style="display:flex;border:1px solid #bdc3c7">
+        <div style="flex:1;background:#fdf6ec;padding:2mm;font-size:8px">嵌套：flex:1 等分列左</div>
+        <div style="flex:1;background:#eafaf1;padding:2mm;font-size:8px">右列，列内再套
+          <div style="display:flex;margin-top:1mm"><div style="flex:1;background:#aed6f1;height:4mm"></div><div style="flex:2;background:#f5b7b1;height:4mm"></div></div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;background:#f4ecf7;border:1px dashed #8e44ad">
+      <div style="width:60%;height:14mm;background:#8e44ad;color:#fff;display:flex;align-items:center;justify-content:center">交叉轴居中</div>
+    </div>
+  </div>
+
+  <h2>3.5 数据表格</h2>
+  <table data-f="table" style="width:100%;border-collapse:collapse;font-size:8.5px;margin-top:1mm">
+    <thead>
+      <tr style="background:#34495e;color:#fff">
+        <th style="border:1px solid #5d6d7e;padding:1.2mm 2mm;text-align:left;width:12%">编号 Code</th>
+        <th style="border:1px solid #5d6d7e;padding:1.2mm 2mm;text-align:left;width:40%">名称 Name</th>
+        <th style="border:1px solid #5d6d7e;padding:1.2mm 2mm;text-align:right;width:20%">数量 Qty</th>
+        <th style="border:1px solid #5d6d7e;padding:1.2mm 2mm;text-align:right;width:28%">金额 Amount (¥)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">A-001</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">工业级渲染管线 Industrial pipeline</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">12</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">1,280.00</td></tr>
+      <tr style="background:#f8f9f9"><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">A-002</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">矢量字体子集 Vector subset</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">3</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">96.50</td></tr>
+      <tr><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">B-014</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">分页引擎 Pagination engine</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">1</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">2,400.00</td></tr>
+      <tr style="background:#f8f9f9"><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">B-015</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">阴影合成器 Shadow compositor</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">8</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">640.00</td></tr>
+      <tr><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">C-101</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">渐变缓存 Gradient cache</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">24</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">1,152.00</td></tr>
+      <tr style="background:#f8f9f9"><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">C-102</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">Alpha 通道混合 Alpha blending</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">6</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">306.00</td></tr>
+      <tr><td style="border:1px solid #d5d8dc;padding:1mm 2mm;font-weight:700">D-200</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm">CJK 换行分析 Line-break CJK</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">2</td><td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">780.00</td></tr>
+    </tbody>
+    <tfoot>
+      <tr style="background:#eaeded;font-weight:700">
+        <td style="border:1px solid #d5d8dc;padding:1mm 2mm" colspan="2">合计 Total (7 行明细)</td>
+        <td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">56</td>
+        <td style="border:1px solid #d5d8dc;padding:1mm 2mm;text-align:right">¥ 6,654.50</td>
+      </tr>
+    </tfoot>
+  </table>
+  <p data-f="wordbreak" style="margin-top:2mm;background:#fdf6ec;word-break:break-all;font-size:9px;padding:1.5mm;border-left:3px solid #d35400">超长URL自动断行验证：https://example.org/very/long/path/文件与单词混排abcdefghij无空格也可断开以适配窄容器supercalifragilistic 末行。</p>
+
+  <div class="ftr"><span>PdfBench · challenge.html · generated by spec v0.1</span><span class="pageno">3 / 3</span></div>
+</div>
+
+</body>
+</html>

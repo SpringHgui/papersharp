@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8">
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; margin: 0; padding: 8px; background: #fff; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; }
+  .c { width: 60px; height: 40px; flex: none; }
+  .g4 { border: 4px groove #d35400; }
+  .r4 { border: 4px ridge #16a085; }
+  .i4 { border: 4px inset #8e44ad; }
+  .o4 { border: 4px outset #2980b9; }
+  .d4 { border: 4px double #8e44ad; }
+  .d8 { border: 8px double #8e44ad; }
+  .g8 { border: 8px groove #d35400; }
+  .r8 { border: 8px ridge #16a085; }
+  .tri1 { width: 0; height: 0; border-left: 40px solid transparent; border-right: 40px solid transparent; border-bottom: 50px solid #e74c3c; }
+  .tri2 { width: 0; height: 0; border-top: 34px solid transparent; border-left: 45px solid #f39c12; }
+  .h2 { border:2px dashed #2980b9; } .h4 { border:4px dashed #2980b9; } .h8 { border:8px dashed #2980b9; }
+  .p2 { border:2px dotted #27ae60; } .p4 { border:4px dotted #27ae60; } .p8 { border:8px dotted #27ae60; }
+  .mix { width: 70px; height: 44px; border-top: 6px solid #e74c3c; border-right: 6px double #2980b9; border-bottom: 6px groove #27ae60; border-left: 6px ridge #f39c12; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="c g4"></div><div class="c r4"></div><div class="c i4"></div><div class="c o4"></div>
+    <div class="c d4"></div><div class="c d8"></div><div class="c g8"></div><div class="c r8"></div>
+  </div>
+  <div class="row">
+    <div class="c h2"></div><div class="c h4"></div><div class="c h8"></div>
+    <div class="c p2"></div><div class="c p4"></div><div class="c p8"></div>
+  </div>
+  <div class="row">
+    <div class="tri1"></div><div class="tri2"></div><div class="mix"></div>
+  </div>
+</body>
+</html>

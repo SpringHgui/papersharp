@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+    <PackageReference Include="PDFtoImage" Version="5.4.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <!-- 注意：Svg.Skia 2.0.0 把本工程的 SkiaSharp 抬到 4.x，而 PaperSharp 类库按 2.88.9 编译。
+       4.x 已把 Typeface/TextSize/MeasureText 从 SKPaint 迁到 SKFont，所以测试里**不要**直接使
+       SKPaint 的这些成员（CS0117）。要断言排版口径，走 PaperSharp 自己的公开 API
+       （TextMeasurer / TextShaper / KernTable），例：KernPaintParityTests。 -->
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PaperSharp\PaperSharp.csproj" />
+    <!-- Playground 的对位口径（PlaygroundDiff / BuildPreviewDoc）住在应用侧，
+         但它决定了 Δ 表把偏差记到谁头上，必须钉住，不能只靠肉眼开浏览器看。 -->
+    <ProjectReference Include="..\..\src\PaperSharpBlazorApp\PaperSharpBlazorApp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 复用 Samples 的验收资产，单一来源 -->
+    <Content Include="..\..\src\PaperSharpSamples\assets\**\*" LinkBase="assets" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

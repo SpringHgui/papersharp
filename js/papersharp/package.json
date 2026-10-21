@@ -1,0 +1,25 @@
+{
+  "name": "papersharp",
+  "version": "0.1.0",
+  "description": "Render OG images / documents from JSX or HTML+CSS to PNG/JPEG/WebP/SVG/PDF — .NET + Skia engine compiled to WASM, no headless browser.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./jsx-runtime": "./src/jsx-runtime.mjs"
+  },
+  "files": [
+    "src",
+    "wasm"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SpringHgui/papersharp.git",
+    "directory": "js/papersharp"
+  },
+  "engines": {
+    "node": ">=18",
+    "bun": ">=1.0"
+  }
+}

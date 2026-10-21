@@ -1,0 +1,571 @@
+@page "/"
+@layout PlaygroundLayout
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Diagnostics
+@inject PlaygroundService Svc
+@inject PlaygroundSamples Samples
+@inject IJSRuntime JS
+
+@*
+    左输入、右两窗（PaperSharp 出图 / 浏览器 iframe），三种看法：
+      并排     —— 两个窗格同宽、同 scrollTop，肉眼找不同
+      叠加     —— 引擎图按透明度压在 iframe 上，重影即偏差
+      盒级差异 —— 两侧逐元素矩形描边 + Δ 表，直接指出「哪个元素偏了几 px」
+    对位靠 ComputedStyle.DomPath（见核心库）：两侧同一条 nth-of-type 口径数出来的串。
+*@
+
+<div class="bar">
+    <span class="brand">PaperSharp <b>Playground</b></span>
+
+    <select class="ctl" @onchange="OnSampleChangedAsync">
+        <option value="">载入样例…</option>
+        @foreach (var name in Samples.Names)
+        {
+            <option value="@name">@name</option>
+        }
+    </select>
+
+    <label class="ctl">宽
+        <input type="number" min="240" max="4096" step="1" @bind="_width" @bind:after="RerenderAsync" />
+    </label>
+    <label class="ctl">倍率
+        <select class="ctl" @bind="_scale" @bind:after="RerenderAsync">
+            @foreach (var choice in ScaleChoices)
+            {
+                <option value="@(choice.ToString("0.#", Inv))">@(choice.ToString("0.#", Inv))×</option>
+            }
+        </select>
+    </label>
+
+    <div class="seg">
+        <button type="button" class="@Seg(ViewMode.SideBySide)" @onclick="() => SetViewAsync(ViewMode.SideBySide)">并排</button>
+        <button type="button" class="@Seg(ViewMode.Overlay)" @onclick="() => SetViewAsync(ViewMode.Overlay)"
+                title="引擎图叠在无头(Skia)参照上——与引擎同为打印口径（引擎 PDF 与 Chrome printToPDF 逐位相同）。CJK 在此视图应≈0 重影；有头屏显的 ±0.5px/行是屏幕 DirectWrite 差、连 Chrome 自己的打印都不含它，见台账 P0-10">叠加</button>
+        <button type="button" class="@Seg(ViewMode.Diff)" @onclick="() => SetViewAsync(ViewMode.Diff)"
+                title="逐元素矩形描边 + Δ 表，同样吃无头(Skia)打印口径参照">盒级差异</button>
+    </div>
+
+    @if (_view != ViewMode.SideBySide)
+    {
+        <label class="ctl">引擎不透明度
+            <input type="range" min="0" max="100" step="1" @bind="_opacityPercent" @bind:event="oninput" />
+            <b>@_opacityPercent%</b>
+        </label>
+    }
+    @if (_view == ViewMode.Diff)
+    {
+        <label class="ctl">容差
+            <input type="number" class="narrow" min="0" max="20" step="0.1" @bind="_toleranceText" @bind:event="oninput" @bind:after="ReDiffAsync" /> px
+        </label>
+    }
+
+    <label class="ctl check"><input type="checkbox" @bind="_auto" />自动</label>
+    <button type="button" class="run" @onclick="RerenderAsync" disabled="@_busy">@(_busy ? "渲染中…" : "Run")</button>
+    <button type="button" class="@(_pdfOpen ? "run" : "ghost")" @onclick="TogglePdfAsync"
+            title="开一个悬浮窗，跟着左边输入实时出 PDF（同宽档下排版宽与两窗严格相等）">PDF 预览</button>
+</div>
+
+<div class="split" data-mode="@ModeAttr">
+    <section class="editor">
+        <div class="label">HTML <span class="hint">样式直接写进 &lt;style&gt;，走的是引擎同一份解析</span></div>
+        <textarea class="code grow" spellcheck="false" @bind="_html" @bind:event="oninput" @bind:after="OnInputAsync"></textarea>
+        <details class="extra" open="@(_css.Trim().Length > 0)">
+            <summary>附加 CSS <span class="hint">作为 css 参数传入，优先级低于文档内 &lt;style&gt;</span></summary>
+            <textarea class="code" rows="6" spellcheck="false" @bind="_css" @bind:event="oninput" @bind:after="OnInputAsync"></textarea>
+        </details>
+    </section>
+
+    <section class="stage">
+        @if (_error.Length > 0)
+        {
+            <div class="err"><b>渲染失败</b><span>@_error</span></div>
+        }
+        <div class="compare" data-mode="@ModeAttr">
+            <div class="pane pane-browser" @ref="_browserPane">
+                <div class="pane-tag">BROWSER</div>
+                @* iframe 常驻（并排模式看实时有头渲染；切视图时 _iframe 引用不失效）。叠加/盒级差异再叠一张
+                   不透明的无头参照盖住它——参照与引擎 PNG 同尺寸同原点，套同一套平移/裁边即逐像素重合（见 RefShotStyle）。
+                   无头(Skia) 与引擎同为打印口径（引擎 PDF == Chrome printToPDF），CJK 重影在此应≈0；有头屏显的
+                   ±0.5px/行是屏幕 DirectWrite 差、连 Chrome 自己的打印都不含它（台账 P0-10）。 *@
+                <iframe @ref="_iframe" title="浏览器渲染"></iframe>
+                @if (_view is ViewMode.Overlay or ViewMode.Diff)
+                {
+                    @if (_refToken is { Length: > 0 } refTok)
+                    {
+                        <img class="shot shot-ref" src="@($"/api/playground/image/{refTok}")" style="@RefShotStyle(_render)" alt="无头浏览器参照（打印口径）" />
+                    }
+                    else
+                    {
+                        <div class="ref-wait">无头参照生成中…（拉起一次无头 Edge，约 1~2s）</div>
+                    }
+                }
+            </div>
+            <div class="pane pane-engine" @ref="_enginePane">
+                <div class="pane-tag">PAPERSHARP</div>
+                @if (_render is { } shot)
+                {
+                    <img class="shot" src="@($"/api/playground/image/{shot.Token}")" style="@ShotStyle(shot)" alt="PaperSharp 渲染结果" />
+                }
+            </div>
+            @if (_view == ViewMode.Diff && _diff is { } marks)
+            {
+                <div class="diff-boxes">
+                    @foreach (var row in marks.Rows)
+                    {
+                        @if (row.Engine is { } e)
+                        {
+                            <span class="diff-box diff-box-engine" style="@MarkStyle(e)"></span>
+                        }
+                        @if (row.Browser is { } b)
+                        {
+                            <span class="diff-box diff-box-browser" style="@MarkStyle(b)"></span>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
+    @if (_view == ViewMode.Diff)
+    {
+        <aside class="report">
+            <div class="label">差异明细 <span class="hint">红虚线=引擎 · 绿实线=无头参照（打印口径）；只列超容差的，按最坏分量倒序</span></div>
+            <table>
+                <thead>
+                    <tr><th>元素</th><th class="r">Δx</th><th class="r">Δy</th><th class="r">Δw</th><th class="r">Δh</th></tr>
+                </thead>
+                <tbody>
+                    @if (_diff is { } d)
+                    {
+                        @foreach (var row in d.Rows)
+                        {
+                            <tr class="@RowClass(row)">
+                                <td title="@row.DomPath">
+                                    <span class="kind">@KindCode(row)</span>
+                                    <b>@row.Tag</b>
+                                    <span class="path">@Leaf(row.DomPath)</span>
+                                </td>
+                                <td class="r">@Signed(row.Dx)</td>
+                                <td class="r">@Signed(row.Dy)</td>
+                                <td class="r">@Signed(row.Dw)</td>
+                                <td class="r">@Signed(row.Dh)</td>
+                            </tr>
+                        }
+                        @if (d.Rows.Count == 0)
+                        {
+                            @* 零差异也得把面板留着：否则「完全一致」看起来跟「这功能坏了」一模一样 *@
+                            <tr><td class="none" colspan="5">@d.Summary.Total 个盒全部落在 @d.Summary.TolerancePx.ToString("0.##", Inv)px 容差内</td></tr>
+                        }
+                        else if (d.Rows.Count >= PlaygroundDiff.MaxReturnedRows)
+                        {
+                            <tr><td class="none" colspan="5">仅列出最坏 @PlaygroundDiff.MaxReturnedRows 条，底部汇总计数是全量的。</td></tr>
+                        }
+                    }
+                    else
+                    {
+                        <tr><td class="none" colspan="5">@(string.IsNullOrEmpty(_error) ? "等待无头参照生成…" : "渲染失败，无矩形可比")</td></tr>
+                    }
+                </tbody>
+            </table>
+        </aside>
+    }
+</div>
+
+<footer class="status">
+    @if (_render is { } r)
+    {
+        <span>@r.PixelWidth × @r.PixelHeight</span>
+        <span>· PNG · @((r.Bytes / 1024.0).ToString("0.#", Inv)) KB · 引擎 @(r.ElapsedMs.ToString("0", Inv)) ms · @(_view == ViewMode.SideBySide ? "浏览器量测" : "无头参照") @(( _view == ViewMode.SideBySide ? _previewMs : _refMs ).ToString("0", Inv)) ms</span>
+        <span>· 排版宽 @(r.ContentWidth.ToString("0", Inv))</span>
+    }
+    @if (_diff is { } s)
+    {
+        <span class="sep">|</span>
+        <span>盒 @s.Summary.Total</span>
+        <span class="@Badge(s.Summary)">漂移 @s.Summary.Drift</span>
+        <span>引擎独有 @s.Summary.EngineOnly · 参照独有 @s.Summary.BrowserOnly</span>
+        <span>最坏 @(s.Summary.WorstDelta.ToString("0.0", Inv))px · 漂移均值 @(s.Summary.MeanDriftPx.ToString("0.0", Inv))px</span>
+    }
+    <span class="grow"></span>
+    <span class="hint">叠加/盒级差异的参照走无头(Skia)打印口径（引擎 PDF==Chrome printToPDF）；并排看有头 iframe 实时渲染</span>
+</footer>
+
+@* PDF 悬浮窗：脱流浮在两窗之上，左边改字它就跟着重出。拖标题条挪位置、右下角原生 resize 改大小。 *@
+@if (_pdfOpen)
+{
+    <aside class="pdfwin" @ref="_pdfWin">
+        <div class="pdfwin-bar" @ref="_pdfHandle">
+            <b class="pdfwin-title">PDF</b>
+            <select @bind="_paper" @bind:after="RefreshPdfAsync">
+                <option value="@PdfPaper.SameWidth">同宽（@(_width.ToString("0", Inv))）</option>
+                <option value="@PdfPaper.A4">A4</option>
+                <option value="@PdfPaper.Letter">Letter</option>
+            </select>
+            <span class="pdfwin-meta">
+                @if (_pdfBusy)
+                {
+                    <text>生成中…</text>
+                }
+                else if (_pdf is { } p)
+                {
+                    <text>@(p.PageWidth.ToString("0.#", Inv))×@(p.PageHeight.ToString("0.#", Inv))pt · 排版宽 @(p.ContentWidth.ToString("0.#", Inv)) · @((p.Bytes / 1024.0).ToString("0.#", Inv)) KB · @(p.ElapsedMs.ToString("0", Inv)) ms</text>
+                }
+            </span>
+            <span class="grow"></span>
+            @if (_pdf is { } dl)
+            {
+                <a class="pdfwin-dl" href="@PdfUrl(dl)" download="preview.pdf">下载</a>
+            }
+            <button type="button" class="pdfwin-x" @onclick="ClosePdfAsync" title="关闭">×</button>
+        </div>
+        @if (_pdfError.Length > 0)
+        {
+            <div class="pdfwin-msg"><b>PDF 生成失败</b><span>@_pdfError</span></div>
+        }
+        else if (_pdf is { } view)
+        {
+            <iframe class="pdfwin-view" src="@PdfUrl(view)" title="PaperSharp 导出的 PDF"></iframe>
+        }
+        else
+        {
+            <div class="pdfwin-msg"><span>@(_pdfBusy ? "生成中…" : "尚无结果")</span></div>
+        }
+    </aside>
+}
+
+@code {
+    enum ViewMode { SideBySide, Overlay, Diff }
+
+    const string DefaultHtml = """
+        <div class="wrap">
+          <div class="row"><i class="dot a"></i><i class="dot b"></i><i class="dot c"></i></div>
+          <h1>Edit the code.</h1>
+          <h1 class="accent">Press Run.</h1>
+          <p>左边改 HTML，上窗是 PaperSharp 直出的图，下窗是浏览器实际渲染。切到「盒级差异」，看哪个元素偏了几像素。</p>
+        </div>
+        <style>
+          .wrap { padding: 40px; background: #16130f; color: #fdfaf4; font-family: sans-serif }
+          .row  { display: flex; gap: 12px; margin-bottom: 24px }
+          .dot  { width: 40px; height: 14px; border-radius: 999px }
+          .a { background: #ff4d4d } .b { background: #fbbf24 } .c { background: #2ee6a8 }
+          h1  { font-size: 64px; margin: 0; line-height: 1.1; letter-spacing: -2px }
+          .accent { color: #ff4d4d }
+          p   { font-size: 18px; color: #a8a29a; line-height: 1.6; margin-top: 20px }
+        </style>
+        """;
+
+    static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+    static readonly float[] ScaleChoices = [1f, 2f, 3f];
+
+    string _html = DefaultHtml;
+    string _css = "";
+    float _width = 1284;
+    float _scale = 2f;
+    float _tolerance = 0.5f;
+    string _toleranceText = "0.5";
+    int _opacityPercent = 55;
+    bool _auto = true;
+
+    PlaygroundRender? _render;
+    DiffResult? _diff;
+    IReadOnlyList<DomRect> _browserRects = Array.Empty<DomRect>();
+    string _error = "";
+
+    /// <summary>无头(Skia)打印口径参照：PNG token（供 &lt;img&gt; 盖在有头 iframe 上）+ 耗时。叠加/盒级差异用。</summary>
+    string _refToken = "";
+    double _refMs;
+
+    bool _pdfOpen, _pdfBusy;
+    PdfPaper _paper = PdfPaper.SameWidth;
+    PlaygroundPdf? _pdf;
+    string _pdfError = "";
+
+    /// <summary>PDF 认领结果用的指纹：连打时会有好几趟管线在跑，只有最新那份值得换掉 iframe。</summary>
+    int _pdfSeq;
+
+    bool _busy, _dirty;
+    int _seq;
+    /// <summary>浏览器那一半（iframe 装载 + settle + 回传矩形）的耗时。跟引擎那一半分开显示，
+    /// 才知道「慢」慢在哪边——两边的优化手段完全不同（一个在层叠/编码，一个在装载与 SignalR）。</summary>
+    double _previewMs;
+    /// <summary>上一次真正渲染过的输入指纹。打字时每个按键都会排一发延迟任务，早先排的那几发
+    /// 会在本轮跑完之后再把同样的内容重渲染一遍；比对指纹就能让空转的触发直接返回。</summary>
+    string _renderedKey = "";
+    string InputKey() => $"{_width}|{_scale}|{_html}|{_css}";
+    ViewMode _view = ViewMode.SideBySide;
+
+    IJSObjectReference? _module, _scrollLink, _pdfDrag;
+    ElementReference _iframe, _enginePane, _browserPane, _pdfWin, _pdfHandle;
+
+    string ModeAttr => _view switch
+    {
+        ViewMode.Overlay => "overlay",
+        ViewMode.Diff => "diff",
+        _ => "side",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./playground.js");
+            // 两个窗格绝对同步滚动：同一个 scrollTop 才叫「同一块内容」；按比例同步会在两边高度不同时
+            // 把不同区域摆到一起，而高度差本身就是这里要看的东西。
+            _scrollLink = await _module.InvokeAsync<IJSObjectReference>("linkScroll", _enginePane, _browserPane);
+            await RerenderAsync();
+            return;
+        }
+
+        // 悬浮窗的拖拽要 ElementReference，只能等它落到 DOM 之后再挂；关掉再开是新节点，
+        // 旧监听随原节点一起回收，所以关闭时把句柄置空、这里就会重挂一次。
+        if (_pdfOpen && _pdfDrag is null && _module is not null)
+            _pdfDrag = await _module.InvokeAsync<IJSObjectReference>("makeDraggable", _pdfHandle, _pdfWin);
+    }
+
+    string Seg(ViewMode v) => _view == v ? "on" : "";
+
+    /// <summary>切视图：并排看有头 iframe 实时渲染，叠加/盒级差异看无头(Skia)打印口径参照。
+    /// 两者参照物不同，跨「并排 ↔ 叠加/盒级差异」要重出参照；叠加↔盒级差异共用同一份无头参照，不重渲染。</summary>
+    async Task SetViewAsync(ViewMode v)
+    {
+        if (_view == v) return;
+        bool oldHeadless = _view != ViewMode.SideBySide;
+        _view = v;
+        bool newHeadless = v != ViewMode.SideBySide;
+        if (oldHeadless != newHeadless) await RerenderAsync();
+    }
+
+    async Task OnInputAsync()
+    {
+        if (!_auto) return;
+        await Task.Delay(250);                    // 打字中途不出图；跑完发现又改了会再补一轮（见 _dirty）
+        // 渲染快了以后，「按一个键补一张同样的图」反而更显眼：内容没变就直接回，别白烧一轮。
+        if (InputKey() == _renderedKey) return;
+        await RerenderAsync();
+    }
+
+    async Task OnSampleChangedAsync(ChangeEventArgs e)
+    {
+        if (e.Value?.ToString() is not { Length: > 0 } name) return;
+        if (Samples.Read(name) is not (var html, var css)) return;
+        _html = html;
+        _css = css;
+        await RerenderAsync();
+    }
+
+    /// <summary>关闭必须走同一条路：拖拽监听挂在窗体节点上，窗体摘掉后句柄不置空，
+    /// 重开就是新节点却再也不会重挂（OnAfterRenderAsync 只认 _pdfDrag 是否为空）。</summary>
+    Task TogglePdfAsync()
+    {
+        if (_pdfOpen) return ClosePdfAsync();
+        _pdfOpen = true;
+        // 不等：窗口先出来显示「生成中」，别让整个页面卡在一趟管线上。
+        _ = RefreshPdfAsync();
+        return Task.CompletedTask;
+    }
+
+    async Task ClosePdfAsync()
+    {
+        _pdfOpen = false;
+        _pdf = null;
+        _pdfBusy = false;
+        _pdfError = "";
+        if (_pdfDrag is { } drag)
+        {
+            _pdfDrag = null;          // 关窗即解绑：节点已经被摘掉，留着句柄只会重挂不上
+            try { await drag.InvokeVoidAsync("dispose"); } catch { /* 电路已断，监听随节点回收 */ }
+        }
+    }
+
+    /// <summary>
+    /// 与长图同一份输入再生成一次 PDF，刻意挂在主渲染链路之外：PDF 管线要写字体子集，
+    /// 等进主链路就是让每次打字慢一倍。seq 认领结果——期间用户又改了字，这一份已经过期，
+    /// 生成完也不换 iframe（新那趟的 seq 更大）。
+    /// </summary>
+    async Task RefreshPdfAsync()
+    {
+        if (!_pdfOpen) return;
+        var seq = ++_pdfSeq;
+        var (html, css, width, paper) = (_html, _css, _width, _paper);
+        _pdfBusy = true;
+        _pdfError = "";
+        try
+        {
+            var pdf = await Svc.RenderPdfAsync(html, css, width, paper, CancellationToken.None);
+            if (seq != _pdfSeq || !_pdfOpen) return;
+            _pdf = pdf;
+            _pdfBusy = false;
+            StateHasChanged();        // iframe 的 src 换新 token，内置查看器才会重取这一份
+        }
+        catch (Exception ex)
+        {
+            if (seq != _pdfSeq) return;
+            _pdfError = ex.Message;   // 上一份好图留着会误导，宁可明确报错
+            _pdf = null;
+            _pdfBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>换页缩放都交给内置查看器；token 变了就是新文档，不必再加查询串防缓存。
+    /// navpanes=0：查看器那圈侧栏（缩略图/目录）在这份没有大纲的 PDF 里就是一条空白带，
+    /// 开着它等于从窗口宽度里白扣两百多像素，页面被挤成中间一小坨。</summary>
+    static string PdfUrl(PlaygroundPdf p) => $"/api/playground/pdf/{p.Token}#navpanes=0&zoom=page-width";
+
+    /// <summary>容差只改判定、不改布局——拿已缓存的浏览器矩形重算一遍即可，别白渲染一次。</summary>
+    Task ReDiffAsync()
+    {
+        if (float.TryParse(_toleranceText, System.Globalization.NumberStyles.Float, Inv, out var t)) _tolerance = Math.Max(0f, t);
+        if (_render is { } r && _browserRects.Count > 0) _diff = Svc.Diff(r.Token, _browserRects, _tolerance);
+        return Task.CompletedTask;
+    }
+
+    async Task RerenderAsync()
+    {
+        if (_busy) { _dirty = true; return; }     // 渲染是 CPU 密集且不可中途取消，排队跑完再补一轮，别堆线程
+        _busy = true;
+        try
+        {
+            do
+            {
+                _dirty = false;
+                await RenderOnceAsync();
+            }
+            while (_dirty);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task RenderOnceAsync()
+    {
+        var seq = ++_seq;
+        var key = InputKey();                     // 先固定指纹：渲染期间用户可能又打了字
+        _error = "";
+        StateHasChanged();
+        try
+        {
+            var render = await Svc.RenderAsync(_html, _css, _width, _scale, CancellationToken.None);
+            if (seq != _seq) return;
+            _render = render;
+            _renderedKey = key;
+            _diff = null;
+            StateHasChanged();                    // 让新的 <img src> 先落到 DOM，浏览器侧再量
+
+            // PDF 挂在浏览器量测这段时间里并行跑：那半边走 JS 与 SignalR，不吃引擎这颗核。
+            if (_pdfOpen) _ = RefreshPdfAsync();
+
+            // 参照物按视图分两套：叠加/盒级差异用无头(Skia)出图（与引擎同为打印口径，见台账 P0-10——
+            // 有头屏显吃 DirectWrite，会凭空给 CJK 加 ±0.5px/行的幻影重影）；并排用有头 iframe 实时渲染（编辑手感）。
+            if (_view != ViewMode.SideBySide)
+            {
+                var refShot = await Svc.PrintParityAsync(_html, _css, render.CssWidth, _scale,
+                    (render.PageMarginTop, render.PageMarginRight, render.PageMarginBottom, render.PageMarginLeft),
+                    CancellationToken.None);
+                if (seq != _seq) return;
+                _refToken = refShot.Token;
+                _refMs = refShot.ElapsedMs;
+                _browserRects = refShot.Rects;
+                _diff = Svc.Diff(render.Token, refShot.Rects, _tolerance);
+                return;
+            }
+
+            _refToken = "";   // 并排不叠无头参照，清掉免得切回时先闪一张过期图
+            if (_module is null) return;
+            var srcdoc = PlaygroundService.BuildPreviewDoc(_html, _css,
+                Samples.AssetsDir is { Length: > 0 } ? PlaygroundService.AssetUrlBase : null,
+                (render.PageMarginTop, render.PageMarginRight, render.PageMarginBottom, render.PageMarginLeft));
+            var tPrev = Stopwatch.GetTimestamp();
+            // 视口给**整页宽**而不是内容宽：预览文档已经把 @page 边距落成 html padding（见 BuildPreviewDoc），
+            // 两侧于是同零点、同内容宽。按内容宽量会把分数边距挤成整数（1163.0625→1163），
+            // 那一圈 δ 让 mm 边距页每个块级盒都差一点宽，也会被读成文字重影。
+            var got = await _module.InvokeAsync<BrowserMeasurement>("loadPreview", _iframe, srcdoc, render.CssWidth);
+            _previewMs = Stopwatch.GetElapsedTime(tPrev).TotalMilliseconds;
+            if (seq != _seq) return;
+            _browserRects = got?.Rects ?? Array.Empty<DomRect>();
+            _diff = null;   // 并排不做度量：有头 iframe 的矩形不是引擎的对拍目标
+        }
+        catch (Exception ex)
+        {
+            if (seq == _seq) _error = ex.Message; // 保留上一张好图，只把错误叠在旁边
+        }
+    }
+
+    // 负偏移只为「叠加」服务：把引擎 body 原点搬到舞台 (0,0) 才能与同样平移过的 iframe 重合
+    // （iframe 侧是 JS 的 -Math.round(body.left)，这里必须同样**折到整 CSS px**：引擎 PNG 的内容
+    // 本来就落在 round(bodyX) 那个整格上（绘制层折相位，见 PaintSnap），按分数 -60.46875 摆会让
+    // 整张 PNG 在屏幕上被重采样到半格，等于凭空给引擎层加一层模糊——叠图看差异时最先糊掉的就是字）。
+    // 并排模式不平也不裁：预览文档现在带上了 @page 边距（html padding，见 BuildPreviewDoc），
+    // 两栏本来就各自从页边距内侧开画，再平一次反而错开一圈边距（旧口径要平，是因为那时浏览器没有边距）。
+    string ShotStyle(PlaygroundRender r) => _view == ViewMode.SideBySide
+        ? $"width:{Px(r.CssWidth)};"                       // 并排：不平不裁，各自从页边距内侧开画
+        : ShotStyleFor(r, _opacityPercent / 100.0);
+
+    // 无头参照图：与引擎 PNG 同尺寸、同 body 原点，套同一套平移/裁边，只是它当底图不透明（叠加/盒级差异用）。
+    string RefShotStyle(PlaygroundRender? r) => r is null ? "" : ShotStyleFor(r, 1.0);
+
+    static string ShotStyleFor(PlaygroundRender r, double opacity) =>
+        $"width:{Px(r.CssWidth)};"
+        + $"left:{Px(-MathF.Round(r.BodyX))};top:{Px(-MathF.Round(r.BodyY))};"
+          + $"opacity:{opacity.ToString("0.##", Inv)};"
+          // 引擎图比内容区宽出一圈 @page 边距：叠加/差异时裁掉那圈留白，否则半透明叠图右/下缘
+          // 多出灰白边，看着像没对齐。同样折整，裁边才与整格的位图边界重合。
+          + $"clip-path:inset({MathF.Round(r.PageMarginTop)}px {MathF.Round(r.PageMarginRight)}px"
+          + $" {MathF.Round(r.PageMarginBottom)}px {MathF.Round(r.PageMarginLeft)}px);";
+
+    static string MarkStyle(DomRect r) => $"left:{Px(r.X)};top:{Px(r.Y)};width:{Px(r.W)};height:{Px(r.H)}";
+
+    static string KindCode(DiffRow r) => r.Kind switch
+    {
+        DiffKind.EngineOnly => "仅引擎",
+        DiffKind.BrowserOnly => "仅参照",
+        _ => "Δ",
+    };
+
+    static string RowClass(DiffRow r) => r.Kind switch
+    {
+        DiffKind.EngineOnly or DiffKind.BrowserOnly => "orphan",
+        _ when r.MaxDelta >= 4 => "bad",
+        _ when r.MaxDelta >= 1 => "mid",
+        _ => "mild",
+    };
+
+    static string Signed(float v) => (v >= 0 ? "+" : "") + v.ToString("0.0", Inv);
+
+    /// <summary>body/div[1]/p[2] → div[1]/p[2]：表格里 body 前缀纯属噪音，title 上留全串。</summary>
+    static string Leaf(string domPath)
+    {
+        var i = domPath.IndexOf('/');
+        return i < 0 ? domPath : domPath[(i + 1)..];
+    }
+
+    static string Badge(DiffSummary s) => s.Drift + s.EngineOnly + s.BrowserOnly > 0 ? "warn" : "ok";
+
+    static string Px(float v) => v.ToString("0.##", Inv) + "px";
+
+    /// <summary>JS loadPreview 的返回壳子。</summary>
+    sealed class BrowserMeasurement
+    {
+        public DomRect[] Rects { get; set; } = Array.Empty<DomRect>();
+        public float Height { get; set; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_scrollLink is not null) await _scrollLink.InvokeVoidAsync("dispose");
+            if (_pdfDrag is not null) await _pdfDrag.InvokeVoidAsync("dispose");
+        }
+        catch { /* 电路已断，监听随页面一起回收 */ }
+        try
+        {
+            if (_module is not null) await _module.DisposeAsync();   // 断线时这里也会抛：不接住就是电路级 unhandled 日志
+        }
+        catch { /* 同上 */ }
+    }
+}

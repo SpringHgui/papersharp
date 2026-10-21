@@ -1,0 +1,10 @@
+/* 开发期比对工具：100vh 满幅，不给侧栏和面包屑留位置。 */
+.playground-root {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    background: #0d0f12;
+    color: #e6e8ea;
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
