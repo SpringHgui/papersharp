@@ -274,7 +274,7 @@ public static class TextShaper
         string list = "", int weight = 0)
     {
         if (string.IsNullOrEmpty(text) || size >= MonoFitMaxPx || NeedsShaping(text)) return -1;
-        bool legacy = FontManager.IsLegacyMonoSubset(tf);
+        bool legacy = FontManager.IsLegacyMonoFace(tf);
         if (!legacy && (!tf.IsFixedPitch || FirstUncovered(text, tf) == 0)) return -1;
 
         float half = (float)Math.Ceiling(size / 2f);
@@ -306,7 +306,12 @@ public static class TextShaper
             // 雅黑/Noto/Arial 下的 A 类不让位（逐 face 单字对拍已证两边本就吻合）。
             bool wide = cp is > 0 and <= 0xFFFF
                 && (TextMeasurer.IsCjkChar((char)cp) || (legacy && EastAsianWidth.IsAmbiguous(cp)));
-            if (!legacy && tf.GetGlyph(cp) != 0) { w += own; continue; }
+            // 主面自己覆盖得住的码位，就地定宽：非 legacy 用它线性 hmtx，legacy 用半格网格。
+            // 以前 legacy 也要往下走「问回退面要真 advance」那条路，而 NSimSun 覆盖 ASCII，
+            // 回退面就是它自己 ⇒ 量到的永远是 0.5em 线性，网格分支一次也没执行过
+            // （11pt 的 <code> 每字 7.336 而非 8，m1 六处 code 盒各窄 12~24px，整张表列宽跟着摊歪）。
+            bool covered = tf.GetGlyph(cp) != 0;
+            if (covered && (!legacy || !wide)) { w += legacy ? half + fauxBold : own; continue; }
             // 主面不覆盖的码位（等宽链里的 CJK/全角）：走**回退字面的真实 advance**，含合成粗体加宽。
             // 半格网格（2×⌈fs/2⌉ + 粗体每字 1）在这条路上是错的：有头 Edge 实测 bold 13.328125px、
             // `Consolas,monospace` 下「序号」= 27.172（13.586/字 = 1em × 合成粗体加宽 1.0194），

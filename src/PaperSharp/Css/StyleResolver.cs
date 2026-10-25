@@ -225,7 +225,7 @@ public static class StyleResolver
         var body = doc.Body ?? throw new InvalidOperationException("no <body>");
         var window = doc.DefaultView ?? throw new InvalidOperationException("no window (Did WithCss() get applied?)");
         // 层叠用的样式表在此物化一次（此后文档与样式表都只读）
-        ctx.Styles = new EagerStyleCollection(window.GetStyleCollection());
+        ctx.Styles = new EagerStyleCollection(window.GetStyleCollection(renderDevice));
 
         var root = Walk(body, null, ctx);
         // 列表 marker 先做成 ::before 片段（复用伪元素的注入与匿名盒机制，两条排版通路一次到位），
@@ -1032,11 +1032,12 @@ public static class StyleResolver
             // `ul.tags li::after` 泄漏到 `ol.outline li`）。counters(a,',') 会被它重序列化成 counters(a ,)
             // （吞逗号），交由 PseudoContent.Parse 的空格/逗号双兼容解析还原。
             //
-            // computed 这条路会**整棵抛异常**：实测 AngleSharp 在解析某条声明的计算值时 NRE
-            // （`transform: translateX(-50%)` 必炸，`transform:none` 与未知属性都不炸），而它抛在
-            // 「取这条规则的 content」这一步——等于一条无关声明把整个伪元素判成「没写 content」而消失
-            // （login-page 的页签蓝条 `.tab.active::after` 就是这么整条没的）。故异常时退到 declared：
-            // 同样做真正的选择器匹配，只是取作者原样值，而 content 我们自己解析，不需要 computed 的归一。
+            // 兜底 try/catch 保留：升级前（AngleSharp.Css 1.0.0-beta）computed 这条路会**整棵抛异常**——
+            // 实测它在解析某条声明的计算值时 NRE（`transform: translateX(-50%)` 必炸），而抛点在
+            // 「取这条规则的 content」这一步，等于一条无关声明把整个伪元素判成「没写 content」而消失
+            // （login-page 的页签蓝条 `.tab.active::after` 就是这么整条没的）。1.1.4 已修（gradient/translateX
+            // 实测都不抛），但伪元素成盒与否只由 content 决定，不值得让值折算的黑盒把它判没：
+            // 异常时退到 declared——同样做真正的选择器匹配，只是取作者原样值，而 content 我们自己解析。
             try
             {
                 return ExpandVars(ctx.Styles.ComputeDeclarations(element, pseudo).GetPropertyValue("content") ?? "", element, ctx, pseudo);
@@ -1297,10 +1298,10 @@ public static class StyleResolver
         var s = new ComputedStyle { Parent = parent };
 
         // AngleSharp.Css 的层叠入口：GetComputedStyle(window, el, pseudo) 展开就是
-        // window.GetStyleCollection().ComputeDeclarations(el, pseudo)，这里吃物化过的集合（见 EagerStyleCollection）。
-        // 但它对某些值（如 radial-gradient）在 Compute() 里会抛 NullReferenceException——
-        // 一旦抛异常该元素整个 computed 都拿不到。这里 try/catch 兜住：拿不到就退回声明值
-        // （GetDeclarations，不触发 Compute）+ 父级继承，绝不让渲染崩。
+        // window.GetStyleCollection(dev).ComputeDeclarations(el, pseudo)，这里吃物化过的集合（见 EagerStyleCollection）。
+        // 兜底 try/catch 保留：升级前（AngleSharp.Css 1.0.0-beta）radial-gradient 在 Compute() 里必抛 NRE，
+        // 一旦抛该元素整个 computed 都拿不到；1.1.4 已修（实测 gradient/translateX(-50%) 全不抛），但值折算
+        // 是外部库的黑盒，抛了也不能让渲染崩——拿不到就退回声明值（GetDeclarations，不触发 Compute）+ 父级继承。
         // pseudo 非空时读伪元素（::before/::after）的 computed，实测 AngleSharp 支持并返回 content。
         // flat 非空时（展平快照）两个调用都不做：那轮层叠在这类输入上实测 1.82 ms/元素，全是白烧。
         ICssStyleDeclaration? computed = null;
@@ -1334,6 +1335,16 @@ public static class StyleResolver
         }
         if (flat == null) rawView = new PropCache(decls, element, ctx);
         string Spec(string prop) => flat != null ? Get(prop) : rawView!.Read(prop);
+        // 宿主**祖先链**上这条属性的原始声明串。伪元素的 raw 链除自己的声明外恰好就是它，
+        // 两者逐字相同即说明这个值来自继承而非该伪元素亲自写的（见下面字号那段）。
+        string AncestorSpec(string prop)
+        {
+            var node = ((INode)element).Parent;
+            while (node != null && node is not IElement) node = node.Parent;
+            if (node is not IElement anc) return "";
+            try { return ctx.Styles.GetDeclarations(anc).GetPropertyValue(prop)?.Trim() ?? ""; }
+            catch { return ""; }   // 与 Spec 同一口径：拿不到就当没写
+        }
         // 尺寸类：声明值是百分比或 calc() → 用声明值（保留 % 与线性式，交布局层解析）；否则优先 computed
         // （已解析 px/em/rem 且含继承），computed 不可用时退回声明值。
         string Val(string prop)
@@ -1375,8 +1386,6 @@ public static class StyleResolver
             inlineAttrs ??= ParseStyleAttribute(element.GetAttribute("style"));
             return inlineAttrs != null && inlineAttrs.TryGetValue(prop, out var v) ? v : "";
         }
-        // 声明值 → 内联属性：给 text-indent/text-shadow/list-style* 这类 AngleSharp 未注册的属性用
-        string Decl(string prop) { var v = Raw(prop); return v.Length != 0 ? v.Trim() : Inline(prop).Trim(); }
         // 只算"本元素自己写过"的声明：computed（含继承）与内联属性，不含父链
         string SpecOnly(string prop) { var v = Spec(prop); return v.Length != 0 ? v.Trim() : Inline(prop).Trim(); }
         // margin/padding 的初值是 0 不是 auto：展平快照只在浏览器算出的用值非 0 时才下发（capture.js），
@@ -1410,13 +1419,16 @@ public static class StyleResolver
         // 渲染设备的初值字号 16px 折算（DefaultRenderDevice.FontSize），基准根本不是本元素的父字号，
         // 于是 UA 表 h1{font-size:2em} 无论落在 10px 还是 30px 的区块里都是 32px
         // （探针 _probe-ua：10px 区块里引擎 43 vs 浏览器 27，整页逐段累积漂移 170px）。
-        // 伪元素再套一层坑：GetDeclarations(el, pseudo) 与 computed **两条路都会把宿主的声明漏进来**
-        // （同下面八条边那段注释），串与宿主记下的 FontSizeSpec 逐字相同即判为泄漏 → 按继承走；
-        // 否则 h3::before 会把宿主的 1.17em 再乘一遍（m8 每个带 counter 的 h3 虚高 2px，判别探针 _probe-em）。
+        // 伪元素再套一层坑：它的 raw 链 = 「伪元素自己的声明 ∪ 宿主的**祖先**链」（AngleSharp 1.1.x 的
+        // GetDeclarations 在替换伪元素之前取祖先链，宿主自身不在其中），所以这条串只要与祖先的同名值
+        // 逐字相同，就是**继承值**而不是该伪元素亲自写的声明——必须丢掉、改按宿主继承（CSS：伪元素
+        // 继承 originating element）。留着它，UA 的 h3{font-size:1.17em} 会在 h3::before 上按祖先的
+        // 15px 重新折算，而 computed 那条又按设备初值 16px 折（m8：每个带 counter 的 h3 虚高 2px）。
+        // 反向对照：伪元素自己写 font-size 时与祖先的值不同，照常按宿主字号折算。
         var fsSpec = Spec("font-size").Trim();
         string fsText;
-        if (fsSpec.Length != 0 && !string.IsNullOrEmpty(pseudo) && fsSpec == (parent?.FontSizeSpec ?? ""))
-            fsText = "";   // 泄漏：伪元素按继承
+        if (fsSpec.Length != 0 && !string.IsNullOrEmpty(pseudo) && fsSpec == AncestorSpec("font-size"))
+            fsText = "";   // 继承值：parent 就是宿主的样式，ParseFontSize("") 直接落到宿主字号
         else if (fsSpec.EndsWith("em", StringComparison.OrdinalIgnoreCase) || fsSpec.EndsWith('%'))
             fsText = fsSpec;   // 相对单位一律自己按父字号折算（computed 折的基准是设备初值 16px）
         else
@@ -1575,6 +1587,13 @@ public static class StyleResolver
         s.BorderStyleRight = CssValueParser.ParseKeyword(Raw("border-right-style"), "solid");
         s.BorderStyleBottom = CssValueParser.ParseKeyword(Raw("border-bottom-style"), "solid");
         s.BorderStyleLeft = CssValueParser.ParseKeyword(Raw("border-left-style"), "solid");
+        // style 为 none/hidden 时 used width 恒为 0（CSS）。AngleSharp 1.1.x 的 computed 会把
+        // `border-bottom:none` 的宽度报成初值 medium=3px（简写清了 style，宽度落回 medium），留着它
+        // 布局白占 3px（report 的 .row.head 因此把整页盒位顶下去 3px，BoxGolden 全线 dy-3）。
+        if (s.BorderStyleTop is "none" or "hidden") s.BorderWidthTop = 0;
+        if (s.BorderStyleRight is "none" or "hidden") s.BorderWidthRight = 0;
+        if (s.BorderStyleBottom is "none" or "hidden") s.BorderWidthBottom = 0;
+        if (s.BorderStyleLeft is "none" or "hidden") s.BorderWidthLeft = 0;
         // 边框色逐边取：单边简写（.prefix 的 `border-right: 1px solid #eceef0`）在 AngleSharp 里只落到
         // border-right-color，整圈读 border-color/border-top-color 会读空 → 退回 currentColor，分隔线被染成文字色。
         // 只对**有宽度**的边取值：无框元素（页面上的绝大多数）一次属性读都不多花。
@@ -1612,18 +1631,24 @@ public static class StyleResolver
         s.AlignSelf = Aln("align-self", "auto");
         // grid 的两轴自对齐 + 多轨分布：longhand 缺省时才由 place-self/place-items 简写补
         //（同条规则里长写恒压简写，与 margin 那套同理，按属性粒度裁决）。
+        // ⚠️ 简写串**只能**取自作者 CSS 自扫描表（Lookup 的 current 传空），不能读 AngleSharp：
+        // 1.1.x 的 place-items/place-self getter 会拿已声明的**单轴**长写重组简写——实测
+        // `.tr{align-items:center}` 读到 place-items='center' 而 justify-items=''，于是补位把交叉轴
+        // 的值横向泄进行内轴，网格子项由 stretch 变居中收缩（pricing-page/pricing-mid 每个 .tr/.r
+        // 格子 dx=−格宽/2）。作者真写了简写时表里必有那条（`place-items:center start` 在 1.1.x 是
+        // 整条丢弃、单值 `place-items:center` 只摊到 align-items），照旧补得回来。
         s.JustifySelf = Aln("justify-self", "auto");
         s.JustifyItems = Aln("justify-items", "stretch");
         s.AlignContent = Aln("align-content", "normal");
-        if (CssValueParser.TryParsePositional2(Lookup("place-self", element, Raw("place-self"), ctx, pseudo), out var psA, out var psJ))
+        if (CssValueParser.TryParsePositional2(Lookup("place-self", element, "", ctx, pseudo), out var psA, out var psJ))
         {
-            if (string.IsNullOrWhiteSpace(Raw("align-self"))) s.AlignSelf = psA;
-            if (string.IsNullOrWhiteSpace(Raw("justify-self"))) s.JustifySelf = psJ;
+            if (string.IsNullOrWhiteSpace(Spec("align-self"))) s.AlignSelf = psA;
+            if (string.IsNullOrWhiteSpace(Spec("justify-self"))) s.JustifySelf = psJ;
         }
-        if (CssValueParser.TryParsePositional2(Lookup("place-items", element, Raw("place-items"), ctx, pseudo), out var piA, out var piJ))
+        if (CssValueParser.TryParsePositional2(Lookup("place-items", element, "", ctx, pseudo), out var piA, out var piJ))
         {
-            if (string.IsNullOrWhiteSpace(Raw("align-items"))) s.AlignItems = piA == "auto" ? "stretch" : piA;
-            if (string.IsNullOrWhiteSpace(Raw("justify-items"))) s.JustifyItems = piJ == "auto" ? "stretch" : piJ;
+            if (string.IsNullOrWhiteSpace(Spec("align-items"))) s.AlignItems = piA == "auto" ? "stretch" : piA;
+            if (string.IsNullOrWhiteSpace(Spec("justify-items"))) s.JustifyItems = piJ == "auto" ? "stretch" : piJ;
         }
         if (s.AlignItems == "normal") s.AlignItems = "stretch";
         if (s.JustifyItems == "normal") s.JustifyItems = "stretch";
@@ -1851,12 +1876,15 @@ public static class StyleResolver
         // transform / transform-origin：一律吃作者原样串（同 border-radius 的口径）。
         // AngleSharp 认得 transform，但会把 matrix()/多函数重序列化成小数串，且它认识的函数集与
         // 我们支持的 2D 集合不同——「不认识就整条作废」的判定必须在我们这边做才与 Chrome 对齐。
-        var tfRaw = FirstNonEmpty(Inline("transform"), Lookup("transform", element, Raw("transform"), ctx, pseudo));
+        // 这里必须用 Spec（声明值）而不是 Raw（computed 优先）：AngleSharp 1.1.x 起 computed 不再抛，
+        // 会把 `translateX(-50%)` 按**视口宽**折成 px（实测 viewport 400 → -200px），而 CSS 规定 transform
+        // 的百分比相对**自身边框盒**；吃折算串等于把页签蓝条那种 left:50%+translateX(-50%) 居中直接推飞。
+        var tfRaw = FirstNonEmpty(Inline("transform"), Lookup("transform", element, Spec("transform"), ctx, pseudo));
         s.Transform = TransformParser.Parse(tfRaw);
         if (s.Transform != null)
         {
             var origin = TransformParser.ParseOrigin(
-                FirstNonEmpty(Inline("transform-origin"), Lookup("transform-origin", element, Raw("transform-origin"), ctx, pseudo)),
+                FirstNonEmpty(Inline("transform-origin"), Lookup("transform-origin", element, Spec("transform-origin"), ctx, pseudo)),
                 s.FontSize);
             if (origin is { } o) (s.TransformOriginX, s.TransformOriginY, s.TransformOriginXPct, s.TransformOriginYPct) = o;
         }

@@ -289,8 +289,9 @@ public static class Renderer
 
         var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed, width);
         var root = LayoutBuilder.ToBoxTree(computed);
-        LayoutBuilder.Measure(root, Math.Max(1, width - mL - mR));
-        LayoutBuilder.Position(root, mL, mT);
+        float htmlW = Math.Max(1, width - mL - mR);   // html 内容宽：body 的包含块（见 LayoutBuilder.Position）
+        LayoutBuilder.Measure(root, htmlW);
+        LayoutBuilder.Position(root, mL, mT, htmlW);
         float layoutH = root.TotalHeight + mT + mB;
         return SvgWriter.Write(root, width, layoutH);
     }
@@ -313,8 +314,9 @@ public static class Renderer
 
         var computed = StyleResolver.BuildDocument(html, css, animationTime, precomputed, width, domPath);
         var root = LayoutBuilder.ToBoxTree(computed);
-        LayoutBuilder.Measure(root, Math.Max(1, width - mL - mR));
-        LayoutBuilder.Position(root, mL, mT);
+        float htmlW = Math.Max(1, width - mL - mR);   // 同上：body 的包含块宽
+        LayoutBuilder.Measure(root, htmlW);
+        LayoutBuilder.Position(root, mL, mT, htmlW);
         float layoutH = root.TotalHeight + mT + mB;
         if (scale < 1f) scale = 1f;
 

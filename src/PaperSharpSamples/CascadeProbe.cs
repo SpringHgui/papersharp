@@ -77,13 +77,13 @@ public static class CascadeProbe
             // C1：只层叠匹配、不折算值（fresh 集合 = 引擎每次渲染的真实成本；缓存不跨迭代蹭）。
             Med(() =>
             {
-                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
                 foreach (var e in els) eg.GetDeclarations(e, null);
                 return 0.0;
             }, 1);
             var (rawfill, mbRaw) = Med(() =>
             {
-                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
                 foreach (var e in els) eg.GetDeclarations(e, null);
                 return 0.0;
             }, iters);
@@ -98,13 +98,13 @@ public static class CascadeProbe
             }
             Med(() =>
             {
-                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
                 foreach (var e in els) SafeCompute(eg, e, null);
                 return 0.0;
             }, 1);
             var (computed, mbComp) = Med(() =>
             {
-                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+                var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
                 foreach (var e in els) SafeCompute(eg, e, null);
                 return 0.0;
             }, iters);
@@ -117,13 +117,13 @@ public static class CascadeProbe
             {
                 Med(() =>
                 {
-                    var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+                    var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
                     foreach (var e in els) { eg.GetDeclarations(e, null); SafeCompute(eg, e, "::before"); SafeCompute(eg, e, "::after"); }
                     return 0.0;
                 }, 1);
                 var (ps, mbPs) = Med(() =>
                 {
-                    var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+                    var eg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
                     foreach (var e in els) { eg.GetDeclarations(e, null); SafeCompute(eg, e, "::before"); SafeCompute(eg, e, "::after"); }
                     return 0.0;
                 }, iters);
@@ -137,7 +137,7 @@ public static class CascadeProbe
             {
                 try { return d.GetPropertyValue(p); } catch { return null; }
             }
-            var declEg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+            var declEg = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
             var decls = els.Select(e =>
             {
                 try { return declEg.ComputeDeclarations(e, null); }
@@ -158,9 +158,11 @@ public static class CascadeProbe
         }
     }
 
+    static readonly DefaultRenderDevice Dev =
+        new() { FontSize = 16, ViewPortWidth = (int)W, ViewPortHeight = 1024 };
+
     static IBrowsingContext NewContext() => BrowsingContext.New(
-        Configuration.Default.WithCss().WithRenderDevice(new DefaultRenderDevice
-        { FontSize = 16, ViewPortWidth = (int)W, ViewPortHeight = 1024 }));
+        Configuration.Default.WithCss().WithRenderDevice(Dev));
 
     /// <summary>
     /// 层叠超线性的来源探针（`dotnet run -c Release -- pgstyle [N…]`）。
@@ -203,7 +205,7 @@ public static class CascadeProbe
                 Med(() => { foreach (var e in els) win.GetComputedStyle(e, null); return 0.0; }, 1);  // 预热
                 Row(kind, n, ne, "A now-per-element", Med(() => { foreach (var e in els) win.GetComputedStyle(e, null); return 0.0; }, T).Item1);
 
-                var sc = win.GetStyleCollection();
+                var sc = win.GetStyleCollection(Dev);
                 Med(() => { foreach (var e in els) sc.ComputeDeclarations(e, null); return 0.0; }, 1);
                 Row(kind, n, ne, "B hoisted", Med(() => { foreach (var e in els) sc.ComputeDeclarations(e, null); return 0.0; }, T).Item1);
 
@@ -214,7 +216,7 @@ public static class CascadeProbe
                 var eager = new EagerStyleCollection(sc);
                 Med(() => { foreach (var e in els) eager.ComputeDeclarations(e, null); return 0.0; }, 1);
                 Row(kind, n, ne, "F eager-collected", Med(() => { foreach (var e in els) eager.ComputeDeclarations(e, null); return 0.0; }, T).Item1);
-                Row(kind, n, ne, "G eager-cascaded-only", Med(() => { foreach (var e in els) eager.ComputeCascadedStyle(e); return 0.0; }, T).Item1);
+                Row(kind, n, ne, "G eager-cascaded-only", Med(() => { foreach (var e in els) eager.ComputeCascadedStyle(e, null!); return 0.0; }, T).Item1);
 
                 // H：引擎的按元素缓存层叠（具体类型走实例方法 = 遮蔽 AngleSharp 扩展方法；
                 // 每元素全表匹配恰一次 + 双轮合一）。计时含 Compute 折算，与 F 同口径可比。
@@ -223,8 +225,8 @@ public static class CascadeProbe
                 Row(kind, n, ne, "H cached-per-element", Med(() => { foreach (var e in els) cachedH.ComputeDeclarations(e, null); return 0.0; }, T).Item1);
 
 
-                Med(() => { for (int i = 0; i < 20; i++) win.GetStyleCollection(); return 0.0; }, 1);
-                var (c20, _) = Med(() => { for (int i = 0; i < 20; i++) win.GetStyleCollection(); return 0.0; }, 3);
+                Med(() => { for (int i = 0; i < 20; i++) win.GetStyleCollection(Dev); return 0.0; }, 1);
+                var (c20, _) = Med(() => { for (int i = 0; i < 20; i++) win.GetStyleCollection(Dev); return 0.0; }, 3);
                 Row(kind, n, ne, "C collection-only", c20 / 20);
 
                 if (n == sizes[^2])
@@ -250,7 +252,7 @@ public static class CascadeProbe
                        $"<style>{StyleResolver.UaStylesheet}</style><style>{css}</style></head><body>{html}</body></html>";
             using var doc = Open(full);
             var win = doc.DefaultView!;
-            var sc = new EagerStyleCollection(win.GetStyleCollection());
+            var sc = new EagerStyleCollection(win.GetStyleCollection(Dev));
             foreach (var e in doc.QuerySelectorAll("*"))
             {
                 var a = win.GetComputedStyle(e, null);
@@ -278,8 +280,8 @@ public static class CascadeProbe
                         $"<style>{StyleResolver.UaStylesheet}</style><style>{userCss}</style></head><body>{bodyHtml}</body></html>";
             using var doc = Open(fullH);
             var win = doc.DefaultView!;
-            IStyleCollection old = new EagerStyleCollection(win.GetStyleCollection());   // 接口类型 ⇒ 绑到扩展方法（旧语义）
-            var nw = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection());
+            IStyleCollection old = new EagerStyleCollection(win.GetStyleCollection(Dev));   // 接口类型 ⇒ 绑到扩展方法（旧语义）
+            var nw = new PaperSharp.Css.EagerStyleCollection(win.GetStyleCollection(Dev));
             foreach (var e in doc.QuerySelectorAll("*"))
                 foreach (var ps in new string?[] { null, "::before", "::after" })
                 {
@@ -289,7 +291,7 @@ public static class CascadeProbe
                         oc = old.ComputeDeclarations(e, ps);
                         oraw = old.GetDeclarations(e, ps);
                     }
-                    catch { hskip++; continue; }   // radial-gradient 等已知会炸，两路一致跳过
+                    catch { hskip++; continue; }   // 旧 AngleSharp.Css 1.0.0-beta 在这里必炸（radial-gradient 等）⇒ 整条 lane 跳过；1.1.4 实测跳过恒为 0
                     var nc = nw.ComputeDeclarations(e, ps);
                     var nraw = nw.GetDeclarations(e, ps);
                     // 取值本身也会抛（CssPeriodicValue.CssText 的已知 NRE，与引擎 Get() 的 try/catch 同源）：

@@ -6,7 +6,7 @@
 ```
 adapter,metric,value,unit
 ```
-- `adapter`: papersharp | puppeteer | wkhtmltopdf | itext7 | pdfsharp | questpdf | aspose
+- `adapter`: papersharp | puppeteer | wkhtmltopdf | itext7 | pdfsharp | questpdf | aspose | skiasharp
 - `metric`（每个 adapter 都要产全，缺失写 NaN）:
   - `latency_min` `latency_med` `latency_mean` `latency_p95` `latency_max` — 单位 ms（warmup 5 + 30 迭代）
   - `alloc_med` — 单次生成托管分配中位数，单位 KB（GC.GetTotalAllocatedBytes 差值）
@@ -33,7 +33,7 @@ adapter,page,ssim,mse,pixel_diff_pct,ink_coverage_pct
 
 ## features_matrix.csv — 特性支持矩阵（宽表，行=特性，列=库）
 ```
-feature_id,group,pages,puppeteer,wkhtmltopdf,itext7,pdfsharp,questpdf,aspose,papersharp
+feature_id,group,pages,puppeteer,wkhtmltopdf,itext7,pdfsharp,questpdf,aspose,skiasharp,papersharp
 ```
 - 单元格取值：`Y`(原生/正确渲染) `A`(近似/手画) `N`(不支持/占位块) `?`(未判定)
 - feature_id 对齐 spec/features.json

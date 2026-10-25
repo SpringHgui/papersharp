@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PaperSharp — 把 HTML/CSS 直接编译成 PDF 与高清图片</title>
+    <meta
+      name="description"
+      content="纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：无需浏览器、无 headless Chrome。同一颗引擎跑在 .NET、Node、Bun 与浏览器 WASM 里。"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Ctext x='32' y='45' font-family='sans-serif' font-size='38' font-weight='700' fill='white' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E"
+    />
+    <style>
+      html { background: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>这个页面的 Playground 需要 JavaScript：引擎就在浏览器里跑。</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

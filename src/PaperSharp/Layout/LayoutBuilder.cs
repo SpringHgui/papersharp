@@ -1986,8 +1986,27 @@ public static class LayoutBuilder
     }
 
     /// <summary>给定 margin-box 左上角 (x,y)，递归设置全子树的 BorderX/BorderY（含 relative/absolute）。
-    /// 顶边距被父吸收时（父↔首子坍缩）FlowInset 归 0，本子边框顶就落在游标上。</summary>
-    public static void Position(BlockBox box, float x, float y) => PositionRec(box, x, y, null);
+    /// 顶边距被父吸收时（父↔首子坍缩）FlowInset 归 0，本子边框顶就落在游标上。
+    /// <paramref name="containingBlockWidth"/> 只给**文档根盒**用：引擎的根就是 <c>&lt;body&gt;</c>（没有 html 盒），
+    /// 它下面那个循环不存在，所以 <c>body{max-width:…;margin:0 auto}</c> 的居中得由调用方把 html 内容宽传进来。</summary>
+    public static void Position(BlockBox box, float x, float y, float? containingBlockWidth = null)
+    {
+        if (containingBlockWidth is float cbw) x += AutoMarginX(box.Style, box.TotalWidth, cbw);
+        PositionRec(box, x, y, null);
+    }
+
+    /// <summary>自动水平边距的位移：margin-box 宽在包含块里还剩富余时，双边 auto 平分（居中），
+    /// 只有左边 auto 就全给它（推到右缘），只有右边 auto 则原地不动。
+    /// 富余既来自显式定宽，也来自 <c>width:auto</c> 被 <c>max-width</c> 夹窄——CSS 2.1 §10.4 夹完宽
+    /// 要回到 §10.3.3 重解边距，只认「定宽」会让 m2 的 body 整层左偏 42px。</summary>
+    static float AutoMarginX(ComputedStyle cs, float marginBoxWidth, float cbContentWidth)
+    {
+        if (!cs.MarginLeftAuto && !cs.MarginRightAuto) return 0;
+        float free = cbContentWidth - marginBoxWidth;
+        if (free <= 0) return 0;
+        return cs.MarginLeftAuto && cs.MarginRightAuto ? free / 2
+             : cs.MarginLeftAuto ? free : 0f;
+    }
 
     static void PositionRec(BlockBox box, float x, float y, CB? cb)
     {
@@ -2073,19 +2092,10 @@ public static class LayoutBuilder
                     continue;
                 }
 
-                // margin 的 auto：定宽盒在父内容宽内水平居中/靠右（如 .wrap 的 margin:0 auto），否则正常靠左。
+                // margin 的 auto：子盒在父内容宽里有富余时按自动边距居中/靠右（.wrap 的 margin:0 auto）；
+                // 收缩适配的行内级盒不吃自动边距，改按父 text-align 对齐。
                 float xoff = 0;
-                if (!cs.Width.IsAuto)
-                {
-                    float free = box.ContentWidth - c.TotalWidth;
-                    if (free > 0)
-                    {
-                        bool la = cs.MarginLeftAuto, ra = cs.MarginRightAuto;
-                        if (la && ra) xoff = free / 2;
-                        else if (la) xoff = free;
-                    }
-                }
-                else if (cs.Display is "inline-block" or "inline-flex" or "inline-grid")
+                if (cs.Width.IsAuto && cs.Display is "inline-block" or "inline-flex" or "inline-grid")
                 {
                     // 收缩适配的行内级盒：CSS 会把它包进继承 text-align 的匿名块，故按父 text-align 水平对齐
                     // （如 .hero{text-align:center} 里的 .chip 药丸应居中，而非贴左填满）。
@@ -2097,6 +2107,10 @@ public static class LayoutBuilder
                             CssTextAlign.Right => free,
                             _ => 0,
                         };
+                }
+                else
+                {
+                    xoff = AutoMarginX(cs, c.TotalWidth, box.ContentWidth);
                 }
                 // 收缩适配的行内级盒在 MeasureBlock 里走的是另一条分支（打断坍缩链、不吃 margin），此处必须同样处理。
                 bool shrinkInline = cs.Width.IsAuto && cs.Display is "inline-flex" or "inline-grid" or "inline-block";

@@ -1,11 +1,24 @@
 {
-  "name": "papersharp-example",
+  "name": "papersharp-site",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "devDependencies": {
-    "tsx": "^4.0.0"
+  "scripts": {
+    "sync": "node scripts/sync-engine.mjs",
+    "dev": "npm run sync && vite",
+    "build": "npm run sync && vite build",
+    "preview": "npm run sync && vite preview"
   },
   "dependencies": {
-    "papersharp": "*"
+    "papersharp": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
   }
 }

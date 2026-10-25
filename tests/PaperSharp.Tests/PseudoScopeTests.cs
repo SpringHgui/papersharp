@@ -242,7 +242,7 @@ public class PseudoScopeTests
         Assert.Equal(574, plan.MinHeight.Absolute, 1);          // 宿主自己的 min-height 不能被误伤
         var before = plan.Before;
         Assert.NotNull(before);
-        Assert.True(before!.Style.MinHeight.Absolute <= 0.01f); // 伪元素退回初值
+        Assert.True(before!.Style.MinHeight.IsAuto || before.Style.MinHeight.Absolute <= 0.01f); // 伪元素退回初值
         Assert.Equal(200, before.Style.Width.Absolute, 1);
         Assert.Equal(200, before.Style.Height.Absolute, 1);
     }

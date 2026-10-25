@@ -207,3 +207,85 @@ export function makeDraggable(handle, panel) {
     },
   };
 }
+
+/**
+ * 窗格边界拖拽：编辑区 ↔ 比对区 ↔ 明细栏，以及并排时下窗（引擎/浏览器之间）。
+ *
+ * 三条口径：
+ *  - 全程只写 .split 上的 CSS 自定义属性，一趟 SignalR 都不发。窗格尺寸本来不参与渲染
+ *    （iframe 宽由 loadPreview 钉成排版宽，引擎图按 CSS px 摆），服务端不需要知道它；
+ *    而每次 pointermove 等一个往返的话，拖起来就是橡皮筋。
+ *  - 事件挂在 .split 上做委托：明细栏与行分隔条随视图模式增删节点，绑在单条上每次切视图都得重挂。
+ *  - 夹取按「两条相邻窗格之和」算，所以拖到一边必然给另一边留出最小尺寸，
+ *    不会出现整栏被推没、只剩一条 1px 边框找不回来的情况。
+ */
+export function makeResizable(root) {
+  if (!root) return { dispose() { } };
+
+  /** key = 分隔条上的 data-resize；edge 指出这次改的是相邻两栏里的哪一条的宽度。 */
+  const SPEC = {
+    editor: { axis: "x", edge: "start", a: ".editor", b: ".stage", min: [320, 320], prop: "--w-editor", keep: [".report", 0.24] },
+    report: { axis: "x", edge: "end", a: ".stage", b: ".report", min: [320, 260], prop: "--w-report" },
+    pane: { axis: "y", edge: "start", a: ".pane-engine", b: ".pane-browser", min: [120, 120], prop: "--h-engine" },
+  };
+  const clamp = (v, lo, hi) => (lo > hi ? lo : Math.min(Math.max(v, lo), hi));
+  const at = (axis, rect) => (axis === "x" ? rect.left : rect.top);
+  const end = (axis, rect) => (axis === "x" ? rect.right : rect.bottom);
+  const size = (axis, rect) => (axis === "x" ? rect.width : rect.height);
+  let drag = null;
+
+  const onDown = (e) => {
+    const bar = e.target.closest?.("[data-resize]");
+    const spec = bar && SPEC[bar.dataset.resize];
+    if (!spec || e.button !== 0) return;
+    const a = root.querySelector(spec.a), b = root.querySelector(spec.b);
+    if (!a || !b) return;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const total = size(spec.axis, ra) + size(spec.axis, rb);
+    // keep：轴向上还占着一格、又不会跟着收缩的轨道（明细栏）。它没渲染出来时按 .split 的
+    // grid-template 默认档预留（盒级差异下是 24%，见 Playground.razor.css）——否则在并排里把
+    // 编辑区拖到顶，一切到「盒级差异」明细栏挤进来，比对区只剩一条缝。
+    const kept = spec.keep && root.querySelector(spec.keep[0]);
+    const keep = spec.keep ? (kept ? size(spec.axis, kept.getBoundingClientRect())
+                                   : Math.max(340, Math.round(root.clientWidth * spec.keep[1]))) : 0;
+    const [minA, minB] = spec.min;
+    drag = {
+      spec, bar,
+      anchor: spec.edge === "end" ? end(spec.axis, rb) : at(spec.axis, ra),
+      lo: (spec.edge === "end" ? minB : minA),
+      hi: total - (spec.edge === "end" ? minA : minB) - keep,
+    };
+    bar.classList.add("dragging");
+    root.classList.add("resizing");
+    try { bar.setPointerCapture(e.pointerId); } catch { /* 指针已抬起：不捕获也能拖，只是移出手柄就断 */ }
+    e.preventDefault();                         // 顺手掐掉拖出去的文字选区
+  };
+
+  const onMove = (e) => {
+    if (!drag) return;
+    const { axis, edge } = drag.spec;
+    const p = axis === "x" ? e.clientX : e.clientY;
+    const want = edge === "end" ? drag.anchor - p : p - drag.anchor;
+    root.style.setProperty(drag.spec.prop, `${Math.round(clamp(want, drag.lo, drag.hi))}px`);
+  };
+
+  const onUp = () => {
+    if (!drag) return;
+    drag.bar.classList.remove("dragging");
+    root.classList.remove("resizing");
+    drag = null;
+  };
+
+  root.addEventListener("pointerdown", onDown);
+  addEventListener("pointermove", onMove);
+  addEventListener("pointerup", onUp);
+  addEventListener("pointercancel", onUp);
+  return {
+    dispose: () => {
+      root.removeEventListener("pointerdown", onDown);
+      removeEventListener("pointermove", onMove);
+      removeEventListener("pointerup", onUp);
+      removeEventListener("pointercancel", onUp);
+    },
+  };
+}

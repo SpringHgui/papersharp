@@ -251,7 +251,7 @@ public static class StageProbe
         var win = doc.DefaultView!;
         // 必须吃引擎那层缓存：AngleSharp 裸扩展方法对每元素每个祖先各枚举一次全表
         // （O(深度×文档)），量出来 1322 µs/元素，会把结论整个带偏。EagerStyleCollection 才是实际路径。
-        var collected = new EagerStyleCollection(win.GetStyleCollection());
+        var collected = new EagerStyleCollection(win.GetStyleCollection(device));
         var elems = doc.QuerySelectorAll("*");
         Console.WriteLine($"# {Path.GetFileName(path)}  元素 {elems.Length:N0} 个，iters={iters}");
 

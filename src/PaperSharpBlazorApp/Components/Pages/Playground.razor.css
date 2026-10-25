@@ -90,6 +90,7 @@
     .bar .ghost, .bar .run { flex: none; }
 
 .split {
+    --gutter: 7px;
     flex: 1;
     min-height: 0;
     display: grid;
@@ -97,16 +98,58 @@
 
     /* 盒级差异要多一栏明细表，从编辑区里挤宽度，不挤比对区。
        中栏一律 minmax(0,1fr)：iframe 带着 1284px 的硬宽度，用裸 1fr（= minmax(auto,1fr)）
-       会被撑到不肯收缩，把明细栏整个挤出视口右侧。 */
-    .split[data-mode="side"], .split[data-mode="overlay"] { grid-template-columns: minmax(440px, 34%) minmax(0, 1fr); }
-    .split[data-mode="diff"] { grid-template-columns: minmax(420px, 32%) minmax(0, 1fr) minmax(340px, 24%); }
+       会被撑到不肯收缩，把明细栏整个挤出视口右侧。
+       两条 --w-* 由 playground.js 的 makeResizable 写成 px（拖过之后），没拖过时用下面的默认档。 */
+    .split[data-mode="side"], .split[data-mode="overlay"] { grid-template-columns: var(--w-editor, minmax(440px, 34%)) var(--gutter) minmax(0, 1fr); }
+    .split[data-mode="diff"] { grid-template-columns: var(--w-editor, minmax(420px, 32%)) var(--gutter) minmax(0, 1fr) var(--gutter) var(--w-report, minmax(340px, 24%)); }
+
+    /* 拖的时候指针会掠过 iframe：捕获万一丢了，后续事件会被文档吞掉。这一条是兜底。 */
+    .split.resizing { user-select: none; }
+
+        .split.resizing iframe { pointer-events: none; }
+
+/* ── 分隔条：三条缝都能拖（编辑区↔比对区、比对区↔明细栏、并排上下窗） ───────── */
+
+/* 轨道本身就是命中区，::after 那条线取代原先贴在窗格上的 border-right/left：
+   线居中才读得出「这条缝能拖」，贴边只会让人以为得对准某条边框去抓。 */
+.gutter {
+    position: relative;
+    z-index: 6;
+    cursor: col-resize;
+}
+
+    .gutter::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: #22262b;
+        transition: background .12s;
+    }
+
+    .gutter:hover::after, .gutter.dragging::after { background: #ff4d4d; }
+
+.gutter-row {
+    flex: 0 0 14px;
+    cursor: row-resize;
+}
+
+    .gutter-row::after {
+        left: 0;
+        right: 0;
+        top: 6px;
+        bottom: auto;
+        width: auto;
+        height: 1px;
+    }
 
 .editor {
     display: flex;
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    border-right: 1px solid #22262b;
     background: #101317;
 }
 
@@ -185,10 +228,13 @@
     min-height: 0;
 }
 
-/* 上窗引擎、下窗浏览器：与 DOM 顺序相反，用 order 摆，避免挪动 iframe 触发重新加载 */
-.compare[data-mode="side"] .pane { flex: 1 1 50%; }
-.compare[data-mode="side"] .pane-engine { order: 1; }
-.compare[data-mode="side"] .pane-browser { order: 2; }
+/* 上窗引擎、下窗浏览器：与 DOM 顺序相反，用 order 摆，避免挪动 iframe 触发重新加载。
+   并排才有上下两窗可分：--h-engine（px，由分隔条写）定上窗，下窗吃剩下的。
+   两窗之间那条缝就是分隔条本身（.gutter-row 占 14px），所以 gap 在这里归零，别叠成 28px。 */
+.compare[data-mode="side"] { gap: 0; }
+.compare[data-mode="side"] .pane-engine { order: 1; flex: 0 1 var(--h-engine, 50%); }
+.compare[data-mode="side"] .pane-browser { order: 2; flex: 1 1 0; min-height: 120px; }
+.compare[data-mode="side"] .gutter-row { order: 1; }
 
 /* 叠加/差异：两窗格脱流叠在一起，滚动交给 .compare，两侧才在同一个原点上看同一块内容。
    position:relative 是必须的 —— 少了它，脱流窗格会拿 .stage 当包含块：.compare 内容高度塌成 0，
@@ -265,7 +311,6 @@ iframe { display: block; border: 0; background: #fff; }
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    border-left: 1px solid #22262b;
     background: #101317;
 }
 

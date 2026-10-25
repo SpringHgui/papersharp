@@ -49,10 +49,11 @@ LIBS: dict[str, str] = {
     "pdfsharp": "pdfsharp",
     "questpdf": "questpdf",
     "aspose": "aspose",
+    "skiasharp": "skiasharp",
 }
 
 # 矩阵列顺序（CONTRACT.md 固定）
-MATRIX_COLS = ["puppeteer", "wkhtmltopdf", "itext7", "pdfsharp", "questpdf", "aspose", "papersharp"]
+MATRIX_COLS = ["puppeteer", "wkhtmltopdf", "itext7", "pdfsharp", "questpdf", "aspose", "skiasharp", "papersharp"]
 
 
 # ---------------------------------------------------------------- raster ----
@@ -214,68 +215,74 @@ def write_fidelity_csv(rows: list[dict]) -> Path:
 #   aspose      : AsposePdfAdapter.cs。全页 Graph + 绝对定位文字（自研断行引擎）：TextState 原生
 #                 文字特性=Y，其余手画=A；Fail() 灰块+红✗(外阴影模糊/内阴影/三重阴影模糊层)=N；
 #                 PNG alpha 与圆角图用 GDI+ 预平铺=A。
+#   skiasharp   : SkiaSharpAdapter.cs。裸画布基线（PaperSharp 的下层本身）：没有 HTML/CSS/布局/
+#                 分页，三页全部逐块手画。判据是「这件事 Skia 有没有原生原语」——圆角矩形、虚线
+#                 (PathEffect)、模糊(MaskFilter)、裁切(ClipPath)、渐变(SKShader)、alpha 合成(SaveLayer)、
+#                 位图与纯色文字 = Y；凡是要自己数度量才能成立的（断行、中西字体回退、字距、首行缩进、
+#                 列表 marker、flex 分配、表格行列高宽、逐边边框、currentColor、页眉页脚与页码）= A。
+#                 没有一项用灰块+红叉占位，故无 N。
 #   papersharp  : 自研 HTML 引擎。该列不手填——由 fidelity/cells.py 逐特性像素对账推导
 #                 （out/cells.csv，Δ = 本格 SSIM − puppeteer 同格 SSIM：>=-0.03 Y / >=-0.12 A / 否则 N）。
 #                 JUDGMENTS 里 papersharp 的取值仅在 cells.csv 缺失时兜底。
 
 JUDGMENTS: dict[str, dict[str, str]] = {
     # feature_id: {lib: Y/A/N/?}
-    "headings":                {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "weights":                 {"puppeteer": "Y", "wkhtmltopdf": "A", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "A"},
-    "inline-code-chip":        {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "cjk-latin-mixed":         {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "line-height":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "letter-spacing":          {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "text-indent":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "N"},
-    "text-shadow":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "text-color":              {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "text-align-justify":      {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "?"},
-    "list-ul-marker-color":    {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "list-ol-decimal-alpha-roman": {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "list-style-circle-none":  {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "nested-list":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "A"},
-    "border-solid":            {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "border-dashed":           {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "papersharp": "Y"},
-    "border-dotted":           {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "papersharp": "Y"},
-    "border-double":           {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "border-groove-ridge":     {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "border-width-2-4-8":      {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "border-per-side-style":   {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "papersharp": "Y"},
-    "border-per-side-color":   {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "papersharp": "Y"},
-    "border-currentcolor":     {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "border-single-side":      {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "radius-uniform":          {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "radius-per-corner":       {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "radius-circle-ellipse":   {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "A", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "papersharp": "Y"},
-    "radius-pill":             {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "radius-plus-dashed":      {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "papersharp": "Y"},
-    "border-radius-bg-clip":   {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "papersharp": "?"},
-    "triangle-via-border":     {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "box-shadow-soft":         {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "N", "pdfsharp": "A", "questpdf": "Y", "aspose": "N", "papersharp": "Y"},
-    "box-shadow-hard":         {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "box-shadow-inset":        {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "N", "pdfsharp": "A", "questpdf": "N", "aspose": "N", "papersharp": "N"},
-    "box-shadow-multi":        {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "N"},
-    "linear-gradient-multi-stop": {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "papersharp": "Y"},
-    "radial-gradient":         {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "?"},
-    "gradient-with-alpha":     {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "?"},
-    "rgba-overlap-blend":      {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "Y"},
-    "opacity":                 {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "Y"},
-    "inline-alpha-highlight":  {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "image-jpeg":              {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "Y"},
-    "image-png-alpha":         {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "image-rounded-border":    {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "N"},
-    "flex-space-between":      {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "flex-margin-auto":        {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "flex-wrap-gap":           {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "papersharp": "Y"},
-    "flex-nested-ratios":      {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "flex-cross-axis-center":  {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "table-thead-tfoot":       {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "table-striped":           {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "table-cell-borders":      {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "table-colspan-footer":    {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "papersharp": "Y"},
-    "word-break-all":          {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "A", "pdfsharp": "A", "questpdf": "N", "aspose": "A", "papersharp": "N"},
-    "page-header-footer":      {"puppeteer": "Y", "wkhtmltopdf": "A", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "A"},
-    "page-number-badge":       {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "papersharp": "N"},
+    "headings":                {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "weights":                 {"puppeteer": "Y", "wkhtmltopdf": "A", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "A"},
+    "inline-code-chip":        {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "cjk-latin-mixed":         {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "A", "papersharp": "Y"},
+    "line-height":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "A", "papersharp": "Y"},
+    "letter-spacing":          {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "Y", "skiasharp": "A", "papersharp": "Y"},
+    "text-indent":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "text-shadow":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "text-color":              {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "text-align-justify":      {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "?"},
+    "list-ul-marker-color":    {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "list-ol-decimal-alpha-roman": {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "list-style-circle-none":  {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "nested-list":             {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "A"},
+    "border-solid":            {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "border-dashed":           {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "border-dotted":           {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "border-double":           {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "border-groove-ridge":     {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "border-width-2-4-8":      {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "border-per-side-style":   {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "skiasharp": "A", "papersharp": "Y"},
+    "border-per-side-color":   {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "skiasharp": "A", "papersharp": "Y"},
+    "border-currentcolor":     {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "border-single-side":      {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "radius-uniform":          {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "radius-per-corner":       {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "radius-circle-ellipse":   {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "A", "pdfsharp": "Y", "questpdf": "A", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "radius-pill":             {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "radius-plus-dashed":      {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "border-radius-bg-clip":   {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "?"},
+    "triangle-via-border":     {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "box-shadow-soft":         {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "N", "pdfsharp": "A", "questpdf": "Y", "aspose": "N", "skiasharp": "Y", "papersharp": "Y"},
+    "box-shadow-hard":         {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "box-shadow-inset":        {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "N", "pdfsharp": "A", "questpdf": "N", "aspose": "N", "skiasharp": "Y", "papersharp": "N"},
+    "box-shadow-multi":        {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "N"},
+    "linear-gradient-multi-stop": {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "Y", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "radial-gradient":         {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "?"},
+    "gradient-with-alpha":     {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "?"},
+    "rgba-overlap-blend":      {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "opacity":                 {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "inline-alpha-highlight":  {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "image-jpeg":              {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "Y", "papersharp": "Y"},
+    "image-png-alpha":         {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "A", "skiasharp": "Y", "papersharp": "Y"},
+    "image-rounded-border":    {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "Y", "papersharp": "N"},
+    "flex-space-between":      {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "flex-margin-auto":        {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "flex-wrap-gap":           {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "A", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "flex-nested-ratios":      {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "flex-cross-axis-center":  {"puppeteer": "Y", "wkhtmltopdf": "N", "itext7": "A", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "table-thead-tfoot":       {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "table-striped":           {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "table-cell-borders":      {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "table-colspan-footer":    {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "Y", "pdfsharp": "A", "questpdf": "Y", "aspose": "A", "skiasharp": "A", "papersharp": "Y"},
+    "word-break-all":          {"puppeteer": "Y", "wkhtmltopdf": "?", "itext7": "A", "pdfsharp": "A", "questpdf": "N", "aspose": "A", "skiasharp": "A", "papersharp": "N"},
+    "page-header-footer":      {"puppeteer": "Y", "wkhtmltopdf": "A", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "A", "papersharp": "A"},
+    "page-number-badge":       {"puppeteer": "Y", "wkhtmltopdf": "Y", "itext7": "Y", "pdfsharp": "Y", "questpdf": "Y", "aspose": "Y", "skiasharp": "A", "papersharp": "N"},
 }
 
 # 页数不对齐 / 内容截断等备注（写入矩阵末尾 NOTE 行，列结构不变）
@@ -283,6 +290,10 @@ MATRIX_NOTES = {
     "papersharp": "该列由 fidelity/cells.py 逐特性像素对账自动判定（以 puppeteer 同格 SSIM 为天花板的相对分），"
                   "不再手填；3 页齐全，横向内容与 Chrome 对齐（最右墨迹列一致）。"
                   "剩余主因是纵向逐段累积漂移：页1 到 css y=500 已比 Chrome 低约 10px，故每个格子都被平移稀释。",
+    "skiasharp": "3 页齐全。Y 全部来自 Skia 画布原生原语；A 全部要先自研断行/字体回退/flex/表格"
+                  "几何才画得出来；无 N（没有一项靠占位块跳过）。代价见 results.csv：约 1800 行 C# "
+                  "手搭三页，且 Skia 的 PDF 后端不做字体子集化，YaHei/Segoe UI/Consolas 整份嵌进文件"
+                  " -> 31 MB。",
     "wkhtmltopdf": "p2自2.3圆角第3格起、p3自3.3第二张图起内容被截断(仅出3页)，"
                    "被截断区域的特性记?。",
 }

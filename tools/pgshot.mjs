@@ -31,24 +31,46 @@ const proc = spawn(BROWSER, [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 class Cdp {
   constructor() { this.p = new Map(); this.s = 0; }
-  open(url) { return new Promise((res) => { this.ws = new WebSocket(url); this.ws.addEventListener("open", res); this.ws.addEventListener("message", (ev) => { const m = JSON.parse(ev.data); if (m.id && this.p.has(m.id)) { this.p.get(m.id)(m.result); this.p.delete(m.id); } }); }); }
-  send(method, params = {}, sid) { const id = ++this.s; return new Promise((res) => { this.p.set(id, res); this.ws.send(JSON.stringify(sid ? { id, method, params, sessionId: sid } : { id, method, params })); }); }
+  open(url) { return new Promise((res) => { this.ws = new WebSocket(url); this.ws.addEventListener("open", res); this.ws.addEventListener("message", (ev) => { const m = JSON.parse(ev.data); if (m.id && this.p.has(m.id)) { const h = this.p.get(m.id); this.p.delete(m.id); if (m.error) h.reject(new Error(`${h.method}: ${m.error.message}`)); else h.resolve(m.result); } }); }); }
+  send(method, params = {}, sid) { const id = ++this.s; return new Promise((res, rej) => { this.p.set(id, { resolve: res, reject: rej, method }); this.ws.send(JSON.stringify(sid ? { id, method, params, sessionId: sid } : { id, method, params })); }); }
   close() { try { this.ws.close(); } catch { } }
 }
 const cdp = new Cdp();
+// 导航提交那一瞬，页内求值会拿到 "Execution context was destroyed"。这类错误过一会儿自己就好，
+// 重试比让它冒泡成「无头参照出图失败」有用（调用方看到的是一句跟渲染无关的噪声）。
+async function retry(fn, tries = 4) {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i >= tries || !/Execution context was destroyed|Cannot find context|target closed|Cannot attach to this target|Unable to capture screenshot/i.test(String(e && e.message))) throw e;
+      await sleep(400);
+    }
+  }
+}
 try {
   let version; for (let i = 0; i < 100; i++) { try { version = await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json(); break; } catch { await sleep(300); } }
   await cdp.open(version.webSocketDebuggerUrl);
   const url = "file:///" + htmlFile.replace(/\\/g, "/");
-  const { targetId } = await cdp.send("Target.createTarget", { url });
+  // 先建空白页、attach 完再导航。createTarget 直接带 URL 时，轮询会读到还没被导航顶掉的
+  // about:blank —— 它的 readyState 本来就是 complete，于是 settle 求值正好撞在导航提交上。
+  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
   await cdp.send("Page.enable", {}, sessionId);
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: 1200, deviceScaleFactor: DSF, mobile: false }, sessionId);
-  for (let i = 0; i < 60; i++) { const rs = await cdp.send("Runtime.evaluate", { expression: "document.readyState", returnByValue: true }, sessionId); if (rs.result?.value === "complete") break; await sleep(300); }
-  await cdp.send("Runtime.evaluate", { expression: `(async()=>{await Promise.all([...document.images].map(i=>i.decode().catch(()=>{})));try{await document.fonts.ready}catch{}try{for(const a of document.getAnimations()){a.pause();a.currentTime=0}}catch{}await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return 1})()`, awaitPromise: true, returnByValue: true }, sessionId);
-  const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }, sessionId);
+  await cdp.send("Page.navigate", { url }, sessionId);
+  for (let i = 0; i < 60; i++) {
+    let ready = false;
+    try {
+      const rs = await cdp.send("Runtime.evaluate", { expression: "document.readyState + '|' + document.URL", returnByValue: true }, sessionId);
+      ready = String(rs.result?.value).endsWith("|complete") && !String(rs.result?.value).includes("about:blank");
+    } catch { /* 导航中，下一轮再问 */ }
+    if (ready) break;
+    await sleep(300);
+  }
+  await retry(() => cdp.send("Runtime.evaluate", { expression: `(async()=>{await Promise.all([...document.images].map(i=>i.decode().catch(()=>{})));try{await document.fonts.ready}catch{}try{for(const a of document.getAnimations()){a.pause();a.currentTime=0}}catch{}await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return 1})()`, awaitPromise: true, returnByValue: true }, sessionId));
+  const { data } = await retry(() => cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }, sessionId));
   writeFileSync(outPng, Buffer.from(data, "base64"));
-  const rects = await cdp.send("Runtime.evaluate", { expression: measureSnippet(), returnByValue: true }, sessionId);
+  const rects = await retry(() => cdp.send("Runtime.evaluate", { expression: measureSnippet(), returnByValue: true }, sessionId));
   writeFileSync(outRects, JSON.stringify(rects.result?.value ?? []));
   console.log("ok " + outPng);
 } catch (e) {

@@ -1,0 +1,21 @@
+# 官网 = js/example（Vite + React 纯静态）。Netlify 只需要 npm，不参与 dotnet/wasm 构建：
+# 引擎产物随 npm 包 papersharp 分发，构建前由 js/example/scripts/sync-engine.mjs 拷进 public/。
+
+[build]
+  base = "js/example"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# dotnet.js 按内容寻址取用 _framework 下的固定文件，可长期不可变缓存
+[[headers]]
+  for = "/_framework/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800, immutable"

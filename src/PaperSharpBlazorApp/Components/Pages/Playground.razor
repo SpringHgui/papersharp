@@ -66,7 +66,7 @@
             title="开一个悬浮窗，跟着左边输入实时出 PDF（同宽档下排版宽与两窗严格相等）">PDF 预览</button>
 </div>
 
-<div class="split" data-mode="@ModeAttr">
+<div class="split" data-mode="@ModeAttr" @ref="_split">
     <section class="editor">
         <div class="label">HTML <span class="hint">样式直接写进 &lt;style&gt;，走的是引擎同一份解析</span></div>
         <textarea class="code grow" spellcheck="false" @bind="_html" @bind:event="oninput" @bind:after="OnInputAsync"></textarea>
@@ -75,6 +75,9 @@
             <textarea class="code" rows="6" spellcheck="false" @bind="_css" @bind:event="oninput" @bind:after="OnInputAsync"></textarea>
         </details>
     </section>
+
+    @* 分隔条即网格轨道（见 .split 的 grid-template-columns）：宽度算在轨道里，拖它只会此消彼长。 *@
+    <div class="gutter" data-resize="editor" title="拖动调整宽度"></div>
 
     <section class="stage">
         @if (_error.Length > 0)
@@ -108,6 +111,11 @@
                     <img class="shot" src="@($"/api/playground/image/{shot.Token}")" style="@ShotStyle(shot)" alt="PaperSharp 渲染结果" />
                 }
             </div>
+            @if (_view == ViewMode.SideBySide)
+            {
+                @* 只有并排才有上下两窗可分：叠加/盒级差异两窗是同一块画布上的两层，没有边界可拖 *@
+                <div class="gutter gutter-row" data-resize="pane" title="拖动调整上下窗高度"></div>
+            }
             @if (_view == ViewMode.Diff && _diff is { } marks)
             {
                 <div class="diff-boxes">
@@ -129,6 +137,7 @@
 
     @if (_view == ViewMode.Diff)
     {
+        <div class="gutter" data-resize="report" title="拖动调整宽度"></div>
         <aside class="report">
             <div class="label">差异明细 <span class="hint">红虚线=引擎 · 绿实线=无头参照（打印口径）；只列超容差的，按最坏分量倒序</span></div>
             <table>
@@ -295,8 +304,8 @@
     string InputKey() => $"{_width}|{_scale}|{_html}|{_css}";
     ViewMode _view = ViewMode.SideBySide;
 
-    IJSObjectReference? _module, _scrollLink, _pdfDrag;
-    ElementReference _iframe, _enginePane, _browserPane, _pdfWin, _pdfHandle;
+    IJSObjectReference? _module, _scrollLink, _pdfDrag, _resizers;
+    ElementReference _iframe, _enginePane, _browserPane, _pdfWin, _pdfHandle, _split;
 
     string ModeAttr => _view switch
     {
@@ -313,6 +322,8 @@
             // 两个窗格绝对同步滚动：同一个 scrollTop 才叫「同一块内容」；按比例同步会在两边高度不同时
             // 把不同区域摆到一起，而高度差本身就是这里要看的东西。
             _scrollLink = await _module.InvokeAsync<IJSObjectReference>("linkScroll", _enginePane, _browserPane);
+            // 分隔条的拖拽挂在 .split 上（委托），切视图增删明细栏/行分隔条都不用重挂。
+            _resizers = await _module.InvokeAsync<IJSObjectReference>("makeResizable", _split);
             await RerenderAsync();
             return;
         }
@@ -560,6 +571,7 @@
         {
             if (_scrollLink is not null) await _scrollLink.InvokeVoidAsync("dispose");
             if (_pdfDrag is not null) await _pdfDrag.InvokeVoidAsync("dispose");
+            if (_resizers is not null) await _resizers.InvokeVoidAsync("dispose");
         }
         catch { /* 电路已断，监听随页面一起回收 */ }
         try

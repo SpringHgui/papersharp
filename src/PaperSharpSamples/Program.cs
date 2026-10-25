@@ -248,6 +248,7 @@ if (args.Length > 1 && args[0] == "tree")
     void Dump(PaperSharp.Layout.BlockBox b, int d)
     {
         Console.WriteLine(new string(' ', d * 2) + $"<{b.Style.Tag}> display={b.Style.Display} x={b.BorderX} y={b.BorderY} w={b.ContentWidth} h={b.ContentHeight} kids={b.Children.Count} gridInfo={b.GridInfo != null} lines={b.Lines?.Count ?? -1} wl={b.WrappedLines?.Length ?? -1}"
+            + $" TYPO[fs={b.Style.FontSize} lh={b.Style.LineHeightPx()} norm={b.Style.IsNormalLineHeight} fw={b.Style.FontWeight} fam={b.Style.FontFamily} pad={b.Style.PaddingTop}/{b.Style.PaddingBottom} brd={b.Style.BorderWidthTop}/{b.Style.BorderWidthBottom}/{b.Style.BorderStyleBottom}/{b.Style.BorderStyleTop}]"
             + (b.Style.MixBlendMode != "normal" || b.Style.ClipPath != null || b.Style.MaskImage != null || b.Style.Filter != null || b.Style.CornerShape != "round"
                ? $" FX[blend={b.Style.MixBlendMode} clip={b.Style.ClipPath} mask={b.Style.MaskImage != null} filt={b.Style.Filter != null} shape={b.Style.CornerShape}]" : "")
             + (b.WrappedLines is { Length: > 0 } ? $" tw={b.Style.TextWrap} va={b.Style.VerticalAlign} tf={b.Style.TextFit} fs={b.Style.FontSize} L0=[{b.WrappedLines[0]}]" : ""));
@@ -255,6 +256,7 @@ if (args.Length > 1 && args[0] == "tree")
             Console.WriteLine(new string(' ', (d + 1) * 2) + $"grid cols=[{string.Join(",", b.GridInfo.ColWidths)}] rows=[{string.Join(",", b.GridInfo.RowHeights)}] gap={b.GridInfo.ColGap}/{b.GridInfo.RowGap} placements={b.GridInfo.Placements.Count}");
         if (b.TColW != null)
             Console.WriteLine(new string(' ', (d + 1) * 2) + $"table cols=[{string.Join(",", b.TColW)}] rows=[{string.Join(",", b.TRowH)}] spacing={b.TSpacing}");
+        static string Siz(PaperSharp.Css.CssSize z, string n) => $"{n}={z.Kind}/{z.Value}/{z.Offset}";
         foreach (var c in b.Children) Dump(c, d + 1);
     }
     Dump(root, 0);

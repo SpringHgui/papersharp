@@ -32,11 +32,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, os.pardir))
 
 ADAPTER_ORDER = ["papersharp", "puppeteer", "wkhtmltopdf", "itext7",
-                 "pdfsharp", "questpdf", "aspose"]
+                 "pdfsharp", "questpdf", "aspose", "skiasharp"]
 COLORS = {
     "papersharp": "#d62728", "puppeteer": "#1f77b4", "wkhtmltopdf": "#2ca02c",
     "itext7": "#9467bd", "pdfsharp": "#8c564b", "questpdf": "#e377c2",
-    "aspose": "#17becf",
+    "aspose": "#17becf", "skiasharp": "#7f7f7f",
 }
 METRICS = ["latency_min", "latency_med", "latency_mean", "latency_p95",
            "latency_max", "alloc_med", "gen0", "gen1", "gen2", "rss_peak",
@@ -698,7 +698,7 @@ def build_report(res, fide, feats, outdir, charts, data_src, is_sample, cells=No
     cells = cells or {}
     ad = [a for a in ADAPTER_ORDER if a in res]
     L = []
-    L.append("# PdfBench 基准报告：7 个 .NET/无头浏览器方案生成同一份 HTML 挑战页")
+    L.append(f"# PdfBench 基准报告：{len(ad)} 个 .NET/无头浏览器方案生成同一份 HTML 挑战页")
     L.append("")
     src_note = ("**数据源：`report/sample/` 假数据（开发自测用，结论无效）。**"
                 if is_sample else f"数据源：`{data_src}`（真实测量）。")
@@ -729,8 +729,8 @@ def build_report(res, fide, feats, outdir, charts, data_src, is_sample, cells=No
             L.append(f"| {k} | {v or '—'} |")
         L.append("")
         L.append(f"- 挑战页：`spec/challenge.html`（{spec_summary()}）")
-        L.append("- 原始数据：`out/results.csv`（7 库 × 16 指标）、`out/fidelity.csv`（21 行）、"
-                 "`out/features_matrix.csv`（56 特性 × 7 库）；栅格图 `out/*_pN.png`。")
+        L.append(f"- 原始数据：`out/results.csv`（{len(ad)} 库 × 16 指标）、`out/fidelity.csv`（21 行）、"
+                 "`out/features_matrix.csv`（56 特性 × 8 库）；栅格图 `out/*_pN.png`。")
         L.append("")
     L.append("## 全指标总表")
     L.append("")
@@ -830,7 +830,7 @@ def build_report(res, fide, feats, outdir, charts, data_src, is_sample, cells=No
     L.append("")
     if feats:
         present = [x for x in ADAPTER_ORDER if x in (feats[0]["cells"] if feats else {})]
-        L.append("## 完整特性矩阵（56 项 × 7 库）")
+        L.append(f"## 完整特性矩阵（56 项 × {len(ADAPTER_ORDER)} 库）")
         L.append("")
         L.append("| 特性 | 分组 | 页 | " + " | ".join(present) + " |")
         L.append("|---|---|---|" + "---|" * len(present))
@@ -928,8 +928,8 @@ def build_report(res, fide, feats, outdir, charts, data_src, is_sample, cells=No
         L.append("python report/report.py   # → report/charts/*.png + REPORT.md（本文件）")
         L.append("```")
         L.append("")
-        L.append("- **必须每库一个子进程测**：同进程连测 7 家会让 Skia 原生内存累积，`rss_peak` 虚高到 3–4 GB；"
-                 "隔离后才是真实的 77–795 MB。")
+        L.append(f"- **必须每库一个子进程测**：同进程连测 {len(ADAPTER_ORDER)} 家会让 Skia 原生内存累积，`rss_peak` 虚高到 3–4 GB；"
+                 "隔离后才是真实的 79–781 MB。")
         L.append("- **`threadsafe` 的比对口径**：剥离 `/CreationDate`、`/ID`、Xmp 日期与 iText 字体子集随机前缀"
                  "（`/ABCDEF+`）后逐字节比较；不剥会产生假 0。")
         L.append("- **`out/<lib>.pdf` 与测量用的临时产物不是同一个文件**：Aspose 两次生成体积能差约 10%"

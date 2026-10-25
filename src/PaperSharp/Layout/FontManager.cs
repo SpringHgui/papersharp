@@ -244,13 +244,23 @@ public static class FontManager
         return null;
     }
 
-    /// <summary>该实例是否为打包的 legacy 等宽子集（NSimSun）。浏览器渲染这张 face 时不做线性缩放，
-    /// 而是把 advance 网格对齐到整半格，度量必须走 <see cref="TextShaper.MonoGridWidth"/> 那条路。</summary>
-    public static bool IsLegacyMonoSubset(SKTypeface tf)
+    /// <summary>该实例是否为 Blink 会「整半格」网格化的 legacy 等宽面（NSimSun 系）。浏览器渲染这类面时不做线性缩放，
+    /// 而是网格对齐到整「半格」，度量必须走 <see cref="TextShaper.MonoGridWidth"/> 那条路。</summary>
+    /// <remarks>以前只认打包子集那一个实例，而 generic <c>monospace</c> 的候选链（<see cref="CandidatesOf"/>）
+    /// 首项是族名 NSimSun → <c>Get("NSimSun")</c> 拿到的是系统真面（28905 字面），于是同一张 face 换条路进来
+    /// 就掉出网格、按 hmtx 的 0.5em 线性量：11pt 的 <c>&lt;code&gt;</c> 每字少 0.667px（m1 六处 code 盒各窄 12~24px）。</remarks>
+    public static bool IsLegacyMonoFace(SKTypeface tf)
     {
         EnsureSubsetLoaded();
-        return ReferenceEquals(tf, _monoRegular);
+        return tf != null && (ReferenceEquals(tf, _monoRegular) || LegacyMonoFamilies.Contains(tf.FamilyName));
     }
+
+    /// <summary>实测（CDP 量 span 宽）会被网格化的族：NSimSun/SimSun/MS Gothic 在 8~17px 全部走 ⌈fs/2⌉；
+    /// 同为 0.5em 的 KaiTi/SimHei/FangSong 与真等宽 Consolas/Courier New 都是线性，别混进来。</summary>
+    static readonly HashSet<string> LegacyMonoFamilies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NSimSun", "NSimSun-18030", "SimSun", "SimSun-18030", "宋体", "MS Gothic",
+    };
 
     /// <summary>
     /// 没有真粗体面的字族：请求 weight≥700 时浏览器（Blink + DirectWrite）会**合成粗体并把 advance 加宽**

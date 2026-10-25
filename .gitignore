@@ -107,3 +107,8 @@ benchmarks/PdfBench/scale/charts/
 benchmarks/PdfBench/report/charts/
 benchmarks/PdfBench/report/sample/
 benchmarks/PdfBench/sub_p1.png
+
+# 官网站点：dist 与从 papersharp 包拷来的引擎/字体产物（由 js/example/scripts/sync-engine.mjs 生成）
+js/example/dist/
+js/example/public/_framework/
+js/example/public/fonts/
