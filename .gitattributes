@@ -1,0 +1,3 @@
+# WASM 引擎产物按二进制入库：js/papersharp/wasm 是 dotnet publish 的输出，站点构建只搬运不改写，
+# 换行转换会让 dotnet.js 与同目录资源对不上。
+js/papersharp/wasm/** -text

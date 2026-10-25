@@ -11,9 +11,9 @@ obj/
 # 长路径删除失败的孤立产物（bun link 递归 junction 经 robocopy 实体化，超出 \?\ 32k 上限，需专用工具清理）
 .stray_jsjunk/
 
-# JS 工作区：依赖 + 构建产物（wasm/ 由 js/papersharp/build.mjs 从 dotnet publish 拷入）
+# JS 工作区：依赖（wasm/ 是 js/papersharp/build.mjs 从 dotnet publish 拷出的引擎产物，
+# 已入库：Netlify 的纯前端构建链装得到包、却没有 dotnet 去重编它）
 node_modules/
-js/papersharp/wasm/
 js/example/output.png
 
 # smoke.mjs 跑通所需的 _framework（dotnet publish 产物拷入）+ 它写出的样张
