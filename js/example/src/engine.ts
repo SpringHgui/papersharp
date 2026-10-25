@@ -30,14 +30,12 @@ export interface EngineInfo {
 
 type Api = {
   Render(requestJson: string): string | Promise<string>;
-  InstallSubsetFont(base64Data: string, weight: number): string | Promise<string>;
   Info(): string | Promise<string>;
 };
 
 type Dotnet = { create(): Promise<any> };
 
 let apiPromise: Promise<Api> | null = null;
-let fontsPromise: Promise<void> | null = null;
 
 /**
  * 按 URL 加载 ESM：注入一段 module script，而不是 import(url)。
@@ -83,30 +81,9 @@ async function getApi(): Promise<Api> {
   return apiPromise;
 }
 
-/**
- * 装引擎的兜底中文字体（Noto 子集，SIL OFL）。必须在首次 Render 前完成：
- * wasm 里没有系统字体，未注册的 family 全部落到这里装的那份，否则中文是豆腐块。
- */
-async function ensureCjkFonts(api: Api): Promise<void> {
-  if (!fontsPromise) {
-    fontsPromise = (async () => {
-      for (const [file, weight] of [
-        ["NotoSansSCSub-Regular.ttf", 400],
-        ["NotoSansSCSub-Bold.ttf", 700],
-      ] as const) {
-        const res = await fetch(`${BASE}fonts/${file}`);
-        if (!res.ok) throw new Error(`papersharp: 字体加载失败 ${file} (${res.status})`);
-        await call(api, "InstallSubsetFont", bytesToB64(new Uint8Array(await res.arrayBuffer())), weight);
-      }
-    })();
-    fontsPromise.catch(() => (fontsPromise = null));
-  }
-  return fontsPromise;
-}
-
 async function call(
   api: Api,
-  method: "Render" | "InstallSubsetFont" | "Info",
+  method: "Render" | "Info",
   ...args: (string | number)[]
 ): Promise<string> {
   const fn = api[method] as unknown as (...a: (string | number)[]) => string | Promise<string>;
@@ -116,12 +93,13 @@ async function call(
   return res.data;
 }
 
-const needsCjk = (text: string) => /[^\x00-\x7f]/.test(text);
-
-/** 渲染一次，返回产物字节。首次调用会启动运行时并（按需）装中文字体。 */
+/**
+ * 渲染一次，返回产物字节。首次调用会启动运行时。
+ * 中文开箱即用：引擎自带一份 Noto SC 子集（PaperSharp.wasm 的内嵌资源），不必再喂字体。
+ * 要换别的字体包，走 npm 包 papersharp 的 registerFont(family, url, weight)。
+ */
 export async function render(req: RenderRequest): Promise<Uint8Array> {
   const api = await getApi();
-  if (needsCjk(req.html + req.css)) await ensureCjkFonts(api);
   const data = await call(api, "Render", JSON.stringify(req));
   return b64ToBytes(data);
 }
@@ -134,15 +112,6 @@ export async function engineInfo(): Promise<EngineInfo> {
 /** 预热：让站点可以在后台把运行时先起好，用户点第一次渲染不等冷启动。 */
 export function warmUp(): Promise<EngineInfo> {
   return engineInfo();
-}
-
-function bytesToB64(data: Uint8Array): string {
-  let bin = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < data.length; i += chunk) {
-    bin += String.fromCharCode(...data.subarray(i, i + chunk));
-  }
-  return btoa(bin);
 }
 
 function b64ToBytes(b64: string): Uint8Array {

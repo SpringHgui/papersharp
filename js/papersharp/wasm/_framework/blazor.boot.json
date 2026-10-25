@@ -1,7 +1,7 @@
 {
   "mainAssemblyName": "PaperSharp.Wasm.dll",
   "resources": {
-    "hash": "sha256-VJZZeJwWw+s0sJNxS0zrAXeDYi0BLZcu2HNPQA03gB0=",
+    "hash": "sha256-FMjhdhQr16FBxM5irsAEV7XA/nCx4qXsMRGNmKQp0BQ=",
     "jsModuleNative": {
       "dotnet.native.js": "sha256-DBYWh1kEZZTVFcwKQrQeRfZZQ0g0Ihikj+rXEq5QfX8="
     },
@@ -24,8 +24,8 @@
       "AngleSharp.wasm": "sha256-e8119xs0HDJ/bx9IBrav7ZKF/OW/cVWlDWTPn2+N4SU=",
       "ExCSS.wasm": "sha256-kZpqykhSHDDZ5Nbnr3Lu8+g2zy/tINlaZ8BCj4hLUqI=",
       "HarfBuzzSharp.wasm": "sha256-0PIvV+5yKqDoK799xaHd4nf+/SpH1aYMRD1ybolXQ7o=",
-      "PaperSharp.wasm": "sha256-8SHrEwBYxFWzECd66vhNKl6bbCpnYvcgevl0DgVHdzE=",
-      "PaperSharp.Wasm.wasm": "sha256-KjnUP9QIr2zM0dP4M/ooT40ACGU7z91qJpl3115bnMg=",
+      "PaperSharp.wasm": "sha256-umsfncX52bO0IBZmXAKUdE2ZKvVxUGMV2+PE63BFxTY=",
+      "PaperSharp.Wasm.wasm": "sha256-tVyjHxVwT2XocWbz9+bms7KV8/y5meRaItW3svbLJKk=",
       "ShimSkiaSharp.wasm": "sha256-aRISKo3XpM/ID5pB9r0J/Q33NUg/zchkl+mGT4UAoBc=",
       "SkiaSharp.wasm": "sha256-ZIB+f5GXjn9mfWkpq6n3A+HCVX26oJIf7a84uMUmdrU=",
       "SkiaSharp.HarfBuzz.wasm": "sha256-0P9e7ODWo0331h8zLX/9I5u2DEyVYV2BNNep9aqxr3c=",

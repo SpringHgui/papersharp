@@ -637,7 +637,11 @@ public static class FontManager
             tf?.Dispose();
         }
 
-        // 最后兜底：宁可返回子集也不返回纯拉丁默认字体（避免中文方框）
+        // 最后兜底：宁可返回子集也不返回纯拉丁默认字体（避免中文方框）。
+        // 字重也得跟着兜：宿主没提供 YaheiSub 那对文件时（浏览器端就只带内嵌 Noto），
+        // 粗体中文会一路落到这里，无条件返回 Regular 等于把字重丢了。
+        if (weight >= 600)
+            return _notoBold ?? _yaheiBold ?? _notoRegular ?? _yaheiRegular ?? SKTypeface.Default;
         return _notoRegular ?? _yaheiRegular ?? SKTypeface.Default;
     }
 }

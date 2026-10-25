@@ -1,8 +1,7 @@
-// 把 .NET WASM 引擎与中文字体子集从 papersharp 包拷进站点 public/，供 vite 原样搬运。
-// 站点构建链里没有 dotnet：引擎是 npm 依赖的一部分（js/papersharp/wasm/_framework）。
-// 本地开发若包目录为空，先跑：
-//   dotnet publish src/PaperSharp.Wasm/PaperSharp.Wasm.csproj -c Release
-//   node js/papersharp/build.mjs
+// 把 .NET WASM 引擎从 papersharp 包拷进站点 public/，供 vite 原样搬运。
+// 站点构建链里没有 dotnet：引擎随 npm 包 papersharp 分发，装在 node_modules/papersharp/wasm/_framework。
+// 中文字体不用同步：那份 Noto SC 子集已经嵌在 PaperSharp.wasm 的内嵌资源里，引擎自带兜底。
+// 本地若在改引擎本体、想让站点直接吃仓内副本，设 PAPERSHARP_PKG_DIR=js/papersharp。
 // 可用 PAPERSHARP_ENGINE_DIR 直接指向某个 _framework 目录（跳过包解析）。
 
 import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -12,8 +11,6 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const siteRoot = resolve(here, "..");
 const publicDir = join(siteRoot, "public");
-
-const FONTS = ["NotoSansSCSub-Regular.ttf", "NotoSansSCSub-Bold.ttf"];
 
 const pkgDir = findPackageDir();
 const engineSrc = process.env.PAPERSHARP_ENGINE_DIR
@@ -25,10 +22,9 @@ if (!existsSync(engineSrc)) {
     [
       `找不到 WASM 引擎：${engineSrc}`,
       "",
-      "papersharp 包里的 wasm/ 目录是构建产物（未入库）。本机请先跑：",
-      "  1) dotnet publish src/PaperSharp.Wasm/PaperSharp.Wasm.csproj -c Release",
-      "  2) node js/papersharp/build.mjs",
-      "  3) 重新执行 npm run dev",
+      "引擎由 npm 包 papersharp 提供。请先在 js/ 目录执行：",
+      "  1) npm install",
+      "  2) 重新执行 npm run dev",
       "",
       "或设 PAPERSHARP_ENGINE_DIR 指向已有的 _framework 目录。",
     ].join("\n"),
@@ -37,14 +33,25 @@ if (!existsSync(engineSrc)) {
 }
 
 copyEngine(engineSrc, join(publicDir, "_framework"));
-const fontsSrc = findFontsDir();
-if (fontsSrc) copyFonts(fontsSrc, join(publicDir, "fonts"));
-else console.warn("警告：未找到 Noto 中文子集字体，Playground 里的中文会出豆腐块。");
+rmSync(join(publicDir, "fonts"), { recursive: true, force: true });
+copySamples();
 
-console.log(
-  `引擎 → public/_framework（${human(sizeOf(join(publicDir, "_framework")))}）` +
-    (fontsSrc ? `，字体 → public/fonts（${human(sizeOf(join(publicDir, "fonts"))) }）` : ""),
-);
+console.log(`引擎 → public/_framework（${human(sizeOf(join(publicDir, "_framework")))}）`);
+
+/** 站点大样例（挑战页 22 KB）不入库两份：唯一真源在 src/PaperSharpSamples/assets，构建前拷进 public/samples。 */
+function copySamples() {
+  const assets = resolve(siteRoot, "..", "..", "src", "PaperSharpSamples", "assets");
+  const to = join(publicDir, "samples");
+  mkdirSync(to, { recursive: true });
+  for (const name of ["challenge.html"]) {
+    const src = join(assets, name);
+    if (!existsSync(src)) {
+      console.error(`找不到样例真源：${src}（站点从 npm 包安装时没有仓内 assets，样例需另行放到 public/samples/）`);
+      process.exit(1);
+    }
+    cpSync(src, join(to, name));
+  }
+}
 
 /** .pdb / *.map 只服务 DevTools 源码映射，站点不带；
  *  dotnet.native.js.symbols 必须保留 —— mono 无条件下载它，缺文件运行时起不来。 */
@@ -57,12 +64,6 @@ function copyEngine(from, to) {
   }
 }
 
-function copyFonts(from, to) {
-  rmSync(to, { recursive: true, force: true });
-  mkdirSync(to, { recursive: true });
-  for (const f of FONTS) cpSync(join(from, f), join(to, f));
-}
-
 function findPackageDir() {
   if (process.env.PAPERSHARP_PKG_DIR) return resolve(process.env.PAPERSHARP_PKG_DIR);
   let dir = siteRoot;
@@ -73,15 +74,6 @@ function findPackageDir() {
     if (up === dir) return join(siteRoot, "..", "papersharp");
     dir = up;
   }
-}
-
-/** 优先包内字体（将来随 npm 分发），否则退回仓内样例资源。 */
-function findFontsDir() {
-  const candidates = [
-    join(pkgDir, "wasm", "fonts"),
-    resolve(siteRoot, "..", "..", "src", "PaperSharpSamples", "assets", "fonts"),
-  ];
-  return candidates.find((dir) => FONTS.every((f) => existsSync(join(dir, f)))) ?? null;
 }
 
 function sizeOf(path) {

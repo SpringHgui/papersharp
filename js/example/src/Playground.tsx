@@ -23,6 +23,34 @@ function toUrl(bytes: Uint8Array, format: EngineFormat): string {
   return URL.createObjectURL(new Blob([bytes as BlobPart], { type: MIME[format] }));
 }
 
+// 整页样例（presets[].src）按需抓取并缓存：默认挑战页首屏即要可编辑，不能等用户点开才加载。
+const sampleCache = new Map<string, string>();
+async function loadSample(src: string): Promise<string> {
+  const hit = sampleCache.get(src);
+  if (hit !== undefined) return hit;
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${src}`);
+  const text = await res.text();
+  sampleCache.set(src, text);
+  return text;
+}
+
+/** 从整页文档里切出 <style> 块与 <body>：分别喂 CSS 编辑器与 HTML 编辑器，拼回 srcdoc 时仍是完整页。 */
+function splitDoc(src: string) {
+  const style = /<style[^>]*>([\s\S]*?)<\/style>/i.exec(src);
+  const body = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(src);
+  const lines = (style?.[1] ?? "").split("\n");
+  const pad = Math.min(...lines.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
+  const css = lines.map((l) => l.slice(pad)).join("\n").trim();
+  return { html: (body?.[1] ?? src).trim(), css };
+}
+
+// 并排/叠加的浏览器栏是「屏幕」渲染，@page 的边距被浏览器忽略；而引擎的预览位图（RenderPng）
+// 会按 @page margin 留白（Renderer.cs:313），两栏顶边就差一个页边距。对比用的预览走这份剥了 @page
+// 的 CSS，边距归零、和浏览器同框；@page size 也不参与——PDF 页尺寸由 render 的 pageSize 参数定，下载产物不受影响。
+// 正则吃掉一层嵌套花括号：@page 里还可能有 @top-center / @bottom-center 这类 margin box 块。
+const stripPrint = (css: string) => css.replace(/@page[^{]*\{(?:[^{}]|\{[^{}]*\})*\}/g, "");
+
 // 与引擎 tailwind.mjs 的 PREFLIGHT 同源：两边吃到同一份重置，对比才不留 8px 的假差异。
 const BROWSER_RESET = `
 body { margin: 0; }
@@ -45,16 +73,20 @@ export function Playground() {
   const { copy, lang } = useCopy();
   const t = copy.playground;
 
-  const [presetId, setPresetId] = useState(presets[0].id);
-  const [html, setHtml] = useState(presets[0].html);
-  const [css, setCss] = useState(presets[0].css);
-  const [width, setWidth] = useState(presets[0].width);
-  const [scale, setScale] = useState(presets[0].scale);
-  const [format, setFormat] = useState<EngineFormat>(presets[0].format);
+  const initial = presets[0];
+  const [presetId, setPresetId] = useState(initial.id);
+  const [html, setHtml] = useState(initial.html);
+  const [css, setCss] = useState(initial.css);
+  const [width, setWidth] = useState(initial.width);
+  const [scale, setScale] = useState(initial.scale);
+  const [format, setFormat] = useState<EngineFormat>(initial.format);
   const [quality, setQuality] = useState(90);
   const [view, setView] = useState<ViewMode>("engine");
   const [opacity, setOpacity] = useState(55);
   const [auto, setAuto] = useState(true);
+
+  // 异步样例未就绪前不许跑渲染：空 HTML 会先出一张白页再被真内容闪掉。
+  const [loadingSample, setLoadingSample] = useState(Boolean(initial.src));
 
   const [out, setOut] = useState<Output | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,6 +121,13 @@ export function Playground() {
       });
   }, []);
 
+  // 首屏就选中了带 src 的样例：直接载入，省掉一次「先选中后加载」的往返。
+  useEffect(() => {
+    if (!initial.src) return;
+    applySrc(initial.src, initial.css, initial.html);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(
     () => () => {
       for (const u of urls.current) URL.revokeObjectURL(u);
@@ -121,7 +160,8 @@ export function Playground() {
       let previewIsImage = isRaster(format);
       if (format === "pdf") {
         try {
-          preview = toUrl(await render({ ...req, format: "png" }), "png");
+          // 预览走剥掉 @page 的 CSS：让引擎位图与浏览器栏同按无页边距布局，顶边对齐；下载 url 仍是完整 PDF。
+          preview = toUrl(await render({ ...req, css: stripPrint(css), format: "png" }), "png");
           previewIsImage = true;
         } catch {
           /* 预览图渲染失败不致命：退回 iframe，让用户至少看到真 PDF */
@@ -146,26 +186,46 @@ export function Playground() {
   }, [html, css, format, width, scale, quality, presetId, signature]);
 
   useEffect(() => {
-    if (!auto || busy || signature === renderedSig.current) return;
+    if (!auto || busy || loadingSample || signature === renderedSig.current) return;
     const id = setTimeout(doRender, 350);
     return () => clearTimeout(id);
-  }, [auto, busy, signature, doRender]);
+  }, [auto, busy, loadingSample, signature, doRender]);
+
+  /** 拉取整页样例并填进两个编辑器；失败时保留 preset 自带的占位文案，别静默留白。 */
+  async function applySrc(src: string, presetCss: string, presetHtml: string) {
+    setLoadingSample(true);
+    try {
+      const { html: docHtml, css: docCss } = splitDoc(await loadSample(src));
+      setHtml(presetHtml || docHtml);
+      setCss(presetCss || docCss);
+    } catch (e: any) {
+      setError(`样例加载失败：${e?.message ?? e}`);
+    } finally {
+      setLoadingSample(false);
+    }
+  }
 
   function applyPreset(id: string) {
     const p = presets.find((x) => x.id === id)!;
     setPresetId(id);
-    setHtml(p.html);
-    setCss(p.css);
     setWidth(p.width);
     setScale(p.scale);
     setFormat(p.format);
+    if (p.src) applySrc(p.src, p.css, p.html);
+    else {
+      setHtml(p.html);
+      setCss(p.css);
+    }
   }
 
   const filename = `papersharp-${presetId}.${EXT[format]}`;
   const showBrowser = view !== "engine";
   const srcdoc = `<meta charset="utf-8"><style>${BROWSER_RESET}${css}</style>${html}`;
-  // 浏览器视口对齐引擎产物的 CSS 高度，两栏才能逐像素比；PDF/SVG 没有已知内容高度，退回固定视口。
+  // 浏览器视口对齐引擎产物的布局尺寸，两栏才能逐像素比。倍率≠1 时位图是物理像素，宽高都要折回 CSS。
+  // 页面尺寸以位图实测为准（不是请求 width），否则两栏比例差一档；@page 边距已只从预览渲染里剥掉
+  // （见 stripPrint），下载产物仍保留完整打印语义。无位图可量（SVG iframe 预览）时退回请求宽度与固定视口。
   const contentH = dims.h ? dims.h / scale : PANE_H;
+  const contentW = dims.w ? dims.w / scale : width;
 
   return (
     <section id="playground" className="pg">
@@ -287,7 +347,7 @@ export function Playground() {
           <div className={"panes " + (showBrowser ? "two" : "one")} style={{ ["--op" as any]: opacity / 100 }}>
             {showBrowser && (
               <div className="pane" data-label={t.status.browserLabel}>
-                <ScaleBox naturalW={width} naturalH={contentH} attach={attachScroller("browser")} onScrolled={scrollPartner("browser")}>
+                <ScaleBox naturalW={contentW} naturalH={contentH} attach={attachScroller("browser")} onScrolled={scrollPartner("browser")}>
                   <iframe title="browser" srcDoc={srcdoc} sandbox="" scrolling="no" />
                 </ScaleBox>
               </div>
@@ -295,7 +355,7 @@ export function Playground() {
 
             <div className={view === "overlay" ? "pane overlay" : "pane"} data-label={t.status.engineLabel}>
               {out && out.previewIsImage && (
-                <ScaleBox naturalW={width} naturalH={contentH} attach={attachScroller("engine")} onScrolled={scrollPartner("engine")}>
+                <ScaleBox naturalW={contentW} naturalH={contentH} attach={attachScroller("engine")} onScrolled={scrollPartner("engine")}>
                   <img src={out.preview} alt="PaperSharp output" />
                 </ScaleBox>
               )}
@@ -323,6 +383,7 @@ export function Playground() {
             <span className="dot" />
             <span>{busy ? t.status.rendering : error ? t.status.error : out ? t.status.ready : t.status.booting}</span>
             {out?.format === "pdf" && <span className="note">{t.status.pdfNote}</span>}
+            {view === "overlay" && <span className="note">{t.status.overlayNote}</span>}
           </footer>
         </div>
       </div>

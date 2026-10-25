@@ -6,6 +6,8 @@ import type { EngineFormat } from "./engine";
 export interface Preset {
   id: string;
   name: { zh: string; en: string };
+  /** 整页样例（如挑战页）不内联，构建前由 sync-engine.mjs 从仓内唯一真源拷进 public/samples/。 */
+  src?: string;
   html: string;
   css: string;
   width: number;
@@ -16,6 +18,18 @@ export interface Preset {
 }
 
 export const presets: Preset[] = [
+  {
+    // 默认样例：56 项特性的挑战页，A4 三页 PDF。真源 src/PaperSharpSamples/assets/challenge.html。
+    id: "challenge",
+    name: { zh: "挑战页", en: "Challenge" },
+    src: "samples/challenge.html",
+    width: 794, // 210mm @96dpi：iframe 视口与引擎布局同按页宽，两栏才能对齐
+    scale: 1,
+    format: "pdf",
+    pageSize: "a4",
+    html: "",
+    css: "",
+  },
   {
     id: "og-card",
     name: { zh: "OG 图卡", en: "OG card" },
