@@ -19,29 +19,17 @@ export interface Preset {
 
 export const presets: Preset[] = [
   {
-    // 默认样例：56 项特性的挑战页，A4 三页 PDF。真源 src/PaperSharpSamples/assets/challenge.html。
-    id: "challenge",
-    name: { zh: "挑战页", en: "Challenge" },
-    src: "samples/challenge.html",
-    width: 794, // 210mm @96dpi：iframe 视口与引擎布局同按页宽，两栏才能对齐
-    scale: 1,
-    format: "pdf",
-    pageSize: "a4",
-    html: "",
-    css: "",
-  },
-  {
     id: "og-card",
     name: { zh: "OG 图卡", en: "OG card" },
     width: 1200,
     scale: 2,
     format: "png",
     html: `<div class="card">
-  <div class="badge">PaperSharp</div>
-  <h1>Compile HTML/CSS<br />into PDF</h1>
-  <p>Managed C# drawing on Skia. No browser, no headless Chrome.</p>
+  <div class="badge" style="color: #4338ca; letter-spacing: 2.4px">PaperSharp</div>
+  <h1 style="font-size: 84px">Compile HTML/CSS<br />into PDF</h1>
+  <p style="color: #475569">Managed C# drawing on Skia. No browser, no headless Chrome.</p>
   <div class="row">
-    <span class="chip">PDF</span><span class="chip">PNG</span><span class="chip">SVG</span><span class="chip">ICO</span>
+    <span class="chip" style="color: #4338ca; border-color: #4338ca">PDF</span><span class="chip" style="color: #0ea5e9; border-color: #0ea5e9">PNG</span><span class="chip" style="color: #f97316; border-color: #f97316">SVG</span><span class="chip">ICO</span>
   </div>
 </div>`,
     css: `.card {
@@ -51,12 +39,26 @@ export const presets: Preset[] = [
   background: linear-gradient(to bottom right, #eef2ff, #ffffff 55%, #fff7ed);
   font-family: sans-serif;
 }
-.badge { font-size: 20px; font-weight: 700; letter-spacing: 2.4px; color: #4338ca; text-transform: uppercase; }
-h1 { margin-top: 18px; font-size: 84px; line-height: 1.05; font-weight: 800; color: #0f172a; }
-p { margin-top: 22px; font-size: 28px; color: #475569; }
+/* 样式表与 style 属性走同一套层叠：下面几个类只留通用部分，
+   字色、字号这类按元素给的值写在 HTML 的行内 style 上。 */
+.badge { font-size: 20px; font-weight: 700; text-transform: uppercase; }
+h1 { margin-top: 18px; line-height: 1.05; font-weight: 800; color: #0f172a; }
+p { margin-top: 22px; font-size: 28px; }
 .row { margin-top: 40px; display: flex; gap: 12px; }
 .chip { padding: 8px 18px; font-size: 20px; font-weight: 600; color: #1e293b;
         background: #ffffff; border-width: 1px; border-style: solid; border-color: #cbd5e1; border-radius: 9999px; }`,
+  },
+  {
+    // 56 项特性的挑战页，A4 三页 PDF。真源 src/PaperSharpSamples/assets/challenge.html。
+    id: "challenge",
+    name: { zh: "挑战页", en: "Challenge" },
+    src: "samples/challenge.html",
+    width: 794, // 210mm @96dpi：预览位图与引擎布局同按页宽，倍率只加像素密度
+    scale: 2,
+    format: "pdf",
+    pageSize: "a4",
+    html: "",
+    css: "",
   },
   {
     id: "invoice-cn",
@@ -141,7 +143,7 @@ li { font-size: 16px; color: #334155; padding: 5px 0; border-bottom-width: 1px; 
     id: "report-long",
     name: { zh: "多页报表", en: "Multi-page report" },
     width: 794,
-    scale: 1,
+    scale: 2,
     format: "pdf",
     pageSize: "a4",
     html: `<div class="doc">

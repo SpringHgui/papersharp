@@ -43,24 +43,14 @@ export const zh = {
       download: "下载",
       reset: "还原样例",
     },
-    view: {
-      engine: "引擎",
-      side: "并排浏览器",
-      overlay: "叠加",
-    },
     status: {
-      booting: "正在加载 .NET WASM 引擎（首次约 25 MB）…",
+      booting: "正在加载 .NET WASM 引擎…",
       rendering: "渲染中…",
       ready: "就绪",
       error: "引擎报错",
-      browserLabel: "浏览器排版",
-      engineLabel: "PaperSharp 排版",
       pdfNote: "预览是整幅位图，下载得到分页 PDF",
-      overlayNote:
-        "重影是屏幕字体与打印字体每行约 0.5px 的行盒度量差随页深累积，不是渲染缺陷；把不透明度拉满即只看引擎层",
     },
     stats: {
-      time: "引擎耗时",
       size: "体积",
       dims: "尺寸",
     },
@@ -170,24 +160,14 @@ export const en: Copy = {
       download: "Download",
       reset: "Reset sample",
     },
-    view: {
-      engine: "Engine",
-      side: "Next to browser",
-      overlay: "Overlay",
-    },
     status: {
-      booting: "Loading the .NET WASM engine (about 25 MB on first run)…",
+      booting: "Loading the .NET WASM engine…",
       rendering: "Rendering…",
       ready: "Ready",
       error: "Engine error",
-      browserLabel: "Browser layout",
-      engineLabel: "PaperSharp layout",
       pdfNote: "Preview is one flat bitmap; the download is a paginated PDF",
-      overlayNote:
-        "The ghosting is the ~0.5px-per-line line-box metric gap between screen and print fonts accumulating down the page, not a rendering defect; at 100% opacity you see the engine layer alone",
     },
     stats: {
-      time: "Engine time",
       size: "Size",
       dims: "Dimensions",
     },

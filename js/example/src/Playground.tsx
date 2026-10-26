@@ -3,8 +3,6 @@ import { render, warmUp, type EngineFormat } from "./engine";
 import { presets } from "./presets";
 import { useCopy } from "./i18n";
 
-type ViewMode = "engine" | "side" | "overlay";
-
 const MIME: Record<EngineFormat, string> = {
   png: "image/png",
   jpeg: "image/jpeg",
@@ -23,7 +21,7 @@ function toUrl(bytes: Uint8Array, format: EngineFormat): string {
   return URL.createObjectURL(new Blob([bytes as BlobPart], { type: MIME[format] }));
 }
 
-// 整页样例（presets[].src）按需抓取并缓存：默认挑战页首屏即要可编辑，不能等用户点开才加载。
+// 整页样例（presets[].src）按需抓取并缓存：切回同一个样例不必再取一次。
 const sampleCache = new Map<string, string>();
 async function loadSample(src: string): Promise<string> {
   const hit = sampleCache.get(src);
@@ -35,7 +33,7 @@ async function loadSample(src: string): Promise<string> {
   return text;
 }
 
-/** 从整页文档里切出 <style> 块与 <body>：分别喂 CSS 编辑器与 HTML 编辑器，拼回 srcdoc 时仍是完整页。 */
+/** 从整页文档里切出 <style> 块与 <body>：分别喂 CSS 编辑器与 HTML 编辑器。 */
 function splitDoc(src: string) {
   const style = /<style[^>]*>([\s\S]*?)<\/style>/i.exec(src);
   const body = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(src);
@@ -45,27 +43,14 @@ function splitDoc(src: string) {
   return { html: (body?.[1] ?? src).trim(), css };
 }
 
-// 并排/叠加的浏览器栏是「屏幕」渲染，@page 的边距被浏览器忽略；而引擎的预览位图（RenderPng）
-// 会按 @page margin 留白（Renderer.cs:313），两栏顶边就差一个页边距。对比用的预览走这份剥了 @page
-// 的 CSS，边距归零、和浏览器同框；@page size 也不参与——PDF 页尺寸由 render 的 pageSize 参数定，下载产物不受影响。
-// 正则吃掉一层嵌套花括号：@page 里还可能有 @top-center / @bottom-center 这类 margin box 块。
-const stripPrint = (css: string) => css.replace(/@page[^{]*\{(?:[^{}]|\{[^{}]*\})*\}/g, "");
-
-// 与引擎 tailwind.mjs 的 PREFLIGHT 同源：两边吃到同一份重置，对比才不留 8px 的假差异。
-const BROWSER_RESET = `
-body { margin: 0; }
-h1, h2, h3, h4, h5, h6, p, ul, ol, figure, blockquote { margin: 0; }
-ul, ol { padding: 0; list-style: none; }
-img { display: block; }
-`;
-
 interface Output {
   url: string;
   /** 展示用产物：栅格格式就是 url 本身，PDF 则是另渲染的一张 PNG。 */
   preview: string;
   previewIsImage: boolean;
+  /** 预览位图实际用的像素密度：PDF 的预览会跟屏幕 DPR 走，与产物的倍率不是一回事。 */
+  previewScale: number;
   bytes: number;
-  ms: number;
   format: EngineFormat;
 }
 
@@ -81,8 +66,6 @@ export function Playground() {
   const [scale, setScale] = useState(initial.scale);
   const [format, setFormat] = useState<EngineFormat>(initial.format);
   const [quality, setQuality] = useState(90);
-  const [view, setView] = useState<ViewMode>("engine");
-  const [opacity, setOpacity] = useState(55);
   const [auto, setAuto] = useState(true);
 
   // 异步样例未就绪前不许跑渲染：空 HTML 会先出一张白页再被真内容闪掉。
@@ -98,19 +81,6 @@ export function Playground() {
   const signature = [presetId, html, css, width, scale, format, quality].join("\u0000");
   const renderedSig = useRef("");
   const urls = useRef<string[]>([]);
-  const scrollers = useRef(new Map<string, HTMLDivElement | null>());
-
-  /** 并排/叠加两层各自滚动会把对比拆成两个时刻，这里把 scrollTop 同步给另一层。 */
-  function scrollPartner(from: string) {
-    return (top: number) => {
-      for (const [key, el] of scrollers.current) if (key !== from && el) el.scrollTop = top;
-    };
-  }
-  function attachScroller(key: string) {
-    return (el: HTMLDivElement | null) => {
-      scrollers.current.set(key, el);
-    };
-  }
 
   useEffect(() => {
     warmUp()
@@ -148,23 +118,24 @@ export function Playground() {
       icoSize: presets.find((p) => p.id === presetId)?.icoSize,
     };
     try {
-      const t0 = performance.now();
       const bytes = await render({ ...req, format });
-      const ms = Math.round(performance.now() - t0);
       const url = toUrl(bytes, format);
 
       // PDF 直接塞 iframe 会被 Chrome 内置查看器接管（深色工具栏 + 缩略图栏），
-      // 而且叠加/并排视图拿不到可对齐的位图。所以另渲一张 PNG 只用于展示，
-      // 下载与体积统计仍然是真正的 PDF 产物。
+      // 所以另渲一张 PNG 只用于展示，下载与体积统计仍然是真正的 PDF 产物。
+      // 展示那张按 max(倍率, 屏幕 DPR) 出图：PDF 是矢量、不吃倍率，但位图预览吃，
+      // 高分屏上按 1× 出就是一屏糊字。
       let preview = url;
       let previewIsImage = isRaster(format);
+      let previewScale = scale;
       if (format === "pdf") {
+        previewScale = Math.max(scale, window.devicePixelRatio || 1);
         try {
-          // 预览走剥掉 @page 的 CSS：让引擎位图与浏览器栏同按无页边距布局，顶边对齐；下载 url 仍是完整 PDF。
-          preview = toUrl(await render({ ...req, css: stripPrint(css), format: "png" }), "png");
+          preview = toUrl(await render({ ...req, scale: previewScale, format: "png" }), "png");
           previewIsImage = true;
         } catch {
           /* 预览图渲染失败不致命：退回 iframe，让用户至少看到真 PDF */
+          previewScale = scale;
         }
       }
 
@@ -176,7 +147,7 @@ export function Playground() {
       else setDims({ w: width * scale, h: 0 });
       setError(null);
       renderedSig.current = requested;
-      setOut({ url, preview, previewIsImage, bytes: bytes.byteLength, ms, format });
+      setOut({ url, preview, previewIsImage, previewScale, bytes: bytes.byteLength, format });
     } catch (e: any) {
       renderedSig.current = requested; // 失败也记账，否则同一份错误输入会反复重跑
       setError(String(e?.message ?? e));
@@ -219,13 +190,14 @@ export function Playground() {
   }
 
   const filename = `papersharp-${presetId}.${EXT[format]}`;
-  const showBrowser = view !== "engine";
-  const srcdoc = `<meta charset="utf-8"><style>${BROWSER_RESET}${css}</style>${html}`;
-  // 浏览器视口对齐引擎产物的布局尺寸，两栏才能逐像素比。倍率≠1 时位图是物理像素，宽高都要折回 CSS。
-  // 页面尺寸以位图实测为准（不是请求 width），否则两栏比例差一档；@page 边距已只从预览渲染里剥掉
-  // （见 stripPrint），下载产物仍保留完整打印语义。无位图可量（SVG iframe 预览）时退回请求宽度与固定视口。
-  const contentH = dims.h ? dims.h / scale : PANE_H;
-  const contentW = dims.w ? dims.w / scale : width;
+  // 页面尺寸以引擎位图实测为准（不是请求 width）。位图是物理像素，要按它自己的像素密度折回 CSS：
+  // 栅格格式的预览就是产物（吃倍率），PDF 的预览是另渲的 DPR 图。无位图可量（SVG iframe 预览）时退回请求宽度与固定视口。
+  const pScale = out?.previewScale ?? scale;
+  const contentH = dims.h ? dims.h / pScale : PANE_H;
+  const contentW = dims.w ? dims.w / pScale : width;
+  // 尺寸报的是下载件的含义：位图产物就是它的像素数；PDF 是矢量，报预览换算出的 CSS 页尺寸，
+  // 否则高分屏上会冒出一个跟倍率对不上的物理像素数。
+  const shownDims = out?.format === "pdf" ? { w: Math.round(contentW), h: Math.round(contentH) } : dims;
 
   return (
     <section id="playground" className="pg">
@@ -295,21 +267,6 @@ export function Playground() {
 
         <div className="spacer" />
 
-        <div className="seg" role="group">
-          {(["engine", "side", "overlay"] as ViewMode[]).map((v) => (
-            <button key={v} type="button" className={view === v ? "on" : ""} onClick={() => setView(v)}>
-              {t.view[v]}
-            </button>
-          ))}
-        </div>
-
-        {view === "overlay" && (
-          <label className="field range">
-            <span>{lang === "zh" ? "引擎不透明度" : "Engine opacity"}</span>
-            <input type="range" min={0} max={100} value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} />
-          </label>
-        )}
-
         <label className="check">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
           {lang === "zh" ? "自动" : "Auto"}
@@ -344,18 +301,10 @@ export function Playground() {
             </div>
           )}
 
-          <div className={"panes " + (showBrowser ? "two" : "one")} style={{ ["--op" as any]: opacity / 100 }}>
-            {showBrowser && (
-              <div className="pane" data-label={t.status.browserLabel}>
-                <ScaleBox naturalW={contentW} naturalH={contentH} attach={attachScroller("browser")} onScrolled={scrollPartner("browser")}>
-                  <iframe title="browser" srcDoc={srcdoc} sandbox="" scrolling="no" />
-                </ScaleBox>
-              </div>
-            )}
-
-            <div className={view === "overlay" ? "pane overlay" : "pane"} data-label={t.status.engineLabel}>
+          <div className="panes one">
+            <div className="pane">
               {out && out.previewIsImage && (
-                <ScaleBox naturalW={contentW} naturalH={contentH} attach={attachScroller("engine")} onScrolled={scrollPartner("engine")}>
+                <ScaleBox naturalW={contentW} naturalH={contentH}>
                   <img src={out.preview} alt="PaperSharp output" />
                 </ScaleBox>
               )}
@@ -370,20 +319,16 @@ export function Playground() {
 
           <footer className="stats">
             <span>
-              {t.stats.time}: <b>{out ? `${out.ms} ms` : "—"}</b>
-            </span>
-            <span>
               {t.stats.size}: <b>{out ? `${(out.bytes / 1024).toFixed(0)} KB` : "—"}</b>
             </span>
-            {dims.h > 0 && (
+            {shownDims.h > 0 && (
               <span>
-                {t.stats.dims}: <b>{`${dims.w}×${dims.h} px`}</b>
+                {t.stats.dims}: <b>{`${shownDims.w}×${shownDims.h} px`}</b>
               </span>
             )}
             <span className="dot" />
             <span>{busy ? t.status.rendering : error ? t.status.error : out ? t.status.ready : t.status.booting}</span>
             {out?.format === "pdf" && <span className="note">{t.status.pdfNote}</span>}
-            {view === "overlay" && <span className="note">{t.status.overlayNote}</span>}
           </footer>
         </div>
       </div>
@@ -395,22 +340,18 @@ export function Playground() {
 const PANE_H = 520;
 
 /**
- * 把自然尺寸的内容等比缩进可用宽度里，引擎层与浏览器层用同一个系数才能逐像素对齐。
+ * 把自然尺寸的内容等比缩进可用宽度里。
  * 给了 naturalH 就按内容比例定高（图片不留空白），否则铺满 PANE_H（iframe 需要确定高度）。
- * 超过 PANE_H 的长文档在框内滚动，两层的滚动位置由调用方同步。
+ * 超过 PANE_H 的长文档在框内滚动。
  */
 function ScaleBox({
   naturalW,
   naturalH = PANE_H,
   children,
-  onScrolled,
-  attach,
 }: {
   naturalW: number;
   naturalH?: number;
   children: ReactNode;
-  onScrolled?: (top: number) => void;
-  attach?: (el: HTMLDivElement | null) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [avail, setAvail] = useState(naturalW);
@@ -427,15 +368,7 @@ function ScaleBox({
   const innerH = naturalH ? naturalH : PANE_H / k;
   const scaledH = Math.round(innerH * k);
   return (
-    <div
-      ref={(el) => {
-        boxRef.current = el;
-        attach?.(el);
-      }}
-      className="scaler"
-      style={{ height: Math.min(scaledH, PANE_H) }}
-      onScroll={(e) => onScrolled?.(e.currentTarget.scrollTop)}
-    >
+    <div ref={boxRef} className="scaler" style={{ height: Math.min(scaledH, PANE_H) }}>
       {/* 缩放后的占位盒：transform 不改布局尺寸，没有这一层，滚动范围会按未缩放的 naturalH 算。 */}
       <div className="scaler-fit" style={{ width: Math.round(naturalW * k), height: scaledH }}>
         <div className="scaler-inner" style={{ width: naturalW, height: innerH, transform: `scale(${k})` }}>
