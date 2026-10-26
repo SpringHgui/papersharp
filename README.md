@@ -10,6 +10,10 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![NuGet](https://img.shields.io/nuget/v/PaperSharp)](https://www.nuget.org/packages/PaperSharp)
 
+## 在线演示
+
+https://papersharp.netlify.app
+
 ## 为什么选它
 
 - **零浏览器依赖** —— 不装 Chromium、不起子进程、不开调试端口；一个类库嵌进你的 .NET 进程即可渲染
