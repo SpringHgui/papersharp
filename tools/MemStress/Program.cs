@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime;
 using PaperSharp;
+using PaperSharp.Layout;
 
 namespace MemStress;
 
@@ -29,6 +30,7 @@ public static class Program
         public string Evict = "";               // "" | every（每份后清空子集字面缓存）| end/probe（跑完当场清空，量它占多少字节）| N（第 N 份时清空）
         public bool SubsetBytes;                // 只量子集流的体积与分表占比
         public bool SubsetHold;                 // 48 张真子面只加载不画，量「每张活字面」的 priv 成本
+        public string Bundled = "";             // 打包子集字体目录（空 = 不启用 → 中文走系统整份字面）
     }
 
     static int Main(string[] args)
@@ -47,6 +49,9 @@ public static class Program
         if (o.SubsetHold) { ProbeSubsetHold(Process.GetCurrentProcess()); return 0; }
         var tpl = File.ReadAllText(o.Html);
         var baseDir = Path.GetDirectoryName(Path.GetFullPath(o.Html))!;
+        // 默认不启用打包子集：中文会落到系统整份雅黑（每张 16~19MB 常驻），那是「宿主没配字体」
+        // 的最坏口径。--bundled 指到样例工程的 assets/fonts 才能量到产品实际形态。
+        if (o.Bundled != "") FontManager.BundledFontDirectory = Path.GetFullPath(o.Bundled);
         if (o.SampleEvery == 0) o.SampleEvery = Math.Max(1, o.Docs / 24);
         if (o.Csv == "")
         {
@@ -92,6 +97,7 @@ public static class Program
         Console.WriteLine(Format(tGc, o.Docs, alloc0) + "   <- 强制 Full GC + 等终结器后");
         Report(o, rows, alloc0, basePriv, baseWs, gc0, gc1, gc2, tGc, heapRetained);
 
+        if (Environment.GetEnvironmentVariable("PS_FACEPROBE") == "1") FaceProbe(proc);
         DumpCaches(o.Docs);
         InspectSubsets();
         if (o.Evict == "end") EvictAndReport(proc, "跑完当场");
@@ -374,6 +380,49 @@ public static class Program
     }
 
     // ── 静态缓存清点：批量场景里条目数随文档数线性涨的，就是根 ──
+    /// <summary>临时：清各类字面缓存前后各量一次 priv，并按 face 打印原生字面清单。</summary>
+    static void FaceProbe(Process p)
+    {
+        var asm = typeof(Renderer).Assembly;
+        var faces = new Dictionary<long, (SkiaSharp.SKTypeface tf, string src)>();
+        void Harvest(string name, object? dict)
+        {
+            if (dict is System.Collections.IEnumerable en)
+                foreach (var kv in en.Cast<object?>())
+                {
+                    var v = kv?.GetType().GetProperty("Value")?.GetValue(kv) ?? kv;
+                    if (v is SkiaSharp.SKTypeface f) faces[f.Handle.ToInt64()] = (f, name);
+                }
+        }
+        Harvest("FontManager.Cache", typeof(PaperSharp.Layout.FontManager).GetField("Cache", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null));
+        Harvest("FallbackCache", FaceType().GetField("FallbackCache", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null));
+        Harvest("CpFaceCache", FaceType().GetField("CpFaceCache", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null));
+        Harvest("ListFaceCache", FaceType().GetField("ListFaceCache", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null));
+        foreach (var fld in typeof(PaperSharp.Layout.FontManager).GetFields(BindingFlags.Static | BindingFlags.NonPublic))
+            if (fld.GetValue(null) is SkiaSharp.SKTypeface sf) faces[sf.Handle.ToInt64()] = (sf, fld.Name);
+        double before = Squeeze(p);
+        Console.WriteLine($"# 字面探针：活字面 {faces.Count} 张，压平后 priv {before:F1} MB");
+        foreach (var (h, (tf, src)) in faces.OrderByDescending(x => TblBytes(x.Value.tf)))
+            Console.WriteLine($"#   {TblBytes(tf) / 1048576.0,7:F2} MB  {tf.FamilyName,-22} w{tf.FontWeight,-4} wd{tf.FontWidth} s{(int)tf.FontSlant} g{tf.GlyphCount,-6} h{tf.Handle.ToInt64():X} [{src}]");
+        long sum = faces.Sum(x => (long)TblBytes(x.Value.tf));
+        Console.WriteLine($"#   表字节合计 {sum / 1048576.0:F1} MB");
+        // 清空全部字面缓存再压平
+        foreach (var name in new[] { "FontManager.Cache" })
+            if (asm.GetType("PaperSharp.Layout.FontManager")!.GetField("Cache", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null) is System.Collections.IDictionary d) d.Clear();
+        foreach (var nm in new[] { "FallbackCache", "CpFaceCache", "ListFaceCache" })
+            if (FaceType().GetField(nm, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null) is System.Collections.IDictionary cd) cd.Clear();
+        int ev = EvictSubsetCache();
+        double after = Squeeze(p);
+        Console.WriteLine($"#   清掉 {faces.Count} 张(其中子集 {ev})后 priv {after:F1} MB（降 {before - after:F1}）");
+    }
+
+    static int TblBytes(SkiaSharp.SKTypeface tf)
+    {
+        int s = 0;
+        try { foreach (var t in tf.GetTableTags()) s += tf.GetTableSize(t); } catch { }
+        return s;
+    }
+
     static void DumpCaches(int docs)
     {
         var asm = typeof(Renderer).Assembly;
@@ -621,7 +670,8 @@ public static class Program
                 case "--probe": o.Probe = true; break;
                 case "--subset": o.SubsetBytes = true; break;
                 case "--hold": o.SubsetHold = true; break;
-                default: Console.Error.WriteLine($"未知参数: {a}"); Console.Error.WriteLine("用法: MemStress [serial|par] --docs N [--degree D] [--content vary|same] [--pool P] [--html path] [--every K] [--csv f] [--write dir] [--evict every|end|keep:N|N] [--probe] [--subset]"); return o;
+                case "--bundled": o.Bundled = v; i++; break;
+                default: Console.Error.WriteLine($"未知参数: {a}"); Console.Error.WriteLine("用法: MemStress [serial|par] --docs N [--degree D] [--content vary|same] [--pool P] [--html path] [--every K] [--csv f] [--write dir] [--evict every|end|keep:N|N] [--bundled dir] [--probe] [--subset]"); return o;
             }
         }
         return o;

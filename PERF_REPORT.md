@@ -463,6 +463,10 @@
 
 **解读**：单次渲染托管分配 ~17–30MB（主要是 PDF 字节流 + Skia 画布 + 中间盒子树）；进程工作集稳定在 ~310–326MB（含字体子集与 SkiaSharp 原生库，较旧 Debug 略升属 Release/JIT 差异）。多次渲染工作集不持续上涨，无泄漏迹象。
 
+> **⚠️ 本节数字已过时（2026-10-27）**：上表那 310–326MB 里约 80MB 是 `TtfSubsetter` 把整张字体表读进托管堆
+> 的峰值、另有 30+MB 是同一张物理面被重复持有。改造后同口径**峰值工作集 141MB / 私有字节 89MB**，
+> 机制、分阶段归因与保真门见 **§15**。引用内存请以 §15 为准。
+
 ## 8. 优化建议（按性价比）
 
 1. **✅ 已修：表格 O(行²) → O(行)。**（§5.3）
@@ -1125,3 +1129,134 @@ JIT 而非字体/Skia**（§2 那笔 09-22 的 Debug 旧账方向得改）。候
 2. **14.3 的分账实验**（安静机 10 分钟）→ 决定「层叠数据结构」vs「Walk 瘦身」谁是 B 轴那 48 ms/页 的刀。
 3. **C/X 塌页修复**（§13.8 根因已定位，逃逸组幂等记账方向）——它同时是 B/C/D 轴数字可信度的前置。
 4. M6 自研层叠：**从性能清单上划掉**（14.2），只保留依赖收敛这一个非性能动机。
+
+## 15. 内存：单次导出的 300MB 从哪来，砍到哪（2026-10-27 本轮）
+
+### 15.1 问题的口径
+
+§7 那批老数据（invoice/long/flex/img/report/pct/polish/inline/table，单页渲染）**进程工作集
+309.4–326.1 MB**——这就是「生成 PDF 占内存 300M 左右」的原始出处。注意它是**工作集**，不是托管堆
+（托管堆增量只有 17–30 MB），所以先要把这 300 MB 拆开，否则会一直往托管堆上找错地方。
+
+本轮全部用 `tools/MemStress` 记账（`PrivateMemorySize64` / `WorkingSet64` / `GC.GetTotalMemory` /
+`GC.GetTotalAllocatedBytes` 四个口径分开记），模板用 `benchmarks/PdfBench/spec/challenge.html`。
+
+### 15.2 分阶段归因（改造前，首份，`PS_MEMTRACE=1` 探针）
+
+| 阶段 | priv | ws | 托管堆 | 累计分配 |
+|---|---:|---:|---:|---:|
+| 进程起点 | — | — | — | — |
+| dom-parse（AngleSharp） | 34.2 | 67.4 | 5.0 | 10.8 |
+| walk（层叠 + 建样式树） | 55.5 | 94.6 | 22.1 | 34.9 |
+| buildLayout（盒树 + 测量） | 61.8 | 102.6 | 26.7 | 53.2 |
+| recordingPass | 67.7 | 110.6 | 26.6 | 67.6 |
+| **subsets（字体子集化）** | **148** | — | — | 73.1 |
+
+结论只有一条：**`subsets` 一步把 priv 从 68 拽到 148 MB**，其余阶段加起来不到 40 MB。
+根因在 `TtfSubsetter` 的老实现——它把 21 张表**全部**读成 `Dictionary<uint, byte[]>` 塞进托管堆再拼装，
+系统雅黑一张面就是 **18.6 MB 表字节**，每多一张 CJK 面就多一份，且这些表进 LOH。
+
+配套的活字面盘点（`PS_FACEPROBE=1`）同时暴露了第二笔账：**13 张活字面合计 89.5 MB 表字节**，
+其中 4 张是雅黑（2×18.68 + 2×15.98 = 69.3 MB）——**同一张物理面被存了多份**：
+- 同一张正立面同时以 `s0`（upright）和 `s2`（italic 请求）两个键各存一份（§15.3 刀②）；
+- 同一张面又被 family 别名各存一份（`Microsoft YaHei` / `微软雅黑` / `system-ui`）；
+- 雅黑 Light 那张 11.61 MB 的面**只用来读 4 个度量数字**（§15.3 刀③）。
+
+### 15.3 五刀
+
+**刀① · 字体子集化改流式（`Pdf/TtfSubsetter.cs`）**
+新增内部类 `SfntFont`：优先用 `SKTypeface.OpenStream(out int ttcIndex)` 按 sfnt/TTC 目录做**表视图**，
+失败退回 `GetTableData`。真要改写的小表只有 9 张
+（`head/maxp/hmtx/vmtx/hhea/vhea/cmap/name/COLR`），`glyf`/`loca` **不进** `Rewritable`——
+`ComputeClosure` 逐字形按 `ReadInto` 读复合组件，`BuildSfnt` 一次分配**精确大小**的输出缓冲，
+`glyf` 按保留字形**逐段直拷**、其余表 `ReadInto` 直传。
+效果：`open/loca/closure/tables/built` 全程 <0.5 MB，`subsets` 一步的 priv 增量从 **+80 MB 降到个位数**。
+
+**刀② · 物理面身份归一 + 去重（新增 `Layout/FaceIdentity.cs`，`FontManager.Canonicalize`）**
+`FaceKey(Family, Weight, Width, Slant, GlyphCount, HeadSum)` 用 `ConditionalWeakTable` 挂在 `SKTypeface` 上；
+关键一行是**倾斜档归一**——`FontManager.FaceIsSlanted(t) ? (int)t.FontSlant : (int)Upright`。
+不归一的话，同一张正立面会以 `s0/s1/s2` 存三份各 18 MB（CSS 写 `font-style:italic` 时 Skia 常常
+仍把正立面还给你，键却已经分叉）。`ResolveFallback` 的系统命中分支在 `KernTable.AttachFromTables`
+之前调 `Canonicalize`：同物理面已有一份就 `Dispose` 新的、返回老的。
+
+**刀③ · 雅黑 Light 只借度量（`FontManager.ResolveYaheiLight`）**
+`_yaheiLight` 从「持有整张面」改成「只存 5 个 float」（ascent/descent/lineGap/normalLh/xHeight），
+面当场 `Dispose`；`LightCjkExtents` 改用 `(Px(light.Ascent*sizePx), Px(light.Descent*sizePx))`。
+省下 11.61 MB 常驻，度量口径一字未变（§15.4 的栅格门就是验它）。
+
+**刀④ · PDF 编码不再整份字符串化（`Renderer.EncodePdfPages` + `Pdf/PdfEnhancer.cs`）**
+- `MemoryStream.TryGetBuffer` 取段，去掉 `ToArray()` 的整份多拷贝；
+- `PdfEnhancer` 里新增 `readonly struct PdfBytes`，`LastIndexOf/IndexOf/IndexAfter/SkipWs/ParseLongAt/
+  ExtractDict/ParseXrefTable/ReadObject/CollectPages` 全走字节扫描，只把对象字典变成小字符串——
+  原来 `Latin1.GetString(整份 PDF)` 是 2.4 MB → 4.8 MB 的 UTF-16 常驻。
+
+**刀⑤ · 层叠缓存时效化（`EagerStyleCollection.Release`）**
+`_merged` 里每张声明都是 AngleSharp 的**全量长手属性表**，challenge.html 265 个元素 ≈ **24 MB**，
+却只在 `Walk` + 伪元素落树期间有读者（`ctx` 是 `BuildDocument` 的局部量，返回值 `ComputedStyle`
+树不反向引用任何声明对象）。在 `PseudoContent.Apply` / `Animation.Apply` 之后 `Release()` 掉四张表，
+保留 `_rules`（万一有迟到的层叠调用重算依然正确，Release 因此幂等、不改语义）。
+实测收益偏小（`subsets` 处 priv 74.4 → 71.5 MB），因为 `GC.GetTotalMemory(false)` 在回收前不缩，
+这刀的真正价值是**留住这 24 MB 的生存期从「整条管线」缩短到「Walk」**。
+
+> **顺手记一笔被否决的刀**：曾试过「叶子元素不进 `_merged`」（缓存只对后代有用，叶子读了就丢）。
+> 实测**更差**——伪元素那两条路径会再次向宿主 `Merged()`，而宿主多为叶子，重算一次级联（每张 ~90 KB
+> 全表匹配）的代价超过省下的滞留：walk 分配 34.9 → **35.5 MB**、`subsets` priv 71.5 → **72.4 MB**。
+> 已回退，理由写进 `EagerStyleCollection.Merged` 的注释里，避免下次再试。
+
+### 15.4 两个口径的现状（同一台机器、`--docs 3 --content same`、三次取中位）
+
+判读前先记住**进程地板**：`<html><body><p>hello</p></body></html>` 这种极简文档，
+priv **43–45 MB** / ws **85–87 MB**——那是 .NET 运行时 + JIT + SkiaSharp 原生库的底，
+任何「还能再降多少」的问题都要先减掉它。
+
+| 口径 | 版本 | 峰值 priv | 峰值 ws | 峰值 heap | Full GC 后 priv（原生侧） |
+|---|---|---:|---:|---:|---:|
+| **不打包子集**（宿主未配字体，中文走系统整份雅黑） | 改前 | 211.7 | 306.3 | 134.1 | — |
+| | 改后 | **88.5** | **141.5** | **22.6** | 76.3（≈67.2） |
+| **打包子集**（产品形态，`--bundled assets/fonts`） | 改前 | 65.9–69.9 | 119.6–122.7 | 17.5–19.0 | 55.9–65.5（≈51.5–61.0） |
+| | 改后 | 70.8–71.9 | 118.9–119.7 | 14.9–16.9 | 56.2–58.0（≈51.7–53.5） |
+
+读法：
+- **最坏口径 ws 306 → 141 MB（−54%）、priv 212 → 89 MB（−58%）、堆 134 → 23 MB（−83%）**，
+  这是本轮真正的收益所在（用户报的 300MB 就是这个口径）。
+- 打包口径两版**在噪声内相等**：峰值 priv 差 ~2 MB、ws 差 ~3 MB，而 Full GC 后的**原生侧两边同为
+  ~52–53 MB**——差别只落在采样瞬间的堆大小上。符合预期：子集面本身只有 2–3 MB，
+  老实现「把 21 张表读进堆」在这里本来就只花几 MB，刀①打的是它在大面上的账。
+- 打包口径吞吐 344–346 ms/doc（改前 526 ms/doc 是不打包口径，不可直接比）。
+
+**剩余构成（打包口径，Full GC 后 priv 57 MB）**：地板 ~43 MB + 渲染期工作集 ~14 MB。
+`ws − priv ≈ 53 MB` 的差额基本是**被映射的字体文件**（雅黑三张 46 MB：regular 18.68 + bold 15.98 +
+light 11.61；Noto 两张 4.44；Segoe/Consolas 其余）。实测「把 11 张面全清掉后 priv 降 0.0 MB」——
+即这些页是 file-mapped 的**干净共享页**，算在 ws 里、但可以随系统压力被回收，不是泄漏。
+
+### 15.5 保真门（判定「零行为变化」的三道）
+
+1. **端到端 PDF 逐字节**：26 个样例（`benchmarks/PdfBench/spec` 那套）出 PDF + PDFium 栅格首页 +
+   PdfPig 抽文本，刀①②③④⑤ 前后 **samples 26 / diffs 0**，且增量段确实生成（`/Outlines`、`/Prev`、
+   两个 `%%EOF` 都在）。清理探针后复跑再对一次，仍然 **0 diff**。
+2. **子集字节**：Noto×2 / MicrosoftYaHei / SegoeUI / Consolas / Arial 各取 7/60/400 字形集裁剪落盘对拍，
+   新旧**仅 `head.checkSumAdjustment` 4 字节不同**（老实现该字段恒 0，从不回填），体积与全部表逐字节一致。
+3. **测试（全量，含 Slow）**：498 总计 → **464 通过 / 34 失败**（耗时 33 s）。
+   失败项按类归并只有两族：`PngGoldenTests` 17 + `PdfRasterTests` 17。
+   在基线上（`git stash push -- src/PaperSharp`）跑同一批得到**同样 34 失败 / 464 通过**，
+   且把两侧失败用例名逐条 `diff` **完全一致（0 行差异）**——环境性既有失败，非本轮引入。
+
+   > 顺手把这两族失败的**成因**也量化了（为避免下次再重新怀疑一遍）：
+   > 34 个 golden 都是「解码后 RGBA 逐字节全等」判据，本机字体栈与基准生成机不同即红。
+   > 用 `goldcheck` 模式对 17 个 PNG 逐像素统计（794 宽 @2x）：
+   > - **13 个尺寸完全一致**，差异 2.0%–10.8%（`img` 最高 10.8%），全落在字形边缘 → 纯栅格差；
+   > - **3 个高度不同**：`m1` +75 px、`polish` +39 px、`m4` +2 px → 字体度量差异改了行高/换行；
+   > - **`m3` 98.8% 像素不同**，取样点 golden 全是 `RGBA(0,0,0,0)`——统计出该基准
+   >   **98.3% 的像素 alpha=0**（其余 16 个基准都是 0.0%）。**`goldens/png/m3.png` 本身是张空图**，
+   >   属基准损坏，与本轮改动无关，也不该用 `UPDATE_GOLDENS` 顺手覆盖（那会连真实回归一起掩盖）。
+
+### 15.6 后续可选项（都不在关键路径上）
+
+1. **把打包子集配起来**（收益最大、零代码）：`FontManager.BundledFontDirectory` 指到
+   `assets/fonts`，中文的 priv 直接少 ~20 MB、吞吐快 35%。本轮给 `MemStress` 加了
+   `--bundled <dir>` 就是为了让这条口径可复现——**默认不启用**，因为「宿主没配字体」是更常见的
+   真实场景，也是用户报 300MB 的那个场景。
+2. **`walk` 那 24 MB 分配**：AngleSharp 每元素一张全量长手属性表 + 折算，已是 §14.2 结论里
+   「自研层叠只剩依赖收敛动机」的那块常数。要动就得按 §14.3 的分账实验先定案。
+3. **Skia 缓存主动回收**（`SKGraphics.PurgeCaches`）：常驻服务在每 N 份后调一次可压 ws，
+   但会牺牲重复渲染复用，未做。

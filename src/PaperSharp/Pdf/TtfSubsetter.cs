@@ -24,6 +24,10 @@ public static class TtfSubsetter
     const uint TagCmap = 0x636D6170;   // 'cmap'
     const uint TagName = 0x6E616D65;   // 'name'
     const uint TagColr = 0x434F4C52;   // 'COLR'
+    const uint TagHmtx = 0x686D7478;   // 'hmtx'
+    const uint TagVmtx = 0x766D7478;   // 'vmtx'
+    const uint TagHhea = 0x68686561;   // 'hhea'
+    const uint TagVhea = 0x76686561;   // 'vhea'
 
     static uint Tag(string s) => (uint)((s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3]);
 
@@ -39,52 +43,77 @@ public static class TtfSubsetter
         Tag("PRKT"), Tag("hdmx"), Tag("LTSH"), Tag("MERG"), Tag("meta"),
     };
 
+    /// <summary>需要**改写**的表：其余表一律原样透传。glyf/loca 不在此列——它们由
+    /// <see cref="BuildSfnt"/> 按保留字形直接从源流搬进输出缓冲，整表载入会把这份收益吐回去。</summary>
+    static readonly uint[] Rewritable =
+        { TagHead, TagMaxp, TagHmtx, TagVmtx, TagHhea, TagVhea, TagCmap, TagName, TagColr };
+
     /// <summary>裁出的字体字节；失败/不适用返回 null。</summary>
     public static byte[]? Subset(SKTypeface tf, ICollection<int> usedGlyphs)
     {
+        SfntFont? f = null;
         try
         {
-            var tags = tf.GetTableTags();
-            Array.Sort(tags);
-            if (Array.IndexOf(tags, TagGlyf) < 0) return null;   // CFF/OTF：不裁
+            f = SfntFont.Open(tf);
+            if (f == null) return null;
+            if (!f.Has(TagGlyf) || !f.Has(TagLoca) || !f.Has(TagHead) || !f.Has(TagMaxp)) return null;   // CFF/OTF：不裁
 
-            var tables = new Dictionary<uint, byte[]>();
-            foreach (var t in tags)
+            int numGlyphs = f.U16(TagMaxp, 4);
+            if (numGlyphs <= 0) return null;
+            short locaFmt = f.I16(TagHead, 50);
+
+            // loca → 每个 GID 的 [start,end)
+            var loca = f.Read(TagLoca);
+            if (loca == null) return null;
+            var offs = new int[numGlyphs + 1];
+            for (int g = 0; g <= numGlyphs; g++)
             {
-                if (Drop.Contains(t)) continue;
-                var data = tf.GetTableData(t);
-                if (data == null) return null;
-                tables[t] = data;
+                if (locaFmt == 0)
+                {
+                    if (g * 2 + 2 > loca.Length) return null;
+                    offs[g] = BinaryPrimitives.ReadUInt16BigEndian(loca.AsSpan(g * 2)) * 2;
+                }
+                else
+                {
+                    if (g * 4 + 4 > loca.Length) return null;
+                    offs[g] = BinaryPrimitives.ReadInt32BigEndian(loca.AsSpan(g * 4));
+                }
             }
-            if (!tables.TryGetValue(TagHead, out var head) || !tables.TryGetValue(TagMaxp, out var maxp)) return null;
-
-            int numGlyphs = BinaryPrimitives.ReadUInt16BigEndian(maxp.AsSpan(4));
-            short locaFmt = BinaryPrimitives.ReadInt16BigEndian(head.AsSpan(50));
-            if (!tables.TryGetValue(TagLoca, out var loca) || !tables.TryGetValue(TagGlyf, out var glyf)) return null;
+            int glyfLen = f.Size(TagGlyf);
+            for (int g = 0; g <= numGlyphs; g++)
+                if (offs[g] < 0 || offs[g] > glyfLen) return null;
 
             // COLR v1 预扫描（Segoe UI Emoji 这类彩色字体）：图层轮廓字形从不由 usedGlyphs
             // 直接驱动——Skia 画 base 字形时按 COLR 的 Paint 图展开图层——不把它们并进闭包，
             // 裁出来的就是「彩色层空字形」（§11.4 的 emoji 变黑白根因）。解析任何意外 →
             // 整张 face 放弃裁剪（维持整嵌），绝不带着半张 COLR 出图。
-            Colrv1 colr = null!;
-            if (tables.TryGetValue(TagColr, out var colrBytes))
+            Colrv1? colr = null;
+            if (f.Has(TagColr))
             {
+                var colrBytes = f.Read(TagColr);
+                if (colrBytes == null) return null;
                 colr = Colrv1.TryParse(colrBytes, numGlyphs);
                 if (colr == null) return null;
                 if (!colr.CollectSeeds(usedGlyphs, out var seeds)) return null;
                 usedGlyphs = seeds;
             }
 
-            // loca → 每个 GID 的 [start,end)
-            var offs = new int[numGlyphs + 1];
-            for (int g = 0; g <= numGlyphs; g++)
-                offs[g] = locaFmt == 0
-                    ? BinaryPrimitives.ReadUInt16BigEndian(loca.AsSpan(g * 2)) * 2
-                    : BinaryPrimitives.ReadInt32BigEndian(loca.AsSpan(g * 4));
-
             // 复合闭包：被引用组件必须一起保留
-            var keep = ComputeClosure(usedGlyphs, numGlyphs, offs, glyf);
+            var keep = ComputeClosure(usedGlyphs, numGlyphs, offs, f);
             if (keep == null) return null;   // 引用越界等异常数据：放弃裁剪保正确
+
+            // 只有**要改写**的表才读进托管内存：head/maxp 几十字节、hmtx/vmtx ≤4B×GID、
+            // cmap/name/COLR 几十 KB；glyf（源字体里 10MB 量级的那张）全程留在 stream 上，
+            // 按保留字形逐段复制进输出缓冲。旧实现把 21 张表全份搬进 Dictionary 再拼，
+            // 一份 18.6MB 的系统雅黑字面要吃掉 21MB LOH，且每张 face、每次渲染都重来一遍。
+            var tables = new Dictionary<uint, byte[]>();
+            foreach (var tag in Rewritable)
+            {
+                if (!f.Has(tag)) continue;
+                var d = f.Read(tag);
+                if (d == null) return null;
+                tables[tag] = d;
+            }
 
             // hmtx/vmtx 是「每个 GID 一条」的定长数组，不跟着字形数缩的话，
             // 只用 114 个字形的发票仍要背 6763 条度量（hmtx 30KB + vmtx 16KB × 每个字重）。
@@ -103,40 +132,11 @@ public static class TtfSubsetter
                 tables[TagColr] = colrNew!;
             }
 
-            // 重建 glyf（原样拷贝保留项，4 字节对齐）+ 新 loca
-            var zeros = new byte[4];
-            using (var ms = new MemoryStream())
-            {
-                var newOff = new int[numGlyphs + 1];
-                int w = 0;
-                for (int g = 0; g < numGlyphs; g++)
-                {
-                    newOff[g] = w;
-                    int len = offs[g + 1] - offs[g];
-                    if (len <= 0 || !keep[g]) continue;
-                    ms.Write(glyf, offs[g], len);
-                    w += len;
-                    int fix = (4 - (w & 3)) & 3;
-                    if (fix > 0) { ms.Write(zeros, 0, fix); w += fix; }
-                }
-                newOff[numGlyphs] = w;
-                short newFmt = (short)(w <= 0x1FFFE ? 0 : 1);
-                var newLoca = new byte[newFmt == 0 ? (numGlyphs + 1) * 2 : (numGlyphs + 1) * 4];
-                for (int g = 0; g <= numGlyphs; g++)
-                {
-                    if (newFmt == 0) BinaryPrimitives.WriteUInt16BigEndian(newLoca.AsSpan(g * 2), (ushort)(newOff[g] / 2));
-                    else BinaryPrimitives.WriteInt32BigEndian(newLoca.AsSpan(g * 4), newOff[g]);
-                }
-                tables[TagGlyf] = ms.ToArray();
-                tables[TagLoca] = newLoca;
-                head = (byte[])head.Clone();
-                head[50] = (byte)(newFmt >> 8); head[51] = (byte)newFmt;   // indexToLocFormat 随新 loca
-                BinaryPrimitives.WriteUInt32BigEndian(head.AsSpan(8), 0);   // checkSumAdjustment 清零，BuildSfnt 里回填
-                tables[TagHead] = head;
-                return BuildSfnt(tables);
-            }
+            var rr = BuildSfnt(f, tables, keep, offs, numGlyphs);
+            return rr;
         }
         catch { return null; }   // 任何解析意外都退回“不裁”，绝不出坏字体
+        finally { f?.Dispose(); }
     }
 
     /// <summary>
@@ -499,8 +499,9 @@ public static class TtfSubsetter
         catch { /* 保守：name 原样保留 */ }
     }
 
-    /// <summary>used 的复合组件闭包（null = 数据异常，放弃）。</summary>
-    static bool[]? ComputeClosure(ICollection<int> used, int numGlyphs, int[] offs, byte[] glyf)    {
+    /// <summary>used 的复合组件闭包（null = 数据异常，放弃）。字形字节按需从源流读，不整表载入。</summary>
+    static bool[]? ComputeClosure(ICollection<int> used, int numGlyphs, int[] offs, SfntFont f)
+    {
         var keep = new bool[numGlyphs];
         var stack = new Stack<int>(used);
         foreach (var g in used)
@@ -508,21 +509,24 @@ public static class TtfSubsetter
             if (g < 0 || g >= numGlyphs) return null;
             keep[g] = true;
         }
+        var scratch = new byte[1024];
         while (stack.Count > 0)
         {
             int g = stack.Pop();
             int len = offs[g + 1] - offs[g];
             if (len <= 0) continue;
-            int p = offs[g];
-            short contours = BinaryPrimitives.ReadInt16BigEndian(glyf.AsSpan(p));
+            if (len > 1 << 20) return null;                       // 异常数据：单字形 1MB 已远超任何真实轮廓
+            if (scratch.Length < len) scratch = new byte[Math.Max(len, scratch.Length * 2)];
+            if (f.ReadInto(TagGlyf, offs[g], scratch, 0, len) != len) return null;
+            short contours = BinaryPrimitives.ReadInt16BigEndian(scratch);
             if (contours >= 0) continue;   // simple：无引用
-            p += 10;                        // 头（含 bbox）
+            int p = 10;                        // 头（含 bbox）
             int guard = 0;
             while (guard++ < 512)
             {
-                if (p + 4 > offs[g + 1]) return null;
-                ushort flags = BinaryPrimitives.ReadUInt16BigEndian(glyf.AsSpan(p));
-                ushort idx = BinaryPrimitives.ReadUInt16BigEndian(glyf.AsSpan(p + 2));
+                if (p + 4 > len) return null;
+                ushort flags = BinaryPrimitives.ReadUInt16BigEndian(scratch.AsSpan(p));
+                ushort idx = BinaryPrimitives.ReadUInt16BigEndian(scratch.AsSpan(p + 2));
                 p += 4;
                 int argSize = (flags & 0x0001) != 0 ? 4 : 2;
                 p += argSize;
@@ -540,45 +544,103 @@ public static class TtfSubsetter
         return keep;
     }
 
-    static byte[] BuildSfnt(Dictionary<uint, byte[]> tables)
+    /// <summary>
+    /// 拼出新的 sfnt：**一次分配、一处落盘**。表内容按最终偏移直接写入输出缓冲——
+    /// 需要改写的表从 <paramref name="tables"/> 拷，glyf 按保留字形从源流逐段拷，其余表原样直传。
+    /// 旧实现先建 Dictionary&lt;tag, byte[]&gt; 装下整份字体再 BuildSfnt 复制一遍，峰值 = 源表合计 + 输出；
+    /// 现在峰值 = 输出（几十~几百 KB）+ 一张小表。
+    /// </summary>
+    static byte[]? BuildSfnt(SfntFont f, Dictionary<uint, byte[]> tables, bool[] keep, int[] offs, int numGlyphs)
     {
-        var keptTags = tables.Keys.ToArray();
-        Array.Sort(keptTags);
-        int n = keptTags.Length;
-        int dirSize = 12 + 16 * n;
-        int total = dirSize;
-        foreach (var t in keptTags) total += (tables[t].Length + 3) & ~3;
-        var buf = new byte[total];
+        // —— 新 glyf 布局（只算长度，不读字节）——
+        var newOff = new int[numGlyphs + 1];
+        int glyfNew = 0;
+        for (int g = 0; g < numGlyphs; g++)
+        {
+            newOff[g] = glyfNew;
+            int len = offs[g + 1] - offs[g];
+            if (len <= 0 || !keep[g]) continue;
+            glyfNew += len;
+            glyfNew += (4 - (glyfNew & 3)) & 3;   // 原样拷贝保留项，4 字节对齐
+        }
+        newOff[numGlyphs] = glyfNew;
+
+        short newFmt = (short)(glyfNew <= 0x1FFFE ? 0 : 1);
+        var newLoca = new byte[newFmt == 0 ? (numGlyphs + 1) * 2 : (numGlyphs + 1) * 4];
+        for (int g = 0; g <= numGlyphs; g++)
+        {
+            if (newFmt == 0) BinaryPrimitives.WriteUInt16BigEndian(newLoca.AsSpan(g * 2), (ushort)(newOff[g] / 2));
+            else BinaryPrimitives.WriteInt32BigEndian(newLoca.AsSpan(g * 4), newOff[g]);
+        }
+        tables[TagLoca] = newLoca;
+        var head = (byte[])tables[TagHead].Clone();
+        head[50] = (byte)(newFmt >> 8); head[51] = (byte)newFmt;     // indexToLocFormat 随新 loca
+        BinaryPrimitives.WriteUInt32BigEndian(head.AsSpan(8), 0);    // checkSumAdjustment 清零，最后回填
+        tables[TagHead] = head;
+
+        // —— 表清单与最终偏移 ——
+        var emitTags = new List<uint>(f.Tags.Count);
+        var emitLen = new List<int>(f.Tags.Count);
+        foreach (var tag in f.Tags)
+        {
+            if (Drop.Contains(tag)) continue;
+            int len = tag == TagGlyf ? glyfNew
+                    : tables.TryGetValue(tag, out var d) ? d.Length
+                    : f.Size(tag);
+            if (len <= 0) continue;
+            emitTags.Add(tag);
+            emitLen.Add(len);
+        }
+        int n = emitTags.Count;
+        if (n == 0) return null;
+
+        int pos = 12 + 16 * n;
+        var at = new int[n];
+        for (int i = 0; i < n; i++) { at[i] = pos; pos += (emitLen[i] + 3) & ~3; }
+        var buf = new byte[pos];   // 精确大小：不必再复制一次（旧实现 ArrayPool + ToArray 两跳）
+
+        int headAt = -1, headDir = -1;
+        for (int i = 0; i < n; i++)
+        {
+            uint tag = emitTags[i];
+            int dst = at[i], len = emitLen[i];
+            if (tag == TagGlyf)
+            {
+                for (int g = 0; g < numGlyphs; g++)
+                {
+                    if (!keep[g]) continue;
+                    int l = offs[g + 1] - offs[g];
+                    if (l <= 0) continue;
+                    if (f.ReadInto(TagGlyf, offs[g], buf, dst + newOff[g], l) != l) return null;
+                }
+            }
+            else if (tables.TryGetValue(tag, out var d)) d.CopyTo(buf, dst);
+            else if (f.ReadInto(tag, 0, buf, dst, len) != len) return null;
+            if (tag == TagHead) { headAt = dst; headDir = 12 + 16 * i; }
+        }
+
+        // —— 目录 ——
         ushort searchR = (ushort)(HighestPowerOfTwo(n) * 16);
         BinaryPrimitives.WriteUInt32BigEndian(buf, 0x00010000);
         BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(4), (ushort)n);
         BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(6), searchR);
-        BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(8), (ushort)(n > 0 ? Log2Int(n) : 0));
+        BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(8), (ushort)Log2Int(n));
         BinaryPrimitives.WriteUInt16BigEndian(buf.AsSpan(10), (ushort)(n * 16 - searchR));
-
-        int headDirOffset = -1;
-        int pos = dirSize;
         for (int i = 0; i < n; i++)
         {
-            uint tag = keptTags[i];
-            var d = tables[tag];
-            int dir = 12 + i * 16;
-            BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir), tag);
-            uint sum = Checksum(d);
-            if (tag == TagHead) { headDirOffset = dir; sum = 0; }   // 占位，最后补
+            int dir = 12 + 16 * i;
+            BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir), emitTags[i]);
+            uint sum = emitTags[i] == TagHead ? 0 : Checksum(buf.AsSpan(at[i], emitLen[i]));
             BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir + 4), sum);
-            BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir + 8), (uint)pos);
-            BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir + 12), (uint)d.Length);
-            d.CopyTo(buf.AsSpan(pos));
-            pos += (d.Length + 3) & ~3;
+            BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir + 8), (uint)at[i]);
+            BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(dir + 12), (uint)emitLen[i]);
         }
+        if (headAt < 0) return null;
 
         // head.checkSumAdjustment = 0xB1B0AFBA − 整文件校验和（计算时该字段与目录条目均为 0）
-        uint whole = Checksum(buf);
-        uint adjust = 0xB1B0AFBAu - whole;
-        var headT = tables[TagHead];
-        BinaryPrimitives.WriteUInt32BigEndian(headT.AsSpan(8), adjust);
-        BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(headDirOffset + 4), Checksum(headT));
+        uint adjust = 0xB1B0AFBAu - Checksum(buf);
+        BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(headAt + 8), adjust);
+        BinaryPrimitives.WriteUInt32BigEndian(buf.AsSpan(headDir + 4), Checksum(buf.AsSpan(headAt, emitLen[emitTags.IndexOf(TagHead)])));
         return buf;
 
         static int HighestPowerOfTwo(int n) { int p = 1; while (p * 2 <= n) p *= 2; return p; }
@@ -976,5 +1038,166 @@ public static class TtfSubsetter
         static void Write24(byte[] b, int i, int v) { b[i] = (byte)(v >> 16); b[i + 1] = (byte)(v >> 8); b[i + 2] = (byte)v; }
         static int BE16(byte[] b, int i) => BinaryPrimitives.ReadUInt16BigEndian(b.AsSpan(i));
         static uint BEU32(byte[] b, int i) => BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(i));
+    }
+}
+
+/// <summary>
+/// 一张字面的**表字节视图**：优先用 <see cref="SKTypeface.OpenStream"/> 直接定位字体文件里的表段
+/// （读一表、写一表，永不把整份字体搬进托管堆）；拿不到可用流时退回
+/// <see cref="SKTypeface.GetTableData(uint)"/>，行为与旧实现一致（此时整表进托管堆）。
+/// 为什么值得这么绕：`GetTableData` 只能整表取，一份系统雅黑的 21 张表合计 18.6MB，
+/// 而子集真正要保留的通常不到 300KB——旧实现每次裁剪都把这 18.6MB 全份读进 LOH 再拼一遍，
+/// 峰值 21MB/face，一批 4 张 CJK face 就是 ~80MB 的 GC 高水位（见 PERF_REPORT §14）。
+/// sfnt 目录解析失败（woff2 原始流、畸形表）一律返回 null，由调用方退回整嵌——绝不出坏字体。
+/// </summary>
+internal sealed class SfntFont : IDisposable
+{
+    readonly SKTypeface _tf;
+    readonly SKStreamAsset? _stream;
+    readonly int _ttcIndex;
+    readonly Dictionary<uint, (long Off, int Len)> _dir = new();
+
+    /// <summary>本面的表标记，升序（与 sfnt 目录序一致）；输出目录按它排。</summary>
+    public List<uint> Tags { get; } = new();
+
+    /// <summary>回退路径的表缓存（只有这条路上整表会进托管堆）。</summary>
+    Dictionary<uint, byte[]>? _cache;
+
+    SfntFont(SKTypeface tf, SKStreamAsset? stream, int ttcIndex)
+    {
+        _tf = tf; _stream = stream; _ttcIndex = ttcIndex;
+    }
+
+    public static SfntFont? Open(SKTypeface tf)
+    {
+        SKStreamAsset? stream = null;
+        int ttc = 0;
+        try { stream = tf.OpenStream(out ttc); } catch { stream = null; }
+        if (stream != null)
+        {
+            var f = new SfntFont(tf, stream, ttc);
+            if (f.TryParseDirectory()) return f;
+            f.Dispose();   // 流对不上（woff2 原始流 / 畸形 sfnt）→ 退回 GetTableData
+        }
+        try
+        {
+            var tags = tf.GetTableTags();
+            if (tags == null || tags.Length == 0) return null;
+            Array.Sort(tags);
+            var g = new SfntFont(tf, null, 0);
+            foreach (var t in tags)
+            {
+                int len = tf.GetTableSize(t);
+                if (len > 0) { g._dir[t] = (0, len); g.Tags.Add(t); }
+            }
+            if (g.Tags.Count == 0) { g.Dispose(); return null; }
+            return g;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>解析 sfnt / TTC 目录（只读 12B 头 + n×16B 目录项）。任何不自洽 → false。</summary>
+    bool TryParseDirectory()
+    {
+        if (_stream == null) return false;
+        long len = _stream.Length;
+        if (len < 12 + 16) return false;
+        var hdr = new byte[12];
+        if (ReadAt(0, hdr, 0, 12) != 12) return false;
+
+        long at = 0;
+        uint magic = BE32(hdr, 0);
+        if (magic == 0x74746366)   // 'ttcf'：成员面的目录在 TTC 头之后，表偏移是全文件绝对偏移
+        {
+            if (_ttcIndex < 0) return false;
+            var rec = new byte[4];
+            if (ReadAt(12 + 4L * _ttcIndex, rec, 0, 4) != 4) return false;
+            at = BE32(rec, 0);
+            if (at + 12 > len || ReadAt(at, hdr, 0, 12) != 12) return false;
+            magic = BE32(hdr, 0);
+        }
+        // 00010000 = TrueType、'true'/'typ1' = 老式 sfnt、'OTTO' = CFF（下面没有 glyf，调用方会放弃裁剪）
+        if (magic is not (0x00010000 or 0x74727565 or 0x74797031 or 0x4F54544F)) return false;
+
+        int n = (hdr[4] << 8) | hdr[5];
+        if (n <= 0 || n > 512) return false;
+        var dir = new byte[16 * n];
+        if (ReadAt(at + 12, dir, 0, dir.Length) != dir.Length) return false;
+
+        for (int i = 0; i < n; i++)
+        {
+            int p = i * 16;
+            uint tag = BE32(dir, p);
+            for (int k = 0; k < 4; k++)   // 表标记必须是可见 ASCII，否则这份目录不是我们以为的东西
+            {
+                byte c = dir[p + k];
+                if (c < 0x20 || c > 0x7E) return false;
+            }
+            uint off = BE32(dir, p + 8), tlen = BE32(dir, p + 12);
+            if (off + (long)tlen > len) return false;
+            _dir[tag] = (off, (int)tlen);
+            Tags.Add(tag);
+        }
+        Tags.Sort();
+        return _dir.Count > 0;
+    }
+
+    public bool Has(uint tag) => _dir.ContainsKey(tag);
+    public int Size(uint tag) => _dir.TryGetValue(tag, out var e) ? e.Len : 0;
+    public int U16(uint tag, int at) { var d = Read(tag); return d == null || at + 2 > d.Length ? 0 : BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(at)); }
+    public short I16(uint tag, int at) { var d = Read(tag); return d == null || at + 2 > d.Length ? (short)0 : BinaryPrimitives.ReadInt16BigEndian(d.AsSpan(at)); }
+
+    /// <summary>整表读取（只该用于要改写的小表：head/maxp/loca/hmtx/vmtx/cmap/name/COLR）。</summary>
+    public byte[]? Read(uint tag)
+    {
+        if (!_dir.TryGetValue(tag, out var e)) return null;
+        if (_stream == null)
+        {
+            _cache ??= new Dictionary<uint, byte[]>();
+            if (_cache.TryGetValue(tag, out var hit)) return hit;
+            var d = _tf.GetTableData(tag);
+            if (d == null) return null;
+            _cache[tag] = d;
+            return d;
+        }
+        var buf = new byte[e.Len];
+        return ReadAt(e.Off, buf, 0, e.Len) == e.Len ? buf : null;
+    }
+
+    /// <summary>把某张表从 <paramref name="relOff"/> 起的 <paramref name="len"/> 字节直接读进目标缓冲的指定位置。</summary>
+    public int ReadInto(uint tag, long relOff, byte[] dst, int dstOff, int len)
+    {
+        if (!_dir.TryGetValue(tag, out var e)) return 0;
+        if (relOff < 0 || len < 0 || relOff + len > e.Len) return 0;
+        if (_stream == null)
+        {
+            var d = Read(tag);
+            if (d == null) return 0;
+            Buffer.BlockCopy(d, (int)relOff, dst, dstOff, len);
+            return len;
+        }
+        return ReadAt(e.Off + relOff, dst, dstOff, len);
+    }
+
+    int ReadAt(long off, byte[] dst, int dstOff, int len)
+    {
+        if (_stream == null || len <= 0) return 0;
+        if (!_stream.Seek(checked((int)off))) return 0;
+        if (dstOff == 0 && len == dst.Length) return _stream.Read(dst, len);
+        // SKStream 只提供 Read(byte[], size) / Read(IntPtr, size)：借一次 pin 读进目标偏移
+        var h = System.Runtime.InteropServices.GCHandle.Alloc(dst, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try { return _stream.Read(System.IntPtr.Add(h.AddrOfPinnedObject(), dstOff), len); }
+        finally { h.Free(); }
+    }
+
+    static uint BE32(byte[] b, int i) => BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(i));
+
+    public void Dispose()
+    {
+        _cache?.Clear();
+        _cache = null;
+        _dir.Clear();
+        Tags.Clear();
+        _stream?.Dispose();
     }
 }

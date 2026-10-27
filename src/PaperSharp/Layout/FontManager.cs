@@ -22,6 +22,11 @@ public static class FontManager
     // 键里带倾斜档：同一族在 italic 下可能落到系统里另一张字面（Arial → Arial Italic）。
     static readonly ConcurrentDictionary<(string, int, SKFontStyleSlant), SKTypeface> Cache = new();
 
+    // 物理字面身份 → 进程内唯一实例（见 Canonicalize）。弱引用：字面被回收后条目自动失效，
+    // 这张表本身不会变成新的常驻根。
+    static readonly Dictionary<FaceKey, WeakReference<SKTypeface>> CanonicalIndex = new();
+    static readonly object CanonicalLock = new();
+
     // 全局注册表（RegisterFontDirectory 等 Scope 外注册）：路径按原样/当前 Scope.BaseDir 解析。
     static readonly ConcurrentDictionary<string, (int weight, string[] paths)[]> GlobalRegistered = new(StringComparer.OrdinalIgnoreCase);
 
@@ -396,6 +401,32 @@ public static class FontManager
     }
 
     /// <summary>
+    /// 把刚解析出来的字面收敛到进程内**唯一实例**：同一张物理面（<see cref="FaceIdentity"/> 六项全同）
+    /// 只留一份原生字体流，后来者当场 Dispose。
+    ///
+    /// 为什么非做不可：Skia 每个 SKTypeface 实例都自带一整份字体流——系统雅黑 18MB、TTC 成员面是整份文件。
+    /// 而同一张面会从多条路分别进来：family 别名（<c>Microsoft YaHei</c> / <c>微软雅黑</c> 各解析一次）、
+    /// 斜体档要不到真斜面时 Skia 把**同一张正立面**再发一次（键里带 slant，于是两个键两张 18MB）、
+    /// <c>MatchCharacter</c> 逐码位回退。实测一页 challenge 挂了 4 张雅黑共 69MB，其中 **37MB 是完全重复的**。
+    /// </summary>
+    static SKTypeface Canonicalize(SKTypeface tf)
+    {
+        if (IsSharedTypeface(tf)) return tf;      // 打包子集/默认面：天然单例，且由进程持有，不参与去重
+        var key = FaceIdentity.Of(tf);
+        lock (CanonicalLock)
+        {
+            if (CanonicalIndex.TryGetValue(key, out var slot)
+                && slot.TryGetTarget(out var alive) && !ReferenceEquals(alive, tf))
+            {
+                tf.Dispose();          // 同一张物理面已有一份原生流在：这份重复的当场放掉
+                return alive;
+            }
+            CanonicalIndex[key] = new WeakReference<SKTypeface>(tf);
+            return tf;
+        }
+    }
+
+    /// <summary>
     /// 按 family + 字重 + font-style 解析字面。斜体档只影响**系统回退**那条路（Arial/Georgia 有真斜体面，
     /// 交给 Skia 的就近匹配）；打包子集只有 Regular/Bold 两张正立面，浏览器对同一族也是拿正立面合成，
     /// 所以这里刻意不因斜体改换字面 —— 换成系统里的 Noto 斜体会与参考浏览器对不上。
@@ -500,13 +531,17 @@ public static class FontManager
         return (Px((v.Ascent + half) * sizePx), Px((v.Descent + half) * sizePx));
     }
 
-    static SKTypeface? _yaheiLight;
+    static VertMetrics? _yaheiLight;
     static volatile bool _lightProbed;
     static readonly object LightLock = new();
 
     /// <summary>本机是否另装了「雅黑 Light」字面（只解析一次）。Skia 会把它的 FamilyName 归一化成
-    /// "Microsoft YaHei"，所以只能按**字重**认出（请求 Light 档却拿回 ≤300 的实例才算数）。</summary>
-    static SKTypeface? ResolveYaheiLight()
+    /// "Microsoft YaHei"，所以只能按**字重**认出（请求 Light 档却拿回 ≤300 的实例才算数）。
+    ///
+    /// 只留**度量**（5 个 float），面本身当场 Dispose：Light 没有子集版，绝不拿去绘制，
+    /// 而一张活的系统 CJK 字面要占 11.6MB 原生内存换 4 个数字——这笔账不值。
+    /// </summary>
+    static VertMetrics? ResolveYaheiLight()
     {
         if (_lightProbed) return _yaheiLight;
         lock (LightLock)
@@ -514,8 +549,11 @@ public static class FontManager
             if (_lightProbed) return _yaheiLight;
             var t = SKTypeface.FromFamilyName("Microsoft YaHei",
                 new SKFontStyle(SKFontStyleWeight.Light, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright));
-            if (t != null && t.FontWeight <= 300) _yaheiLight = t;
-            else t?.Dispose();
+            if (t != null)
+            {
+                if (t.FontWeight <= 300) _yaheiLight = Of(t);   // Of() 把度量抄进弱表，抄完面就可以走了
+                t.Dispose();
+            }
             _lightProbed = true;
         }
         return _yaheiLight;
@@ -540,7 +578,7 @@ public static class FontManager
     {
         var light = ResolveYaheiLight();
         if (light == null) return null;
-        var (a, d) = ExtentsAt(light, sizePx);
+        var (a, d) = (Px(light.Ascent * sizePx), Px(light.Descent * sizePx));   // 口径同 ExtentsAt
         return sizePx >= 9.5f ? (a, d + 1) : (a, d);
     }
 
@@ -630,6 +668,10 @@ public static class FontManager
                     || tf.FamilyName.Contains(name, StringComparison.OrdinalIgnoreCase)
                     || name.Contains(tf.FamilyName, StringComparison.OrdinalIgnoreCase)))
             {
+                // 同一张物理面可能已被别的 family 别名/斜体档解析过一次：收敛到那一份，别把
+                // 18MB 的字体流再挂一遍（见 Canonicalize）。必须在登记字距表之前做——
+                // KernTable 的键取自字面的 Family/Weight/Slant，换实例后键要跟着走。
+                tf = Canonicalize(tf);
                 // 系统字面没有 PRKT，但字距在自带的 GPOS 里：解析一次登记进缓存（后续按 family/weight 命中）。
                 KernTable.AttachFromTables(tf);
                 return tf;

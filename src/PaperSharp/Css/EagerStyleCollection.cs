@@ -82,6 +82,26 @@ public sealed class EagerStyleCollection : IStyleCollection
         return Merged(element);
     }
 
+    /// <summary>
+    /// 样式树建完、伪元素落树之后调用：把**按元素**缓存的四张表整体丢掉。
+    ///
+    /// 为什么不靠 GC：每张 merged 声明是 AngleSharp 的全量长手属性表（实测 challenge.html 265 个元素
+    /// ≈24 MB 托管堆），而它在 <c>Walk</c> 结束后就再也没有读者——本类的全部调用点都在
+    /// <c>StyleResolver</c> 内部，<c>ctx</c> 是 <c>BuildDocument</c> 的局部量，返回值
+    /// <see cref="ComputedStyle"/> 树不反向引用任何声明对象。不显式丢掉，这 24 MB 会一直活到
+    /// 分页/录制/编码全部结束，直接把渲染期堆峰值抬到 32 MB（见 PERF_REPORT 内存一节）。
+    ///
+    /// 保留 <c>_rules</c>：万一有迟到的层叠调用，重算依然正确（只是慢），Release 因此是幂等的、
+    /// 不会把语义改坏。规则表本身只占几百 KB，不值得冒这个险。
+    /// </summary>
+    public void Release()
+    {
+        _merged.Clear();
+        _mergedPseudoRaw.Clear();
+        _cascadePseudo.Clear();
+        _customFolded.Clear();
+    }
+
     /// <summary>与 AngleSharp 的 ComputeDeclarations 扩展方法同名同签名以遮蔽之：
     /// 在缓存的层叠结果上跑同一套值折算（GetPropertyValue 得到的就是 computed 串）。</summary>
     public ICssStyleDeclaration ComputeDeclarations(IElement element, string? pseudoSelector = null)
@@ -124,6 +144,10 @@ public sealed class EagerStyleCollection : IStyleCollection
         for (int i = chain.Count - 1; i >= 0; i--)
         {
             acc = this.ComputeCascadedStyle(chain[i], acc);
+            // 全量入表（含叶子）。曾试过「叶子不入表」以省一次全量长手属性表：实测更差——
+            // 伪元素那两条路径会再次向宿主 <see cref="Merged"/>，宿主多为叶子，重算一次级联
+            // 的代价（每张 ~90 KB 全表匹配）超过了省下的那点滞留（walk 分配 34.9→35.5 MB、
+            // subsets 处 priv 71.5→72.4 MB）。缓存一律全量，语义与成本都可预测。
             _merged[chain[i]] = acc;
         }
         return acc!;

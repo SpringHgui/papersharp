@@ -234,6 +234,10 @@ public static class StyleResolver
         if (ctx.HasPseudoRules || anyMarker) PseudoContent.Apply(root);   // 文档序求值 counter + 注入伪元素匿名盒
         if (animationTime.HasValue && ctx.Keyframes.Count > 0)
             Animation.Apply(root, ctx.Keyframes, animationTime.Value);   // 确定性取帧：按时刻插值覆盖样式
+        // 伪元素已全部落树、动画已取帧 ⇒ 按元素缓存的层叠结果（每张是全量长手属性表，
+        // challenge.html 265 元素 ≈24 MB）再没有读者，当场丢掉：否则它会活到编码结束，
+        // 把整条渲染期的托管堆峰值从 ~8 MB 抬到 ~32 MB。
+        ctx.Styles.Release();
         root.Document = new DocumentInfo(ctx.Title, ctx.Author, ctx.Description, ctx.Keywords);
         return root;
     }

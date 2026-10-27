@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using SkiaSharp;
 using SkiaSharp.HarfBuzz;
+using PaperSharp.Layout;
 
 namespace PaperSharp.Pdf;
 
@@ -39,32 +40,8 @@ public sealed class PdfGlyphUsage : IDisposable
         public bool Dying;     // 已逐出，等最后一个租约归还再 Dispose
     }
 
-    /// <summary>
-    /// 一张字面的**身份**：族名+字重+字宽+斜度+字形总数+head 表校验和。
-    /// 为什么不用对象引用：同一张 msyh 会从 FontManager.Get、SKFontManager.MatchCharacter、
-    /// SKTypeface.FromFamilyName 好几条路各发一个实例出来，引用相等一个都认不出。
-    /// 血泪（Playground 同宽档 m1 实测 47.2 MB）：按引用记账 → 同一份 1.22 MB 字面流被裁成
-    /// 33 份各嵌一次（40.6 MB，占全文积 86%），编码时间也全烧在反复 deflate 上。
-    /// head 校验和足以区分「同名不同文件」（打包子集 vs 系统字面），取不到就退到前四项 + 字形数。
-    /// </summary>
-    internal sealed record FaceKey(string Family, int Weight, int Width, int Slant, int GlyphCount, uint HeadSum);
-
-    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SKTypeface, FaceKey> FaceKeys = new();
-
-    static FaceKey KeyOf(SKTypeface tf)
-        => FaceKeys.GetValue(tf, static t =>
-        {
-            uint sum = 0;
-            try
-            {
-                // head.checkSumAdjustment（偏移 8，4 字节大端）＝该字体的内容指纹，读一次 54 字节
-                var head = t.GetTableData(0x68656164);   // 'head'
-                if (head is { Length: >= 12 })
-                    sum = BinaryPrimitives.ReadUInt32BigEndian(head.AsSpan(8));
-            }
-            catch { /* 拿不到表：靠下面四项 + 字形数兜底 */ }
-            return new FaceKey(t.FamilyName, t.FontWeight, t.FontWidth, (int)t.FontSlant, t.GlyphCount, sum);
-        });
+    /// <summary>字面身份的算法与判定见 <see cref="Layout.FaceIdentity"/>：族名+字重+字宽+倾斜档+字形数+head 校验和。</summary>
+    static FaceKey KeyOf(SKTypeface tf) => Layout.FaceIdentity.Of(tf);
 
     readonly Dictionary<FaceKey, HashSet<int>> Used = new();
     readonly Dictionary<FaceKey, SKTypeface> Source = new();   // 每个身份留一个具体实例当裁剪源

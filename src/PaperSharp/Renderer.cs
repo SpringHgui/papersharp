@@ -59,17 +59,24 @@ public static class Renderer
             }
         usage.BuildSubsets();
 
-        byte[] raw = EncodePdfPages(pages, spec, meta);
+        var (raw, rawLen) = EncodePdfPages(pages, spec, meta);
         if (usage.Violated)
         {
             usage.RetryWithoutSubsets();
-            raw = EncodePdfPages(pages, spec, meta);
+            (raw, rawLen) = EncodePdfPages(pages, spec, meta);
         }
         // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
-        return Pdf.PdfEnhancer.Enhance(raw, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
+        var fin = Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
+        return fin;
     }
 
-    static byte[] EncodePdfPages(List<Page> pages, PageSpec spec, SKDocumentPdfMetadata meta)
+    /// <summary>
+    /// 返回**装箱器内部缓冲 + 有效长度**（不是 <c>ToArray()</c> 的新数组）：Enhance 会把
+    /// 「原文件 + 增量段」一次性分配到位，于是整份 PDF 从编码到交付只复制一次。
+    /// 旧路径是 MemoryStream(容量可能翻倍) → ToArray 再复制一份 → Enhance 里 Latin1 再变成 2×字符 → 又一份
+    /// 结果数组，一份 2.4MB 的文档在峰值上要同时活着 5 份等价物。
+    /// </summary>
+    static (byte[] Buf, int Len) EncodePdfPages(List<Page> pages, PageSpec spec, SKDocumentPdfMetadata meta)
     {
         using var ms = new MemoryStream();
         using (var pdfDoc = SKDocument.CreatePdf(ms, meta))
@@ -84,7 +91,8 @@ public static class Renderer
             }
             pdfDoc.Close();
         }
-        return ms.ToArray();
+        if (ms.TryGetBuffer(out var seg) && seg.Offset == 0 && seg.Array != null) return (seg.Array, (int)ms.Length);
+        return (ms.ToArray(), (int)ms.Length);
     }
 
     /// <summary>

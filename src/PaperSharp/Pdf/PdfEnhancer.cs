@@ -32,35 +32,46 @@ public sealed class PdfLink
 public static class PdfEnhancer
 {
     static readonly Encoding Latin1 = Encoding.Latin1;
+    static readonly Regex Kids = new(@"/Kids\s*\[([^\]]*)\]", RegexOptions.Compiled);
+    static readonly Regex Ref = new(@"(\d+)\s+\d+\s+R", RegexOptions.Compiled);
 
     /// <param name="pageH">PDF 页高（pt）。</param>
     /// <param name="scale">布局 px → 纸面 pt 的折算系数（引擎坐标全部是 px，PDF 坐标全部是 pt）。</param>
     public static byte[] Enhance(byte[] pdf, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH, float scale)
+        => Enhance(pdf, pdf.Length, outlines, links, pageH, scale);
+
+    /// <summary>
+    /// <paramref name="pdf"/> 的前 <paramref name="length"/> 字节是有效 PDF（后面可能有装箱器留下的余量）。
+    /// 走这条路时**全程按字节扫描**：旧实现一上来 <c>Latin1.GetString(整份 PDF)</c>，2.4MB 的文档
+    /// 先变成 4.8MB 的 UTF-16 串，18MB 的（emoji/大图）文档变成 36MB，且之后每截一段对象就再复制一次。
+    /// </summary>
+    public static byte[] Enhance(byte[] pdf, int length, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH, float scale)
     {
-        if (outlines.Count == 0 && links.Count == 0) return pdf;
-        try { return EnhanceCore(pdf, outlines, links, pageH, scale); }
-        catch { return pdf; }
+        if (outlines.Count == 0 && links.Count == 0)
+            return length == pdf.Length ? pdf : pdf.AsSpan(0, length).ToArray();
+        try { return EnhanceCore(pdf, length, outlines, links, pageH, scale); }
+        catch { return length == pdf.Length ? pdf : pdf.AsSpan(0, length).ToArray(); }
     }
 
-    static byte[] EnhanceCore(byte[] pdf, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH, float scale)
+    static byte[] EnhanceCore(byte[] pdf, int length, IReadOnlyList<PdfOutline> outlines, IReadOnlyList<PdfLink> links, float pageH, float scale)
     {
-        var text = Latin1.GetString(pdf);
+        var text = new PdfBytes(pdf, length);
 
         // 尾部 startxref → xref 表 → trailer
-        int sx = text.LastIndexOf("startxref", StringComparison.Ordinal);
+        int sx = text.LastIndexOf("startxref");
         if (sx < 0) return pdf;
-        long xrefOff = ParseLongAt(text, sx + 9) ?? throw new FormatException("startxref");
-        var xref = ParseXrefTable(text, xrefOff);                      // obj → (offset, gen)
-        int tIdx = IndexAfter(text, "trailer", (int)xrefOff);
-        string trailer = ExtractDict(text, tIdx);                       // "<< ... >>"
+        long xrefOff = text.ParseLongAt(sx + 9) ?? throw new FormatException("startxref");
+        var xref = text.ParseXrefTable(xrefOff);                        // obj → (offset, gen)
+        int tIdx = text.IndexAfter("trailer", (int)xrefOff);
+        string trailer = text.ExtractDict(tIdx);                        // "<< ... >>"
         int rootObj = ParseRef(trailer, "Root") ?? throw new FormatException("/Root");
         long prevStartxref = xrefOff;
 
         // 2) catalog → 页对象表（按页序，递归 Pages 树）
-        string catalog = ReadObject(text, xref, rootObj);
+        string catalog = text.ReadObject(xref, rootObj);
         int pagesObj = ParseRef(catalog, "Pages") ?? throw new FormatException("/Pages");
         var pageObjs = new List<int>();
-        CollectPages(text, xref, pagesObj, pageObjs, 0);
+        text.CollectPages(xref, pagesObj, pageObjs, 0);
         if (pageObjs.Count == 0) return pdf;
 
         int next = xref.Keys.Max() + 1;
@@ -152,13 +163,13 @@ public static class PdfEnhancer
         foreach (var (pi, ids) in annotsByPage)
         {
             int objNo = pageObjs[pi];
-            string body = ReadObject(text, xref, objNo);
+            string body = text.ReadObject(xref, objNo);
             var arr = string.Join(" ", ids.Select(id => $"{id} 0 R"));
             patched[objNo] = Inject(body, $" /Annots [{arr}]");
         }
 
         // 5) 序列化增量段（xref 偏移必须是全文件绝对位置 = 原文件长度 + 段内偏移）
-        long baseOff = pdf.Length;
+        long baseOff = length;
         var outp = new StringBuilder();
         outp.Append("%\xE2\xE3\xCF\xDF\n");
         var offsets = new SortedDictionary<int, long>();
@@ -188,9 +199,9 @@ public static class PdfEnhancer
 
         // 原文件 + 增量（同一份字节里追加）
         var tail = Latin1.GetBytes(outp.ToString());
-        var result = new byte[pdf.Length + tail.Length];
-        Array.Copy(pdf, result, pdf.Length);
-        Array.Copy(tail, 0, result, pdf.Length, tail.Length);
+        var result = new byte[length + tail.Length];
+        Array.Copy(pdf, result, length);
+        Array.Copy(tail, 0, result, length, tail.Length);
         return result;
     }
 
@@ -205,91 +216,15 @@ public static class PdfEnhancer
     }
 
     // ── 解析小工具 ────────────────────────────────────────────────
-
-    static Dictionary<int, (long off, int gen)> ParseXrefTable(string text, long at)
-    {
-        var map = new Dictionary<int, (long, int)>();
-        int p = (int)at;
-        while (p < text.Length && text[p] != 'x') p++;   // 容错：跳到 'xref'
-        if (!text.AsSpan(p, Math.Min(4, text.Length - p)).StartsWith("xref")) throw new FormatException("xref");
-        p += 4;
-        while (true)
-        {
-            p = SkipWs(text, p);
-            if (text.AsSpan(p, Math.Min(7, text.Length - p)).StartsWith("trailer")) break;
-            int nl = text.IndexOf('\n', p);
-            if (nl < 0) break;
-            var head = text[p..nl].Trim();
-            p = nl + 1;
-            var hp = head.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (hp.Length != 2 || !int.TryParse(hp[0], out int start) || !int.TryParse(hp[1], out int count)) break;
-            for (int i = 0; i < count; i++)
-            {
-                string entry = text.Substring(p, Math.Min(20, text.Length - p));
-                p += 20;
-                if (entry.Length < 17) continue;
-                long off = ParseLong(entry.Substring(0, 10)) ?? -1;
-                int gen = (int)(ParseLong(entry.Substring(11, 5)) ?? 0);
-                char use = entry[17];
-                if (use == 'n' && off >= 0) map[start + i] = (off, gen);
-            }
-        }
-        return map;
-    }
-
-    static int IndexAfter(string s, string token, int from)
-    {
-        int i = s.IndexOf(token, from, StringComparison.Ordinal);
-        if (i < 0) throw new FormatException(token);
-        return SkipWs(s, i + token.Length);
-    }
-
-    /// <summary>从 '<' 起始处提取平衡的 &lt;&lt;…&gt;&gt; 字典文本。</summary>
-    static string ExtractDict(string s, int at)
-    {
-        int i = s.IndexOf("<<", at, StringComparison.Ordinal);
-        if (i < 0) throw new FormatException("<<");
-        int depth = 0, j = i;
-        while (j < s.Length)
-        {
-            if (j + 1 < s.Length && s[j] == '<' && s[j + 1] == '<') { depth++; j += 2; }
-            else if (j + 1 < s.Length && s[j] == '>' && s[j + 1] == '>') { depth--; j += 2; if (depth == 0) return s[i..j]; }
-            else j++;
-        }
-        throw new FormatException("unbalanced dict");
-    }
+    //
+    // PDF 的语法全是 ASCII 字节，Latin1 解码 1 字节 ↔ 1 字符，所以整套**定位**直接在 byte[] 上做
+    // （见 PdfBytes）：不再需要「把整份 PDF 变成字符串」这一步，那是本类最大的一笔分配。
+    // 只有真正要改写的那几个对象体（字典）才允许变成小字符串。
 
     static int? ParseRef(string s, string key)
     {
-        var m = System.Text.RegularExpressions.Regex.Match(s, @"/" + key + @"\s+(\d+)\s+\d+\s+R");
+        var m = Regex.Match(s, @"/" + key + @"\s+(\d+)\s+\d+\s+R");
         return m.Success ? int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : null;
-    }
-
-    static string ReadObject(string text, Dictionary<int, (long off, int gen)> xref, int obj)
-    {
-        if (!xref.TryGetValue(obj, out var e)) throw new FormatException($"obj {obj}");
-        int start = (int)e.off, end = text.IndexOf("endobj", start, StringComparison.Ordinal);
-        if (end < 0) throw new FormatException("endobj");
-        string body = text[start..end];
-        int pre = body.IndexOf("obj", StringComparison.Ordinal);
-        if (pre < 0) throw new FormatException("obj kw");
-        return body[(pre + 3)..].Trim();
-    }
-
-    static void CollectPages(string text, Dictionary<int, (long off, int gen)> xref, int node, List<int> pages, int depth)
-    {
-        if (depth > 16 || pages.Count > 10000) return;
-        string body = ReadObject(text, xref, node);
-        var m = System.Text.RegularExpressions.Regex.Match(body, @"/Kids\s*\[([^\]]*)\]");
-        if (!m.Success) { pages.Add(node); return; }
-        foreach (System.Text.RegularExpressions.Match r in
-                 System.Text.RegularExpressions.Regex.Matches(m.Groups[1].Value, @"(\d+)\s+\d+\s+R"))
-        {
-            int child = int.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture);
-            string cb = ReadObject(text, xref, child);
-            if (cb.Contains("/Type /Pages") || cb.Contains("/Type/Pages")) CollectPages(text, xref, child, pages, depth + 1);
-            else pages.Add(child);
-        }
     }
 
     /// <summary>把片段插到对象字典末尾（最后一个 '&gt;&gt;' 之前）。</summary>
@@ -303,22 +238,13 @@ public static class PdfEnhancer
     /// <summary>字典里替换 "/Key 数字" 或追加（追加在末尾 '&gt;&gt;' 前）。</summary>
     static string ReplaceOrAdd(string dict, string key, string entry)
     {
-        var re = new System.Text.RegularExpressions.Regex(Regex.Escape(key) + @"\s+-?\d+");
+        var re = new Regex(Regex.Escape(key) + @"\s+-?\d+");
         if (re.IsMatch(dict)) return re.Replace(dict, entry, 1);
         int i = dict.LastIndexOf(">>", StringComparison.Ordinal);
         if (i < 0) throw new FormatException(key);
         return dict[..i] + " " + entry + " " + dict[i..];
     }
 
-    static long? ParseLong(string s) => long.TryParse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
-    static long? ParseLongAt(string s, int at)
-    {
-        int i = SkipWs(s, at);
-        int j = i;
-        while (j < s.Length && char.IsDigit(s[j])) j++;
-        return j > i ? ParseLong(s[i..j]) : null;
-    }
-    static int SkipWs(string s, int i) { while (i < s.Length && char.IsWhiteSpace(s[i])) i++; return i; }
 
     static IEnumerable<(int start, int count)> Ranges(IEnumerable<int> sorted)
     {
@@ -342,4 +268,146 @@ public static class PdfEnhancer
         foreach (var c in System.Text.Encoding.BigEndianUnicode.GetBytes(s)) sb.Append(c.ToString("X2"));
         return sb.ToString();
     }
+
+    /// <summary>
+    /// <see cref="byte"/> 数组上的只读 ASCII 扫描器（Latin1 一字节一字符，故判定口径与字符串完全一致）。
+    /// 只用来**定位**：真正取出来的内容（对象体、字典）才有资格变成小字符串。
+    /// </summary>
+    readonly struct PdfBytes(byte[] buf, int len)
+    {
+        readonly byte[] B = buf;
+        readonly int N = len;
+
+        public int LastIndexOf(string token)
+        {
+            for (int i = N - token.Length; i >= 0; i--)
+                if (Match(i, token)) return i;
+            return -1;
+        }
+
+        bool Match(int at, string token)
+        {
+            if (at + token.Length > N) return false;
+            for (int k = 0; k < token.Length; k++)
+                if (B[at + k] != token[k]) return false;
+            return true;
+        }
+
+        public int IndexOf(string token, int from)
+        {
+            for (int i = Math.Max(0, from); i + token.Length <= N; i++)
+                if (Match(i, token)) return i;
+            return -1;
+        }
+
+        public int IndexAfter(string token, int from)
+        {
+            int i = IndexOf(token, from);
+            if (i < 0) throw new FormatException(token);
+            return SkipWs(i + token.Length);
+        }
+
+        public int SkipWs(int i) { while (i < N && IsWs(B[i])) i++; return i; }
+        static bool IsWs(byte c) => c is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)'\f' or 0;
+
+        /// <summary>从 <paramref name="at"/> 起解析一个十进制整数（跳过前导空白）。</summary>
+        public long? ParseLongAt(int at)
+        {
+            int i = SkipWs(at), j = i;
+            while (j < N && B[j] >= (byte)'0' && B[j] <= (byte)'9') j++;
+            if (j == i) return null;
+            long v = 0;
+            for (int k = i; k < j; k++) v = v * 10 + (B[k] - '0');
+            return v;
+        }
+
+        /// <summary>从 '<c>&lt;&lt;</c>' 起提取平衡的字典，返回其文本（只有字典本体，量级 = 一个对象）。</summary>
+        public string ExtractDict(int at)
+        {
+            int i = IndexOf("<<", at);
+            if (i < 0) throw new FormatException("<<");
+            int depth = 0, j = i;
+            while (j < N)
+            {
+                if (j + 1 < N && B[j] == '<' && B[j + 1] == '<') { depth++; j += 2; }
+                else if (j + 1 < N && B[j] == '>' && B[j + 1] == '>') { depth--; j += 2; if (depth == 0) return Str(i, j); }
+                else j++;
+            }
+            throw new FormatException("unbalanced dict");
+        }
+
+        /// <summary>xref 表：obj → (offset, gen)。逐行读，不落地任何中间字符串。</summary>
+        public Dictionary<int, (long off, int gen)> ParseXrefTable(long at)
+        {
+            var map = new Dictionary<int, (long, int)>();
+            int p = (int)at;
+            while (p < N && B[p] != (byte)'x') p++;          // 容错：跳到 'xref'
+            if (!Match(p, "xref")) throw new FormatException("xref");
+            p += 4;
+            while (true)
+            {
+                p = SkipWs(p);
+                if (Match(p, "trailer")) break;
+                int start = 0, count = 0;
+                int q = p;
+                while (q < N && B[q] >= (byte)'0' && B[q] <= (byte)'9') start = start * 10 + (B[q++] - '0');
+                while (q < N && IsWs(B[q])) q++;
+                while (q < N && B[q] >= (byte)'0' && B[q] <= (byte)'9') count = count * 10 + (B[q++] - '0');
+                if (count <= 0) break;
+                int nl = Array.IndexOf(B, (byte)'\n', q, Math.Max(0, N - q));
+                if (nl < 0) break;
+                p = nl + 1;
+                for (int i = 0; i < count; i++)
+                {
+                    long off = -1;
+                    int gen = 0;
+                    int e = p;
+                    if (e + 17 > N) { p = N; break; }
+                    long acc = 0;
+                    while (e < p + 10 && B[e] >= (byte)'0' && B[e] <= (byte)'9') acc = acc * 10 + (B[e++] - '0');
+                    off = acc;
+                    e = p + 11;
+                    int gacc = 0;
+                    while (e < p + 16 && B[e] >= (byte)'0' && B[e] <= (byte)'9') gacc = gacc * 10 + (B[e++] - '0');
+                    gen = gacc;
+                    char use = (char)B[p + 17];
+                    if (use == 'n' && off >= 0) map[start + i] = (off, gen);
+                    p += 20;
+                }
+            }
+            return map;
+        }
+
+        /// <summary>按 xref 取出一个对象的字典体（"obj" 之后到 "endobj" 之前）。</summary>
+        public string ReadObject(Dictionary<int, (long off, int gen)> xref, int obj)
+        {
+            if (!xref.TryGetValue(obj, out var e)) throw new FormatException($"obj {obj}");
+            int start = (int)e.off;
+            if (start < 0 || start >= N) throw new FormatException("obj off");
+            int end = IndexOf("endobj", start);
+            if (end < 0) throw new FormatException("endobj");
+            int pre = IndexOf("obj", start);
+            if (pre < 0 || pre > end) throw new FormatException("obj kw");
+            return Str(pre + 3, end).Trim();
+        }
+
+        /// <summary>递归 Pages 树，收集叶子页对象号（按页序）。</summary>
+        public void CollectPages(Dictionary<int, (long off, int gen)> xref, int node, List<int> pages, int depth)
+        {
+            if (depth > 16 || pages.Count > 10000) return;
+            string body = ReadObject(xref, node);
+            var m = Kids.Match(body);
+            if (!m.Success) { pages.Add(node); return; }
+            foreach (System.Text.RegularExpressions.Match r in Ref.Matches(m.Groups[1].Value))
+            {
+                int child = int.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture);
+                string cb = ReadObject(xref, child);
+                if (cb.Contains("/Type /Pages") || cb.Contains("/Type/Pages")) CollectPages(xref, child, pages, depth + 1);
+                else pages.Add(child);
+            }
+        }
+
+        string Str(int start, int end) => Latin1.GetString(B, start, Math.Max(0, end - start));
+    }
+
 }
