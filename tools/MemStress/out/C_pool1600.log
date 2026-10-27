@@ -1,0 +1,52 @@
+# PaperSharp 批量内存压测
+# 模板=challenge.html 文档数=200 并发=4 内容=vary GC=Workstation CPU=16 runtime=10.0.10
+# 说明: docs=已完成 ws=工作集MB priv=私有字节MB heap=托管堆MB alloc=累计分配MB g0/g1/g2=GC次数 thr=线程数 ms/doc=平均耗时
+#   docs      ws    priv    heap  allocMB  gc0/g1/g2  thr  ms/doc
+       0   261.7   169.0    45.5       0   38/ 14/  7    9     0.0
+      25   339.4   244.5    37.8    1810  211/ 85/ 32    9   502.9
+      50   412.4   318.8    11.3    3619  385/160/ 59    9   501.3
+      75   382.5   287.8    10.9    5428  558/238/ 87   11   493.7
+     100   437.3   343.8    94.2    7236  734/319/115   11   490.4
+     125   414.1   319.3    42.7    9046  903/393/140    8   487.2
+     150   384.9   289.3    11.1   10855 1082/478/172    7   483.9
+     175   387.6   292.7    11.1   12664 1267/570/211    7   482.0
+     200   425.7   331.2    93.9   14473 1440/648/238    8   480.1
+     200   425.7   331.2    93.9   14473 1440/648/238    8   480.1
+#------------------------------------------------------------------------------
+# 跑完（200 份, 墙钟 96.0s, 吞吐 2.1 docs/s, 产物合计 163.0 MB）
+     200   404.1   308.4     9.6   14473 1444/652/242    8   480.1   <- 强制 Full GC + 等终结器后
+# 峰值: priv 343.8 MB   ws 437.3 MB   heap 94.2 MB   （起点 priv 169.4 / ws 261.9 MB）
+# 增长斜率（后半段线性拟合）: priv -76.4 MB/1k 份   heap +120.3 MB/1k 份
+# 托管累计分配 74102 KB/份   GC gen0 1407 / gen1 639 / gen2 236
+# Full GC 后: priv 308.4 MB（比峰值降 35.4） 托管堆滞留 9.6 MB → 原生侧 ≈ 298.8 MB
+# 静态缓存条目数（200 份之后；只列 ≥4 条的）:
+#       1393  PaperSharp.Layout.TextShaper.ListFaceCache
+#       1380  PaperSharp.Layout.TextShaper.FallbackCache
+#        179  PaperSharp.Layout.EastAsianWidth.AmbiguousRanges
+#         48  PaperSharp.Pdf.PdfGlyphUsage.Cache
+#         40  PaperSharp.Css.StyleResolver.UnsupportedProps
+#         13  PaperSharp.Layout.FontManager.Fallbacks
+#         13  PaperSharp.Layout.KernTable.Cache
+#         13  PaperSharp.Css.CounterStyle.Romans
+#         13  PaperSharp.Css.FlatCascade.Inherited
+#         11  PaperSharp.Layout.FontManager.Cache
+#         11  PaperSharp.Layout.FontManager.SlantedFace
+#         11  PaperSharp.Layout.FontManager.MetricsTable
+#         10  PaperSharp.Pdf.PdfGlyphUsage.FaceKeys
+#         10  PaperSharp.Pdf.PdfGlyphUsage.ColorFont
+#         10  PaperSharp.Css.CssValueParser.LengthUnitChars
+#         10  PaperSharp.Css.CssValueParser.BolderByParent
+#         10  PaperSharp.Css.CssValueParser.LighterByParent
+#         10  PaperSharp.Css.PropCache.ShorthandOnAsk
+#          9  PaperSharp.Layout.FontManager.NoBoldFamilies
+#          9  PaperSharp.Css.StyleResolver.NonRenderingTags
+#          8  PaperSharp.Imaging.PngEncoder.Signature
+#          7  PaperSharp.Css.CssValueParser.AbsoluteUnits
+#          6  PaperSharp.Pdf.TtfSubsetter.Drop
+#          6  PaperSharp.Layout.FontManager.LegacyMonoFamilies
+#          6  PaperSharp.Css.AtPageParser.Sizes
+#          6  PaperSharp.Css.StyleResolver.SizeProps
+#          5  PaperSharp.Layout.FontManager.BundledSubsetNames
+#          5  PaperSharp.Layout.FontManager.YaheiSubsetFamilies
+#          5  PaperSharp.Fonts.Bundled.Cache
+# 采样明细: G:\Github\papersharp\tools\MemStress\bin\Release\net10.0\out\mem_serial_200x4_vary.csv

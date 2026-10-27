@@ -1,0 +1,75 @@
+G:\Github\papersharp\tools\MemStress\Program.cs(30,21): warning CS0649: 从未对字段“Program.Options.SubsetBytes”赋值，字段将一直保持其默认值 false [G:\Github\papersharp\tools\MemStress\MemStress.csproj]
+未知参数: --sample-every
+用法: MemStress [serial|par] --docs N [--degree D] [--content vary|same] [--pool P] [--html path] [--every K] [--csv f] [--write dir] [--evict every|end|N] [--probe]
+# PaperSharp 批量内存压测
+# 模板=challenge.html 文档数=120 并发=4 内容=vary 驱逐=否 GC=Workstation CPU=16 runtime=10.0.10
+# 说明: docs=已完成 ws=工作集MB priv=私有字节MB heap=托管堆MB alloc=累计分配MB g0/g1/g2=GC次数 thr=线程数 ms/doc=平均耗时
+#   docs      ws    priv    heap  allocMB  fb/face  sub  gc0/g1/g2  thr  ms/doc
+       0   263.7   168.7    38.0       0   341/  358  18   39/ 15/  8   9     0.0
+       5   262.4   165.6    36.0     363   346/  364  27   74/ 32/ 13   9   524.6
+      10   275.3   178.8    37.7     706   346/  365  33  109/ 49/ 19   9   510.0
+      15   346.1   250.4    69.9    1067   350/  369  39  140/ 61/ 21   9   492.3
+      20   329.8   233.7    70.5    1429   352/  371  47  173/ 75/ 26   9   486.3
+      25   376.3   281.1    39.9    1789   352/  371  48  205/ 86/ 29   9   482.0
+      30   388.6   292.6    68.0    2148   352/  371  48  237/ 98/ 32   9   476.8
+      35   374.9   280.6    49.1    2489   352/  371  48  270/113/ 36   9   474.5
+      40   381.1   285.1    96.7    2851   352/  371  48  303/126/ 40   9   474.3
+      45   381.2   284.1    46.0    3212   352/  371  48  335/137/ 43   9   475.0
+      50   331.9   234.2    11.0    3572   352/  371  48  375/160/ 53   9   473.0
+      55   372.6   276.2    45.8    3911   352/  371  48  406/172/ 55   8   471.4
+      60   359.8   261.6    41.4    4272   352/  371  48  441/189/ 61   8   472.2
+      65   333.0   234.5    24.1    4612   352/  371  48  476/207/ 68  10   472.5
+      70   330.2   232.5    10.8    4972   352/  371  48  515/228/ 78  10   470.7
+      75   369.6   272.2    20.7    5313   352/  371  48  549/242/ 82   9   471.1
+      80   333.5   235.1    11.3    5672   352/  371  48  587/262/ 91  10   472.0
+      85   389.7   291.9    38.7    6033   352/  371  48  619/276/ 94  10   469.6
+      90   386.0   288.4    40.2    6394   352/  371  48  651/287/ 97  10   468.8
+      95   352.9   256.3    72.1    6756   352/  371  48  685/302/102  10   467.8
+     100   338.5   240.0    10.8    7116   352/  371  48  720/318/108   9   467.7
+     105   363.4   265.3    35.1    7477   352/  371  48  754/332/112  10   467.3
+     110   387.2   290.4    91.9    7840   352/  371  48  788/349/117   9   467.9
+     115   366.2   268.2    39.5    8202   352/  371  48  823/364/123   9   468.3
+     120   389.7   292.5    71.5    8563   352/  371  48  854/376/125   8   467.6
+     120   389.7   292.5    71.5    8563   352/  371  48  854/376/125   8   467.6
+#------------------------------------------------------------------------------
+# 跑完（120 份, 墙钟 56.1s, 吞吐 2.1 docs/s, 产物合计 97.0 MB）
+     120   379.0   281.2     9.3    8563   352/  371  48  858/380/129   8   467.6   <- 强制 Full GC + 等终结器后
+# 峰值: priv 292.6 MB   ws 389.7 MB   heap 96.7 MB   （起点 priv 169.0 / ws 264.0 MB）
+# 增长斜率（后半段线性拟合）: priv +648.6 MB/1k 份   heap +778.1 MB/1k 份   priv/回退码位条目 +0 KB
+# 托管累计分配 73073 KB/份   GC gen0 820 / gen1 366 / gen2 122
+# Full GC 后: priv 281.2 MB（比峰值降 11.4） 托管堆滞留 9.3 MB → 原生侧 ≈ 271.9 MB
+# 静态缓存条目数（120 份之后；只列 ≥4 条的）:
+#        371  PaperSharp.Layout.TextShaper.ListFaceCache
+#        352  PaperSharp.Layout.TextShaper.FallbackCache
+#        179  PaperSharp.Layout.EastAsianWidth.AmbiguousRanges
+#         48  PaperSharp.Pdf.PdfGlyphUsage.Cache
+#         40  PaperSharp.Css.StyleResolver.UnsupportedProps
+#         13  PaperSharp.Layout.FontManager.Fallbacks
+#         13  PaperSharp.Layout.KernTable.Cache
+#         13  PaperSharp.Css.CounterStyle.Romans
+#         13  PaperSharp.Css.FlatCascade.Inherited
+#         11  PaperSharp.Layout.FontManager.Cache
+#         11  PaperSharp.Layout.FontManager.SlantedFace
+#         11  PaperSharp.Layout.FontManager.MetricsTable
+#         10  PaperSharp.Pdf.PdfGlyphUsage.FaceKeys
+#         10  PaperSharp.Pdf.PdfGlyphUsage.ColorFont
+#         10  PaperSharp.Css.CssValueParser.LengthUnitChars
+#         10  PaperSharp.Css.CssValueParser.BolderByParent
+#         10  PaperSharp.Css.CssValueParser.LighterByParent
+#         10  PaperSharp.Css.PropCache.ShorthandOnAsk
+#          9  PaperSharp.Layout.FontManager.NoBoldFamilies
+#          9  PaperSharp.Css.StyleResolver.NonRenderingTags
+#          8  PaperSharp.Imaging.PngEncoder.Signature
+#          7  PaperSharp.Css.CssValueParser.AbsoluteUnits
+#          6  PaperSharp.Pdf.TtfSubsetter.Drop
+#          6  PaperSharp.Layout.FontManager.LegacyMonoFamilies
+#          6  PaperSharp.Css.AtPageParser.Sizes
+#          6  PaperSharp.Css.StyleResolver.SizeProps
+#          5  PaperSharp.Layout.FontManager.BundledSubsetNames
+#          5  PaperSharp.Layout.FontManager.YaheiSubsetFamilies
+#          5  PaperSharp.Fonts.Bundled.Cache
+# 子集缓存 48 张：保留字形合计 7,580（中位 248）不同原生字面 48 个
+#    29 张 × 中位 252 字形   Microsoft YaHei
+#    18 张 × 中位 73 字形   Segoe UI
+#     1 张 × 中位 18 字形   Consolas
+# 采样明细: G:\Github\papersharp\tools\MemStress\bin\Release\net10.0\out\mem_serial_120x4_vary.csv

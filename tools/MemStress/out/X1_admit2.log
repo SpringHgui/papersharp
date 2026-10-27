@@ -1,0 +1,55 @@
+# PaperSharp 批量内存压测
+# 模板=challenge.html 文档数=120 并发=4 内容=vary 驱逐=admit2 GC=Workstation CPU=16 runtime=10.0.10
+# 说明: docs=已完成 ws=工作集MB priv=私有字节MB heap=托管堆MB alloc=累计分配MB g0/g1/g2=GC次数 thr=线程数 ms/doc=平均耗时
+#   docs      ws    priv    heap  allocMB  fb/face  sub  gc0/g1/g2  thr  ms/doc
+       0   261.3   167.0    41.8       0   341/  358  18   38/ 14/  7   9     0.0
+      20   270.0   172.9    70.0    1521   352/  371  14  172/ 68/ 24   9   596.3
+      40   313.9   216.0    71.4    2967   352/  371  18  304/123/ 41   9   578.4
+      60   320.7   222.8    38.8    4409   352/  371  20  437/178/ 57  11   569.1
+      80   329.9   231.6    11.6    5832   352/  371  23  572/233/ 78  11   554.9
+     100   317.6   219.6    13.3    7276   352/  371  25  707/290/ 97  11   538.3
+     120   288.3   189.4    10.5    8720   352/  371  27  864/382/137   8   522.8
+# 共驱逐常驻子集字面 155 张（每份平均 1.3；口径=admit2）
+     120   288.3   189.4    10.5    8720   352/  371  27  864/382/137   8   522.8
+#------------------------------------------------------------------------------
+# 跑完（120 份, 墙钟 62.7s, 吞吐 1.9 docs/s, 产物合计 97.0 MB）
+     120   280.6   181.8     9.3    8720   352/  371  27  868/386/141   8   522.8   <- 强制 Full GC + 等终结器后
+# 峰值: priv 231.6 MB   ws 329.9 MB   heap 71.4 MB   （起点 priv 168.0 / ws 262.1 MB）
+# 增长斜率（后半段线性拟合）: priv -645.4 MB/1k 份   heap -377.0 MB/1k 份   priv/回退码位条目 +0 KB
+# 托管累计分配 74414 KB/份   GC gen0 831 / gen1 373 / gen2 135
+# Full GC 后: priv 181.8 MB（比峰值降 49.8） 托管堆滞留 9.3 MB → 原生侧 ≈ 172.5 MB
+# 静态缓存条目数（120 份之后；只列 ≥4 条的）:
+#        371  PaperSharp.Layout.TextShaper.ListFaceCache
+#        352  PaperSharp.Layout.TextShaper.FallbackCache
+#        179  PaperSharp.Layout.EastAsianWidth.AmbiguousRanges
+#         40  PaperSharp.Css.StyleResolver.UnsupportedProps
+#         27  PaperSharp.Pdf.PdfGlyphUsage.Cache
+#         13  PaperSharp.Layout.FontManager.Fallbacks
+#         13  PaperSharp.Layout.KernTable.Cache
+#         13  PaperSharp.Css.CounterStyle.Romans
+#         13  PaperSharp.Css.FlatCascade.Inherited
+#         11  PaperSharp.Layout.FontManager.Cache
+#         11  PaperSharp.Layout.FontManager.SlantedFace
+#         11  PaperSharp.Layout.FontManager.MetricsTable
+#         10  PaperSharp.Pdf.PdfGlyphUsage.FaceKeys
+#         10  PaperSharp.Pdf.PdfGlyphUsage.ColorFont
+#         10  PaperSharp.Css.CssValueParser.LengthUnitChars
+#         10  PaperSharp.Css.CssValueParser.BolderByParent
+#         10  PaperSharp.Css.CssValueParser.LighterByParent
+#         10  PaperSharp.Css.PropCache.ShorthandOnAsk
+#          9  PaperSharp.Layout.FontManager.NoBoldFamilies
+#          9  PaperSharp.Css.StyleResolver.NonRenderingTags
+#          8  PaperSharp.Imaging.PngEncoder.Signature
+#          7  PaperSharp.Css.CssValueParser.AbsoluteUnits
+#          6  PaperSharp.Pdf.TtfSubsetter.Drop
+#          6  PaperSharp.Layout.FontManager.LegacyMonoFamilies
+#          6  PaperSharp.Css.AtPageParser.Sizes
+#          6  PaperSharp.Css.StyleResolver.SizeProps
+#          5  PaperSharp.Layout.FontManager.BundledSubsetNames
+#          5  PaperSharp.Layout.FontManager.YaheiSubsetFamilies
+#          5  PaperSharp.Fonts.Bundled.Cache
+# 子集缓存 27 张：保留字形合计 2,442（中位 73）不同原生字面 27 个
+#     9 张 × 中位 248 字形   Microsoft YaHei
+#    17 张 × 中位 73 字形   Segoe UI
+#     1 张 × 中位 18 字形   Consolas
+# 采样明细: G:\Github\papersharp\tools\MemStress\bin\rel8\out\mem_serial_120x4_vary_evadmit2.csv

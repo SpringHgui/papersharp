@@ -1,0 +1,84 @@
+# PaperSharp 批量内存压测
+# 模板=challenge.html 文档数=2000 并发=4 内容=vary GC=Workstation CPU=16 runtime=10.0.10
+# 说明: docs=已完成 ws=工作集MB priv=私有字节MB heap=托管堆MB alloc=累计分配MB g0/g1/g2=GC次数 thr=线程数 ms/doc=平均耗时
+#   docs      ws    priv    heap  allocMB  fb/face  sub  gc0/g1/g2  thr  ms/doc
+       0   248.6   154.3    49.5       0   357/  370  14   39/ 15/  8   9     0.0
+      50   439.7   346.5    93.1    3618   646/  659  48  379/156/ 53   9   490.3
+     100   466.1   372.8   120.6    7236   829/  842  48  732/319/113  10   488.1
+     150   426.6   331.0    40.3   10853   953/  966  48 1071/471/161   7   487.2
+     200   376.9   279.8    10.9   14471  1026/ 1039  48 1419/635/217   7   488.5
+     250   439.3   344.6    97.7   18089  1062/ 1075  48 1759/783/266   8   488.3
+     300   432.3   336.8    40.1   21707  1077/ 1090  48 2103/930/316   5   486.9
+     350   437.0   340.6    42.3   25324  1087/ 1100  48 2454/1096/374   5   486.3
+     400   419.4   323.4    40.1   28942  1095/ 1108  48 2798/1248/425   6   485.7
+     450   445.2   349.5    68.2   32560  1101/ 1114  48 3135/1397/468   5   487.1
+     500   454.9   360.6   124.2   36177  1104/ 1117  48 3482/1550/521   6   487.0
+     550   444.5   349.0    39.8   39795  1106/ 1119  48 3848/1732/593   6   487.6
+     600   441.2   345.9    11.0   43413  1106/ 1119  48 4195/1880/646   5   487.5
+     650   436.5   340.0    10.8   47031  1107/ 1120  48 4549/2044/705   7   479.7
+     700   394.9   298.8    10.6   50648  1107/ 1120  48 4909/2213/771   7   472.1
+     750   396.0   299.0    11.0   54266  1107/ 1120  48 5278/2399/846   7   467.4
+     800   437.0   341.0    10.7   57884  1107/ 1120  48 5623/2563/896   7   461.1
+     850   383.0   285.9    11.0   61502  1107/ 1120  48 5989/2740/968   7   456.1
+     900   446.2   350.4    10.5   65120  1107/ 1120  48 6344/2909/1028   5   451.1
+     950   376.5   279.4    39.6   68737  1107/ 1120  48 6709/3092/1099   5   447.5
+    1000   386.3   290.0    39.7   72355  1107/ 1120  48 7092/3296/1188   5   445.0
+    1050   445.1   349.6    10.8   75974  1107/ 1120  48 7454/3469/1255   5   442.1
+    1100   423.6   328.3    66.8   79592  1107/ 1120  48 7800/3623/1307   5   444.4
+    1150   402.7   308.3    11.0   83210  1107/ 1120  48 8154/3787/1367   5   447.1
+    1200   424.9   331.3    72.2   86829  1107/ 1120  48 8501/3940/1421   5   443.7
+    1250   453.4   361.4   121.4   90447  1107/ 1120  48 8843/4088/1469   5   440.3
+    1300   460.5   369.1   121.6   94065  1107/ 1120  48 9187/4242/1520   5   437.7
+    1350   418.8   325.7    10.8   97683  1107/ 1120  48 9531/4403/1571   5   440.7
+    1400   430.3   337.6    39.8  101302  1107/ 1120  48 9876/4552/1623   7   445.1
+    1450   446.5   354.9    68.0  104920  1107/ 1120  48 10215/4698/1668   8   449.4
+    1500   423.5   330.9    63.4  108538  1107/ 1120  48 10555/4848/1714   6   452.6
+    1550   381.4   287.7    10.9  112157  1107/ 1120  48 10902/5005/1767   6   455.1
+    1600   425.2   333.1    65.1  115775  1107/ 1120  48 11238/5148/1810   5   454.3
+    1650   439.8   347.7    66.7  119393  1107/ 1120  48 11574/5293/1852   5   453.3
+    1700   417.2   324.6    40.8  123011  1107/ 1120  48 11927/5456/1911   5   453.3
+    1750   442.4   350.4    35.1  126630  1107/ 1120  48 12294/5640/1983   5   452.0
+    1800   399.6   306.8    10.8  130248  1107/ 1120  48 12637/5792/2032   5   449.3
+    1850   436.6   344.0    39.6  133866  1107/ 1120  48 12984/5949/2085   6   446.8
+    1900   386.6   293.4    10.5  137485  1107/ 1120  48 13333/6101/2139   5   444.8
+    1950   381.6   289.0    11.0  141103  1107/ 1120  48 13705/6283/2217   5   444.0
+    2000   427.8   336.3    93.9  144721  1107/ 1120  48 14055/6445/2272   5   443.5
+    2000   427.9   336.3    93.9  144721  1107/ 1120  48 14055/6445/2272   6   443.5
+#------------------------------------------------------------------------------
+# 跑完（2000 份, 墙钟 887.0s, 吞吐 2.3 docs/s, 产物合计 1631.0 MB）
+    2000   410.1   317.4     9.6  144721  1107/ 1120  48 14059/6449/2276   6   443.5   <- 强制 Full GC + 等终结器后
+# 峰值: priv 372.8 MB   ws 466.1 MB   heap 124.2 MB   （起点 priv 155.3 / ws 249.3 MB）
+# 增长斜率（后半段线性拟合）: priv -9.9 MB/1k 份   heap -5.3 MB/1k 份   priv/回退码位条目 +0 KB
+# 托管累计分配 74097 KB/份   GC gen0 14021 / gen1 6435 / gen2 2269
+# Full GC 后: priv 317.4 MB（比峰值降 55.4） 托管堆滞留 9.6 MB → 原生侧 ≈ 307.8 MB
+# 静态缓存条目数（2000 份之后；只列 ≥4 条的）:
+#       1120  PaperSharp.Layout.TextShaper.ListFaceCache
+#       1107  PaperSharp.Layout.TextShaper.FallbackCache
+#        179  PaperSharp.Layout.EastAsianWidth.AmbiguousRanges
+#         48  PaperSharp.Pdf.PdfGlyphUsage.Cache
+#         40  PaperSharp.Css.StyleResolver.UnsupportedProps
+#         13  PaperSharp.Layout.FontManager.Fallbacks
+#         13  PaperSharp.Layout.KernTable.Cache
+#         13  PaperSharp.Css.CounterStyle.Romans
+#         13  PaperSharp.Css.FlatCascade.Inherited
+#         11  PaperSharp.Layout.FontManager.Cache
+#         11  PaperSharp.Layout.FontManager.SlantedFace
+#         11  PaperSharp.Layout.FontManager.MetricsTable
+#         10  PaperSharp.Pdf.PdfGlyphUsage.FaceKeys
+#         10  PaperSharp.Pdf.PdfGlyphUsage.ColorFont
+#         10  PaperSharp.Css.CssValueParser.LengthUnitChars
+#         10  PaperSharp.Css.CssValueParser.BolderByParent
+#         10  PaperSharp.Css.CssValueParser.LighterByParent
+#         10  PaperSharp.Css.PropCache.ShorthandOnAsk
+#          9  PaperSharp.Layout.FontManager.NoBoldFamilies
+#          9  PaperSharp.Css.StyleResolver.NonRenderingTags
+#          8  PaperSharp.Imaging.PngEncoder.Signature
+#          7  PaperSharp.Css.CssValueParser.AbsoluteUnits
+#          6  PaperSharp.Pdf.TtfSubsetter.Drop
+#          6  PaperSharp.Layout.FontManager.LegacyMonoFamilies
+#          6  PaperSharp.Css.AtPageParser.Sizes
+#          6  PaperSharp.Css.StyleResolver.SizeProps
+#          5  PaperSharp.Layout.FontManager.BundledSubsetNames
+#          5  PaperSharp.Layout.FontManager.YaheiSubsetFamilies
+#          5  PaperSharp.Fonts.Bundled.Cache
+# 采样明细: G:\Github\papersharp\tools\MemStress\bin\rel3\out\mem_serial_2000x4_vary_p800.csv

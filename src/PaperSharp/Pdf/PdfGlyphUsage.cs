@@ -19,12 +19,25 @@ namespace PaperSharp.Pdf;
 /// </summary>
 public sealed class PdfGlyphUsage : IDisposable
 {
-    /// <summary>字形集合完全一致的同一张 face 的子集跨渲染复用（同一文档反复导出 / 常驻服务热路径）。</summary>
+    /// <summary>字形集合完全一致的同一张 face 的子集跨渲染复用（同一文档反复导出 / 常驻服务热路径）。
+    /// 计价口径（tools/MemStress 实测）：**一张活字面在真渲染里 ≈3.5 MB**，是它子集流本身（0.2–0.6 MB）
+    /// 的近十倍——多出来的是 Skia 挂在这张 typeface 上的字形位图/度量缓存，跟着字面一起常驻。
+    /// 批量导出内容各异的 2000 份里，每张独有子集只被用一次、永远不会命中，48 张就这么白占 ~172 MB。
+    /// 所以：① **第二次命中才准入**（只值一次的子集留在本次渲染的 <see cref="ownedFaces"/> 里当场释放）；
+    /// ② LRU 上限 16 张（≈56 MB 封顶），逐出后等最后一个租约归还才 Dispose——并发渲染中直接放掉别人
+    /// 正在用的字面会踩空句柄。同模板反复导出的热子集第二次起常驻，速度收益一点不丢。</summary>
     static readonly List<CachedSubset> Cache = new();
-    static readonly object CacheLock = new();
-    const int CacheCap = 48;
 
-    sealed record CachedSubset(FaceKey Face, int[] Kept, SKTypeface Subset);
+    /// <summary>第一趟见过的子集指纹；第二次出现才准进 <see cref="Cache"/>。只存 4 字节，量级 = 批内不同子集数。</summary>
+    static readonly HashSet<uint> SeenOnce = new();
+    static readonly object CacheLock = new();
+    const int CacheCap = 16;
+
+    sealed record CachedSubset(FaceKey Face, int[] Kept, SKTypeface Subset)
+    {
+        public int Users;      // 正在用这张常驻字面的渲染数（租约）
+        public bool Dying;     // 已逐出，等最后一个租约归还再 Dispose
+    }
 
     /// <summary>
     /// 一张字面的**身份**：族名+字重+字宽+斜度+字形总数+head 表校验和。
@@ -57,6 +70,7 @@ public sealed class PdfGlyphUsage : IDisposable
     readonly Dictionary<FaceKey, SKTypeface> Source = new();   // 每个身份留一个具体实例当裁剪源
     readonly Dictionary<FaceKey, (SKTypeface Face, HashSet<int> Kept)> Subsets = new();
     readonly List<SKTypeface> ownedFaces = new();   // 未进全局缓存的子集 face：本次渲染独占，Dispose 释放
+    readonly List<CachedSubset> borrowed = new();   // 从全局缓存取用的字面：Dispose 时归还租约
     readonly PdfGlyphUsage? outer;
 
     [ThreadStatic] static PdfGlyphUsage? cur;
@@ -85,6 +99,14 @@ public sealed class PdfGlyphUsage : IDisposable
         if (cur == this) cur = outer;
         foreach (var f in ownedFaces) f.Dispose();
         ownedFaces.Clear();
+        // 归还常驻字面的租约：引用计数归零且已被逐出的那张，此刻才真还原生内存。
+        // 并发渲染里随手 Dispose 一张别人正在用的字面＝踩空句柄，所以逐出与释放必须分两步。
+        lock (CacheLock)
+        {
+            foreach (var c in borrowed)
+                if (--c.Users == 0 && c.Dying) c.Subset.Dispose();
+        }
+        borrowed.Clear();
     }
 
     /// <summary>录制趟结束 → 按用字集合建子集 face（进程级缓存命中则零成本）。
@@ -102,7 +124,14 @@ public sealed class PdfGlyphUsage : IDisposable
             {
                 foreach (var c in Cache)
                     if (c.Face == key && c.Kept.SequenceEqual(sorted))
-                    { face = c.Subset; break; }
+                    {
+                        c.Users++;
+                        borrowed.Add(c);
+                        Cache.Remove(c);
+                        Cache.Add(c);          // LRU：命中的挪到队尾，别被新来的挤掉
+                        face = c.Subset;
+                        break;
+                    }
             }
             if (face == null)
             {
@@ -114,17 +143,40 @@ public sealed class PdfGlyphUsage : IDisposable
                 if (bytes == null) continue;   // CFF/异常数据：保持整嵌
                 face = SKTypeface.FromData(SKData.CreateCopy(bytes));
                 if (face == null) continue;
-                bool cached;
+                uint sig = Stamp(key, sorted);
+                bool admit;
                 lock (CacheLock)
                 {
-                    cached = Cache.Count < CacheCap;
-                    if (cached) Cache.Add(new CachedSubset(key, sorted, face));
+                    if (SeenOnce.Count > 65_536) SeenOnce.Clear();   // 常驻服务跑百万份：指纹表自己也要封顶
+                    admit = !SeenOnce.Add(sig);   // Add 返回 false ＝ 上一趟就见过 → 这次是第二次命中
+                    if (admit)
+                    {
+                        while (Cache.Count >= CacheCap)
+                        {
+                            var old = Cache[0];
+                            Cache.RemoveAt(0);
+                            old.Dying = true;
+                            if (old.Users == 0) old.Subset.Dispose();
+                        }
+                        var entry = new CachedSubset(key, sorted, face) { Users = 1 };
+                        Cache.Add(entry);
+                        borrowed.Add(entry);
+                    }
+                    else ownedFaces.Add(face);   // 只值一次的子集：本次渲染独占，Dispose 当场释放
                 }
-                if (!cached) ownedFaces.Add(face);
             }
             Subsets[key] = (face, new HashSet<int>(sorted));
         }
         SubsetsBuilt = true;   // Recording 保持 true：真绘趟继续录制并逐字校验
+    }
+
+    /// <summary>子集**准入**用的指纹：字面身份 + 用字集合。允许哈希撞车——撞车只会让一张子集提前常驻
+    /// （多花 3.5 MB），查表命中仍然逐字比 <c>Kept</c>，绝不会拿错 face 去画。</summary>
+    static uint Stamp(FaceKey key, int[] kept)
+    {
+        uint h = ((uint)key.Family.GetHashCode() << 3) ^ (uint)key.GlyphCount ^ key.HeadSum;
+        foreach (int g in kept) h = (h * 31) ^ (uint)g;
+        return h ^ (uint)kept.Length;
     }
 
     /// <summary>校验失败后用：丢弃全部子集，真绘退回原始 face。</summary>

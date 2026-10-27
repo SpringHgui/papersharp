@@ -1,0 +1,61 @@
+# PaperSharp 批量内存压测
+# 模板=challenge.html 文档数=600 并发=4 内容=vary 驱逐=否 GC=Workstation CPU=16 runtime=10.0.10
+# 说明: docs=已完成 ws=工作集MB priv=私有字节MB heap=托管堆MB alloc=累计分配MB g0/g1/g2=GC次数 thr=线程数 ms/doc=平均耗时
+#   docs      ws    priv    heap  allocMB  fb/face  sub  gc0/g1/g2  thr  ms/doc
+       0   254.2   160.1    36.3       0   341/  358   8   42/ 19/ 10   9     0.0
+      50   310.4   213.3    98.2    3622   352/  371  16  376/163/ 54   9   503.1
+     100   297.9   198.7    37.8    7237   352/  371  16  712/305/ 99  10   508.2
+     150   276.1   177.2    70.1   10850   352/  371  16 1049/449/146   7   511.1
+     200   262.5   162.8    35.7   14465   352/  371  16 1387/597/192   7   507.0
+     250   278.1   178.8    44.9   18089   352/  371  16 1724/738/238   8   506.2
+     300   260.6   160.7    37.4   21714   352/  371  16 2058/882/282   5   492.1
+     350   322.2   224.7   123.1   25340   352/  371  16 2392/1026/326   5   482.4
+     400   263.1   163.0    37.1   28968   352/  371  16 2727/1165/369   6   488.5
+     450   280.2   180.3    37.0   32588   352/  371  16 3059/1307/410   5   489.5
+     500   279.8   180.8    91.4   36217   352/  371  16 3405/1471/464   6   488.6
+     550   244.1   143.8    10.5   39843   352/  371  16 3779/1674/546   6   482.3
+     600   232.0   131.4    10.6   43467   352/  371  16 4165/1889/639   6   477.4
+     600   232.0   131.4    10.6   43467   352/  371  16 4165/1889/639   6   477.4
+#------------------------------------------------------------------------------
+# 跑完（600 份, 墙钟 286.5s, 吞吐 2.1 docs/s, 产物合计 488.0 MB）
+     600   223.8   123.2     9.3   43467   352/  371  16 4169/1893/643   6   477.4   <- 强制 Full GC + 等终结器后
+# 峰值: priv 224.7 MB   ws 322.2 MB   heap 123.1 MB   （起点 priv 160.3 / ws 254.5 MB）
+# 增长斜率（后半段线性拟合）: priv -184.7 MB/1k 份   heap -197.3 MB/1k 份   priv/回退码位条目 +0 KB
+# 托管累计分配 74184 KB/份   GC gen0 4128 / gen1 1875 / gen2 634
+# Full GC 后: priv 123.2 MB（比峰值降 101.5） 托管堆滞留 9.3 MB → 原生侧 ≈ 113.9 MB
+# 静态缓存条目数（600 份之后；只列 ≥4 条的）:
+#        559  PaperSharp.Pdf.PdfGlyphUsage.SeenOnce
+#        371  PaperSharp.Layout.TextShaper.ListFaceCache
+#        352  PaperSharp.Layout.TextShaper.FallbackCache
+#        179  PaperSharp.Layout.EastAsianWidth.AmbiguousRanges
+#         40  PaperSharp.Css.StyleResolver.UnsupportedProps
+#         16  PaperSharp.Pdf.PdfGlyphUsage.Cache
+#         13  PaperSharp.Layout.FontManager.Fallbacks
+#         13  PaperSharp.Layout.KernTable.Cache
+#         13  PaperSharp.Css.CounterStyle.Romans
+#         13  PaperSharp.Css.FlatCascade.Inherited
+#         11  PaperSharp.Layout.FontManager.Cache
+#         11  PaperSharp.Layout.FontManager.SlantedFace
+#         11  PaperSharp.Layout.FontManager.MetricsTable
+#         10  PaperSharp.Pdf.PdfGlyphUsage.FaceKeys
+#         10  PaperSharp.Pdf.PdfGlyphUsage.ColorFont
+#         10  PaperSharp.Css.CssValueParser.LengthUnitChars
+#         10  PaperSharp.Css.CssValueParser.BolderByParent
+#         10  PaperSharp.Css.CssValueParser.LighterByParent
+#         10  PaperSharp.Css.PropCache.ShorthandOnAsk
+#          9  PaperSharp.Layout.FontManager.NoBoldFamilies
+#          9  PaperSharp.Css.StyleResolver.NonRenderingTags
+#          8  PaperSharp.Imaging.PngEncoder.Signature
+#          7  PaperSharp.Css.CssValueParser.AbsoluteUnits
+#          6  PaperSharp.Pdf.TtfSubsetter.Drop
+#          6  PaperSharp.Layout.FontManager.LegacyMonoFamilies
+#          6  PaperSharp.Css.AtPageParser.Sizes
+#          6  PaperSharp.Css.StyleResolver.SizeProps
+#          5  PaperSharp.Layout.FontManager.BundledSubsetNames
+#          5  PaperSharp.Layout.FontManager.YaheiSubsetFamilies
+#          5  PaperSharp.Fonts.Bundled.Cache
+# 子集缓存 16 张：保留字形合计 1,280（中位 70）不同原生字面 16 个
+#     7 张 × 中位 69 字形   Microsoft YaHei
+#     8 张 × 中位 72 字形   Segoe UI
+#     1 张 × 中位 18 字形   Consolas
+# 采样明细: G:\Github\papersharp\tools\MemStress\bin\rel9\out\mem_serial_600x4_vary.csv

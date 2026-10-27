@@ -1,0 +1,60 @@
+# PaperSharp 批量内存压测
+# 模板=challenge.html 文档数=400 并发=4 内容=vary GC=Server CPU=16 runtime=10.0.10
+# 说明: docs=已完成 ws=工作集MB priv=私有字节MB heap=托管堆MB alloc=累计分配MB g0/g1/g2=GC次数 thr=线程数 ms/doc=平均耗时
+#   docs      ws    priv    heap  allocMB  fb/face  sub  gc0/g1/g2  thr  ms/doc
+       0   239.6   150.6    15.6       0   357/  370  14   31/ 18/ 12  26     0.0
+      25   322.1   232.7    19.4    1747   516/  529  39  103/ 81/ 41  27   523.5
+      50   395.7   306.1    17.1    3556   646/  659  48  174/144/ 69  27   532.6
+      75   405.8   315.5    51.8    5427   753/  766  48  252/209/103  29   542.5
+     100   413.0   321.8    19.2    6863   829/  842  48  321/272/130  29   547.7
+     125   377.6   285.2    10.8    5220   894/  907  48  400/335/164  26   553.5
+     150   385.7   292.8    32.0    7030   953/  966  48  499/408/214  25   552.4
+     175   413.9   322.1    56.6   12610   996/ 1009  48  580/473/250  27   551.0
+     200   383.7   291.9    14.0   13223  1026/ 1039  48  648/537/277  28   549.1
+     225   386.4   298.4    15.0   15032  1045/ 1058  48  717/589/303  27   548.5
+     250   397.0   305.8    18.6   16841  1062/ 1075  48  801/660/341  25   542.2
+     275   419.6   327.7    37.2   18650  1067/ 1080  48  879/724/374  25   531.5
+     300   402.8   310.6    18.0   20459  1077/ 1090  48  956/785/407  25   521.8
+     325   430.0   338.4    14.8   22268  1080/ 1093  48 1024/840/433  25   513.4
+     350   377.7   285.2    10.9   15752  1087/ 1100  48 1113/911/473  25   506.4
+     375   394.3   306.6    19.5   27135  1090/ 1103  48 1179/971/499  26   501.5
+     400   413.7   324.1    65.3   28161  1095/ 1108  48 1239/1028/523  26   498.6
+     400   413.7   324.1    65.3   28161  1095/ 1108  48 1239/1028/523  27   498.6
+#------------------------------------------------------------------------------
+# 跑完（400 份, 墙钟 199.4s, 吞吐 2.0 docs/s, 产物合计 326.0 MB）
+     400   382.4   292.2     9.6   28161  1095/ 1108  48 1243/1032/527  27   498.6   <- 强制 Full GC + 等终结器后
+# 峰值: priv 338.4 MB   ws 430.0 MB   heap 65.3 MB   （起点 priv 151.0 / ws 240.4 MB）
+# 增长斜率（后半段线性拟合）: priv +93.7 MB/1k 份   heap +177.7 MB/1k 份   priv/回退码位条目 +338 KB
+# 托管累计分配 72092 KB/份   GC gen0 1213 / gen1 1015 / gen2 516
+# Full GC 后: priv 292.2 MB（比峰值降 46.3） 托管堆滞留 9.6 MB → 原生侧 ≈ 282.6 MB
+# 静态缓存条目数（400 份之后；只列 ≥4 条的）:
+#       1108  PaperSharp.Layout.TextShaper.ListFaceCache
+#       1095  PaperSharp.Layout.TextShaper.FallbackCache
+#        179  PaperSharp.Layout.EastAsianWidth.AmbiguousRanges
+#         48  PaperSharp.Pdf.PdfGlyphUsage.Cache
+#         40  PaperSharp.Css.StyleResolver.UnsupportedProps
+#         13  PaperSharp.Layout.FontManager.Fallbacks
+#         13  PaperSharp.Layout.KernTable.Cache
+#         13  PaperSharp.Css.CounterStyle.Romans
+#         13  PaperSharp.Css.FlatCascade.Inherited
+#         11  PaperSharp.Layout.FontManager.Cache
+#         11  PaperSharp.Layout.FontManager.SlantedFace
+#         11  PaperSharp.Layout.FontManager.MetricsTable
+#         10  PaperSharp.Pdf.PdfGlyphUsage.FaceKeys
+#         10  PaperSharp.Pdf.PdfGlyphUsage.ColorFont
+#         10  PaperSharp.Css.CssValueParser.LengthUnitChars
+#         10  PaperSharp.Css.CssValueParser.BolderByParent
+#         10  PaperSharp.Css.CssValueParser.LighterByParent
+#         10  PaperSharp.Css.PropCache.ShorthandOnAsk
+#          9  PaperSharp.Layout.FontManager.NoBoldFamilies
+#          9  PaperSharp.Css.StyleResolver.NonRenderingTags
+#          8  PaperSharp.Imaging.PngEncoder.Signature
+#          7  PaperSharp.Css.CssValueParser.AbsoluteUnits
+#          6  PaperSharp.Pdf.TtfSubsetter.Drop
+#          6  PaperSharp.Layout.FontManager.LegacyMonoFamilies
+#          6  PaperSharp.Css.AtPageParser.Sizes
+#          6  PaperSharp.Css.StyleResolver.SizeProps
+#          5  PaperSharp.Layout.FontManager.BundledSubsetNames
+#          5  PaperSharp.Layout.FontManager.YaheiSubsetFamilies
+#          5  PaperSharp.Fonts.Bundled.Cache
+# 采样明细: G:\Github\papersharp\tools\MemStress\bin\rel3\out\mem_serial_400x4_vary_p800.csv
