@@ -10,6 +10,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+      packages: write # 推 GitHub Packages（仓库右侧 Packages 栏展示），用内置 GITHUB_TOKEN
       id-token: write # NuGet Trusted Publishing (OIDC)，无需 API Key
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +29,17 @@ jobs:
       - name: Pack
         shell: bash # Windows 默认 shell 是 pwsh，${VAR#v} 会展开为空
         run: dotnet pack src/PaperSharp/PaperSharp.csproj -c Release -p:Version=${GITHUB_REF_NAME#v} -o ./nupkg
+
+      # 先发到 GitHub Packages，包会出现在仓库右侧 Packages 栏。
+      # 用内置 GITHUB_TOKEN（需上面的 packages:write），无需额外密钥，一定可用；
+      # 放在 nuget.org 之前，避免 nuget.org OIDC 未预配时连带这个展示位也发不出去。
+      # owner 用 github.repository_owner，避免写死账号名。
+      - name: Push to GitHub Packages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: dotnet nuget push nupkg/*.nupkg --api-key "$GITHUB_TOKEN" --source "https://nuget.pkg.github.com/${OWNER}/index.json" --skip-duplicate
 
       - name: NuGet login (OIDC → 1 小时临时 API Key)
         id: login
