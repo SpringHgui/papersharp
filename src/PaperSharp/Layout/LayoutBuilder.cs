@@ -276,6 +276,11 @@ public static class LayoutBuilder
     /// </summary>
     static void MeasureTable(BlockBox box, float availWidth)
     {
+        // 表格会被测两遍：Renderer 先量整棵树，Paginator.Paginate 起手又对 body 的每个子块重量一次。
+        // 这两份列表是累加的，不清空就会得到 [0,0]/[41,41]——每页把 thead/tfoot 各排两遍，
+        // 多占两行高度：表头之上空一行、表尾与末行之间空一行，表尾还被顶出内容区（见 TableFooterPaginationTests）。
+        box.THeaderRows.Clear();
+        box.TFooterRows.Clear();
         var s = box.Style;
         bool collapse = s.BorderCollapse == "collapse";
         float spacingX = collapse ? 0 : s.BorderSpacing;
