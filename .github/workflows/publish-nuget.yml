@@ -9,7 +9,7 @@ jobs:
   publish:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write # 末尾用内置 GITHUB_TOKEN 建 GitHub Release（仓库右侧 Releases 展示位）
       packages: write # 推 GitHub Packages（仓库右侧 Packages 栏展示），用内置 GITHUB_TOKEN
       id-token: write # NuGet Trusted Publishing (OIDC)，无需 API Key
     steps:
@@ -50,3 +50,11 @@ jobs:
       - name: Push to nuget.org
         shell: bash
         run: dotnet nuget push nupkg/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      # 两个 NuGet 源都发完才建 Release：推 tag 本身只创建 git 引用，GitHub 不会自动生成 Release。
+      # 放最后是为了「发布成功」与「展示位齐全」不互相绑死——前面任一推送失败都不会留下一个
+      # 指向不存在版本的 Release。--latest 是为了旧 tag 重推时不会把历史版本顶成「Latest」。
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --latest
