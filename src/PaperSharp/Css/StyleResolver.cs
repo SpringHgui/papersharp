@@ -242,6 +242,12 @@ public static class StyleResolver
         return root;
     }
 
+    /// <summary>每个不支持属性一条「整词 + 冒号 + 值」正则。预先建好：静态 <c>Regex.Match(串, 动态模式)</c> 走进程级缓存（默认只有 15 条），
+    /// 40 个属性轮着用必然天天重新解析、重新生成解释器代码。</summary>
+    static readonly Regex[] UnsupportedRegex = UnsupportedProps
+        .Select(prop => new Regex(@"(?<![\w-])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        .ToArray();
+
     /// <summary>扫原始 CSS：把不支持属性按「最后一段简单选择器 token → 值」建索引。</summary>
     static void ScanUnsupported(string css, DocContext ctx)
     {
@@ -252,13 +258,14 @@ public static class StyleResolver
         foreach (Match m in Regex.Matches(css, @"([^{}]+)\{([^{}]*)\}"))
         {
             var sel = m.Groups[1].Value.Trim();
-            if (sel.StartsWith("@")) continue; // 跳过 @page/@font-face 等 at-rule
+            if (sel.StartsWith('@')) continue; // 跳过 @page/@font-face 等 at-rule
             var body = m.Groups[2].Value;
-            foreach (var prop in UnsupportedProps)
+            for (int pi = 0; pi < UnsupportedProps.Length; pi++)
             {
+                var prop = UnsupportedProps[pi];
                 // 左边界 (?<![\w-])：否则 "overflow" 会命中同一条规则里的 "text-overflow:clip"，
                 // 把文本截断值当成盒级裁剪值——同名前缀的属性全靠这条兜底表，必须按整词匹配。
-                var mm = Regex.Match(body, @"(?<![\w-])" + prop + @"\s*:\s*([^;}]+)", RegexOptions.IgnoreCase);
+                var mm = UnsupportedRegex[pi].Match(body);
                 if (!mm.Success) continue;
                 var val = mm.Groups[1].Value.Trim().ToLowerInvariant();
                 // 逗号分开的选择器组逐段建键（P1-7）：只取整串末段会把 ".a, .b{border-radius:9px}"
@@ -1354,7 +1361,7 @@ public static class StyleResolver
         string Val(string prop)
         {
             var sp = Spec(prop);
-            if (sp.EndsWith("%") || sp.Contains("calc(", StringComparison.OrdinalIgnoreCase)) return sp;
+            if (sp.EndsWith('%') || sp.Contains("calc(", StringComparison.OrdinalIgnoreCase)) return sp;
             // em 例外（2026-09-29 探针 assets/_probe-em2.html 实测）：AngleSharp 的 computed 把
             // `top:1.5em` / `width:2em` / `border-top-width:1em` 上的 em 按**父字号**折了，
             // CSS 规定按**元素自己的** computed font-size 折。font-size 20 的盒里：
@@ -2096,9 +2103,8 @@ public static class StyleResolver
     {
         v = v?.Trim() ?? "";
         if (v.Length == 0) return parentFontSize;
-        if (v.EndsWith("%"))
+        if (v.EndsWith('%'))
         {
-            var p = CssValueParser.ToPixels(v, parentFontSize); // 走不到（% 返回 -1），单独解析
             if (float.TryParse(v[..^1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pct))
                 return parentFontSize * pct / 100f;
             return parentFontSize;

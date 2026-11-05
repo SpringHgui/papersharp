@@ -365,9 +365,10 @@ public static class Program
 
         Console.WriteLine($"# 峰值: priv {privPeak:F1} MB   ws {wsPeak:F1} MB   heap {heapPeak:F1} MB   （起点 priv {basePriv / (double)Mb:F1} / ws {baseWs / (double)Mb:F1} MB）");
         Console.WriteLine($"# 增长斜率（后半段线性拟合）: priv {privSlopePer1k:+0.0;-0.0;+0.0} MB/1k 份   heap {heapSlopePer1k:+0.0;-0.0;+0.0} MB/1k 份   priv/回退码位条目 {privPerFace * 1024:+0;-0;+0} KB");
-        Console.WriteLine($"# 托管累计分配 {allocPerDocKb:F0} KB/份   GC gen0 {GC.CollectionCount(0) - gc0} / gen1 {GC.CollectionCount(1) - gc1} / gen2 {GC.CollectionCount(2) - gc2}");
+        Console.WriteLine($"# 托管累计分配 {allocPerDocKb:F0} KB/份   GC gen0 {GC.CollectionCount(0) - gc0} / gen1 {GC.CollectionCount(1) - gc1} / gen2 {GC.CollectionCount(2) - gc2}   GC 暂停合计 {GC.GetTotalPauseDuration().TotalMilliseconds / Math.Max(1, o.Docs):F1} ms/份（含 warmup）");
         double drop = privPeak - tGc.Priv, nativeRetained = Math.Max(0, tGc.Priv - heapRetained / (double)Mb);
         Console.WriteLine($"# Full GC 后: priv {tGc.Priv:F1} MB（比峰值降 {drop:F1}） 托管堆滞留 {heapRetained / (double)Mb:F1} MB → 原生侧 ≈ {nativeRetained:F1} MB");
+        Console.WriteLine($"# Skia 缓存: 字体 strike {SkiaSharp.SKGraphics.GetFontCacheUsed() / 1024.0:F0} KB（上限 {SkiaSharp.SKGraphics.GetFontCacheLimit() / 1024.0:F0} KB, {SkiaSharp.SKGraphics.GetFontCacheCountUsed()} 条）  资源缓存 {SkiaSharp.SKGraphics.GetResourceCacheTotalBytesUsed() / 1024.0:F0} KB");
     }
 
     static double Slope(List<double> x, List<double> y)
@@ -671,7 +672,8 @@ public static class Program
                 case "--subset": o.SubsetBytes = true; break;
                 case "--hold": o.SubsetHold = true; break;
                 case "--bundled": o.Bundled = v; i++; break;
-                default: Console.Error.WriteLine($"未知参数: {a}"); Console.Error.WriteLine("用法: MemStress [serial|par] --docs N [--degree D] [--content vary|same] [--pool P] [--html path] [--every K] [--csv f] [--write dir] [--evict every|end|keep:N|N] [--bundled dir] [--probe] [--subset]"); return o;
+                case "--hollow": PaperSharp.Pdf.PdfGlyphUsage.UseHollowFaces = v != "off"; i++; break;
+                default: Console.Error.WriteLine($"未知参数: {a}"); Console.Error.WriteLine("用法: MemStress [serial|par] --docs N [--degree D] [--content vary|same] [--pool P] [--html path] [--every K] [--csv f] [--write dir] [--evict every|end|keep:N|N] [--bundled dir] [--hollow on|off] [--probe] [--subset]"); return o;
             }
         }
         return o;

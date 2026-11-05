@@ -12,6 +12,12 @@ public sealed class RenderScope : IDisposable
 {
     static readonly AsyncLocal<RenderScope?> _current = new();
 
+    // 引擎里有几十处静态 Regex.Match/Replace 且模式各不相同，默认 15 条的进程级缓存必然天天抖动重建。
+    static RenderScope()
+    {
+        if (System.Text.RegularExpressions.Regex.CacheSize < 128) System.Text.RegularExpressions.Regex.CacheSize = 128;
+    }
+
     /// <summary>当前线程/异步流内最近的激活作用域；无则 null（回退全局注册表）。</summary>
     public static RenderScope? Current => _current.Value;
 
@@ -28,12 +34,23 @@ public sealed class RenderScope : IDisposable
     readonly object _typefacesLock = new();
 
     private readonly RenderScope? _previous;
+    private readonly System.Globalization.CultureInfo? _previousCulture;
 
     private RenderScope(string? baseDir)
     {
         BaseDir = baseDir;
         _previous = _current.Value;
         _current.Value = this;
+        // 渲染期间线程文化切到 Invariant（Dispose 时还原）：① 同一输入恒定产物——引擎里 CSS 标识符的
+        // StartsWith/EndsWith/ToLower 等隐式文化比较在 tr-TR 一类文化下会错判；② 性能——非英语文化下每次
+        // 文化敏感的 string.StartsWith 都要进一趟 ICU，AngleSharp.Css 内部大量使用，一份文档上万次
+        // （实测占单份 CPU 的 5~7%），Invariant 文化走 ASCII 快路径。
+        var cur = System.Globalization.CultureInfo.CurrentCulture;
+        if (cur.Name.Length != 0)
+        {
+            _previousCulture = cur;
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        }
     }
 
     /// <summary>开启作用域，返回句柄；Dispose 时恢复外层（可嵌套）。</summary>
@@ -85,6 +102,7 @@ public sealed class RenderScope : IDisposable
     public void Dispose()
     {
         _current.Value = _previous;
+        if (_previousCulture != null) System.Globalization.CultureInfo.CurrentCulture = _previousCulture;
         List<SKTypeface> owned;
         lock (_typefacesLock)
         {

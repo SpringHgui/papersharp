@@ -43,19 +43,22 @@ public static class Renderer
         //   ①录制趟——同一套 PagePainter 往 scratch 画布空跑，记下每张 face 真正画过的字形；
         //   ②真绘趟——字体换成只含这些字形的子集 face（GID 保持，度量/shaping 零漂移），Skia 只嵌这点字节。
         // 真绘趟逐字继续校验：见到录制趟没见过的字形即整趟作废、退回原始字体重绘（预期永不触发）。
+        // 默认再进一步（<see cref="Pdf.PdfGlyphUsage.UseHollowFaces"/>）：真绘趟用的子集 face 是**无轮廓空壳**，
+        // Skia 写完文件后由 <see cref="Pdf.PdfFontSwap"/> 把空壳字体流换成带轮廓的子集字体——Skia 对带轮廓 face 的
+        // 每个新字形都要做一次光栅度量，且要把整张 face 再 deflate 一遍，这两项合计占单份耗时的三成以上。
         using var usage = Pdf.PdfGlyphUsage.Begin();
         // 设备页 = pt，绘制前把画布整体折到 pt（0.75），于是 Painter 与 PNG 路径一样按 CSS px 记账。
         int pw = Math.Max(1, (int)Math.Ceiling(spec.PdfPageW)), ph = Math.Max(1, (int)Math.Ceiling(spec.PdfPageH));
-        using (var scratch = SKSurface.Create(new SKImageInfo(pw, ph)))
+        // 录制趟只要「画过哪些字形」，不要像素：用不落笔的画布，省掉整页位图的分配与光栅。
+        using (var scratch = new SKNoDrawCanvas(pw, ph))
             for (int i = 0; i < pages.Count; i++)
             {
-                scratch.Canvas.Clear(SKColors.White);
-                scratch.Canvas.Save();
-                scratch.Canvas.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);
+                scratch.Save();
+                scratch.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);
                 // 与真绘趟逐字同参（含页码/总页数），否则录制出的字形集会偏
-                PagePainter.PaintPage(scratch.Canvas, pages[i], spec.PageW, spec.PageH);
-                MarginBoxRenderer.Render(scratch.Canvas, spec, i + 1, pages.Count);
-                scratch.Canvas.Restore();
+                PagePainter.PaintPage(scratch, pages[i], spec.PageW, spec.PageH);
+                MarginBoxRenderer.Render(scratch, spec, i + 1, pages.Count);
+                scratch.Restore();
             }
         usage.BuildSubsets();
 
@@ -65,9 +68,24 @@ public static class Renderer
             usage.RetryWithoutSubsets();
             (raw, rawLen) = EncodePdfPages(pages, spec, meta);
         }
+        else if (usage.HasHollow)
+        {
+            // 换不成（Skia 对某张空壳走了 Type3 / 文件版式不是预期的）就丢掉空壳、用带轮廓子集 face 重画一遍，
+            // 产物与关掉空壳方案时逐字节相同。
+            if (usage.SwapFonts(raw, rawLen) is { } swapped) (raw, rawLen) = swapped;
+            else
+            {
+                usage.RetryWithFullSubsets();
+                (raw, rawLen) = EncodePdfPages(pages, spec, meta);
+                if (usage.Violated)
+                {
+                    usage.RetryWithoutSubsets();
+                    (raw, rawLen) = EncodePdfPages(pages, spec, meta);
+                }
+            }
+        }
         // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
-        var fin = Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
-        return fin;
+        return Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
     }
 
     /// <summary>

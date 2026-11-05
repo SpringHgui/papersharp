@@ -28,6 +28,7 @@ public static class TtfSubsetter
     const uint TagVmtx = 0x766D7478;   // 'vmtx'
     const uint TagHhea = 0x68686561;   // 'hhea'
     const uint TagVhea = 0x76686561;   // 'vhea'
+    const uint TagPost = 0x706F7374;   // 'post'
 
     static uint Tag(string s) => (uint)((s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3]);
 
@@ -49,7 +50,51 @@ public static class TtfSubsetter
         { TagHead, TagMaxp, TagHmtx, TagVmtx, TagHhea, TagVhea, TagCmap, TagName, TagColr };
 
     /// <summary>裁出的字体字节；失败/不适用返回 null。</summary>
-    public static byte[]? Subset(SKTypeface tf, ICollection<int> usedGlyphs)
+    public static byte[]? Subset(SKTypeface tf, ICollection<int> usedGlyphs) => SubsetCore(tf, usedGlyphs, null);
+
+    /// <summary>
+    /// PDF 的「空壳 + 换流」方案要的一对字节：<see cref="PdfFontPair.Hollow"/> 是**无轮廓空壳**（glyf 4 字节、loca 全零，
+    /// cmap/hmtx/OS2 等照裁剪口径保留）——交给 Skia 画字用，它只需要 cmap 与度量；
+    /// <see cref="PdfFontPair.Embed"/> 是**最终嵌进 PDF 的字体程序**（带轮廓，去掉 PDF 阅读器根本不读的排版表）。
+    /// 为什么要分开：Skia 对每个**新 typeface 的每个新字形**都要做一次度量/边界分析，带轮廓的 CJK 字形
+    /// 每个 ~250µs（DirectWrite 在 2048 单位尺寸上光栅分析轮廓），空轮廓只要 ~10µs；它还会把整张 face
+    /// 逐字节 deflate 一遍进文档（Close 段）。把轮廓留到 Skia 写完之后由 <see cref="PdfFontSwap"/> 一次替换进去。
+    /// 彩色（COLR/CBDT/sbix/SVG）、可变（fvar）、CFF、嵌入受限（OS/2.fsType）的字体不适用，返回 null
+    /// 由调用方走原来的整面子集路径。哪些**文字**不能画在空壳上（假粗体/描边/滤镜/渐变、贴边……）由调用方
+    /// <see cref="PdfGlyphUsage"/> 按 paint 与裁剪区判定，这里只管字体本身。
+    /// </summary>
+    /// <param name="marker">空壳的 PostScript 名（文档内唯一）。Skia 会把它写进 /FontName，换流时据此对号入座。</param>
+    internal static PdfFontPair? SubsetForPdf(SKTypeface tf, ICollection<int> usedGlyphs, string marker)
+    {
+        var req = new PdfBuild(marker);
+        return SubsetCore(tf, usedGlyphs, req) == null ? null : req.Result;
+    }
+
+    sealed class PdfBuild(string marker)
+    {
+        public readonly string Marker = marker;
+        public PdfFontPair? Result;
+    }
+
+    /// <summary>排版/度量之外 PDF 阅读器不会读的表：嵌入的 CID 字体靠 glyph id 直取轮廓与 hmtx，不做 OpenType 排版。</summary>
+    static readonly HashSet<uint> LayoutTables = new()
+    {
+        Tag("GSUB"), Tag("GPOS"), Tag("GDEF"), Tag("BASE"), Tag("JSTF"), Tag("MATH"), Tag("kern"),
+    };
+
+    /// <summary>空壳不画轮廓，hinting 程序与光栅提示表全是死重。</summary>
+    static readonly HashSet<uint> HintTables = new() { Tag("cvt "), Tag("fpgm"), Tag("prep"), Tag("gasp") };
+
+    static readonly uint[] PdfIneligible =
+    {
+        TagColr, Tag("CPAL"), Tag("SVG "), Tag("CBDT"), Tag("CBLC"), Tag("sbix"), Tag("EBDT"), Tag("EBLC"),
+        Tag("fvar"), Tag("CFF "), Tag("CFF2"),
+    };
+
+    [Flags]
+    enum BuildOpts { None = 0, DropLayout = 1, Hollow = 2 }
+
+    static byte[]? SubsetCore(SKTypeface tf, ICollection<int> usedGlyphs, PdfBuild? pdf)
     {
         SfntFont? f = null;
         try
@@ -57,7 +102,18 @@ public static class TtfSubsetter
             f = SfntFont.Open(tf);
             if (f == null) return null;
             if (!f.Has(TagGlyf) || !f.Has(TagLoca) || !f.Has(TagHead) || !f.Has(TagMaxp)) return null;   // CFF/OTF：不裁
-
+            if (pdf != null)
+            {
+                foreach (var t in PdfIneligible) if (f.Has(t)) return null;
+                // 嵌入受限（fsType bit1）/ 仅位图嵌入（bit9）的字体，Skia 会整张退成 Type3 逐字形描边——
+                // 空壳在那条路上就是「字都没了」，所以这类字体不走空壳。
+                var os2 = f.Read(Tag("OS/2"));
+                if (os2 != null && os2.Length >= 10)
+                {
+                    int fsType = BinaryPrimitives.ReadUInt16BigEndian(os2.AsSpan(8));
+                    if ((fsType & 0x0002) != 0 || (fsType & 0x0200) != 0) return null;
+                }
+            }
             int numGlyphs = f.U16(TagMaxp, 4);
             if (numGlyphs <= 0) return null;
             short locaFmt = f.I16(TagHead, 50);
@@ -132,7 +188,21 @@ public static class TtfSubsetter
                 tables[TagColr] = colrNew!;
             }
 
-            var rr = BuildSfnt(f, tables, keep, offs, numGlyphs);
+            if (pdf != null)
+            {
+                var realName = tables.GetValueOrDefault(TagName);
+                string? ps = realName == null ? null : ReadPsName(realName);
+                if (f.Has(TagPost) && f.Read(TagPost) is { } post) tables[TagPost] = SlimPost(post);
+                var embed = BuildSfnt(f, tables, keep, offs, numGlyphs, BuildOpts.DropLayout);
+                if (embed == null) return null;
+                tables[TagName] = MarkerName(pdf.Marker);
+                var hollow = BuildSfnt(f, tables, keep, offs, numGlyphs, BuildOpts.Hollow | BuildOpts.DropLayout);
+                if (hollow == null) return null;
+                pdf.Result = new PdfFontPair(embed, hollow, ps);
+                return hollow;
+            }
+
+            var rr = BuildSfnt(f, tables, keep, offs, numGlyphs, BuildOpts.None);
             return rr;
         }
         catch { return null; }   // 任何解析意外都退回“不裁”，绝不出坏字体
@@ -550,8 +620,10 @@ public static class TtfSubsetter
     /// 旧实现先建 Dictionary&lt;tag, byte[]&gt; 装下整份字体再 BuildSfnt 复制一遍，峰值 = 源表合计 + 输出；
     /// 现在峰值 = 输出（几十~几百 KB）+ 一张小表。
     /// </summary>
-    static byte[]? BuildSfnt(SfntFont f, Dictionary<uint, byte[]> tables, bool[] keep, int[] offs, int numGlyphs)
+    static byte[]? BuildSfnt(SfntFont f, Dictionary<uint, byte[]> tables, bool[] keep, int[] offs, int numGlyphs, BuildOpts opts)
     {
+        bool hollow = (opts & BuildOpts.Hollow) != 0;
+        if (hollow) keep = new bool[numGlyphs];   // 空壳：一个轮廓都不留（度量/cmap 仍按调用方已裁好的 tables）
         // —— 新 glyf 布局（只算长度，不读字节）——
         var newOff = new int[numGlyphs + 1];
         int glyfNew = 0;
@@ -584,7 +656,9 @@ public static class TtfSubsetter
         foreach (var tag in f.Tags)
         {
             if (Drop.Contains(tag)) continue;
-            int len = tag == TagGlyf ? glyfNew
+            if ((opts & BuildOpts.DropLayout) != 0 && LayoutTables.Contains(tag)) continue;
+            if (hollow && HintTables.Contains(tag)) continue;
+            int len = tag == TagGlyf ? (hollow ? 4 : glyfNew)   // 空壳的 glyf 留 4 个零字节：有表、无轮廓
                     : tables.TryGetValue(tag, out var d) ? d.Length
                     : f.Size(tag);
             if (len <= 0) continue;
@@ -660,6 +734,77 @@ public static class TtfSubsetter
             sum += last;
         }
         return sum;
+    }
+
+    /// <summary>post 改成 3.0 版（只留 32 字节头）：glyph 名表对 CID 字体没有读者，Segoe UI 这类 2.0 版的 post 有几十 KB。</summary>
+    static byte[] SlimPost(byte[] post)
+    {
+        if (post.Length <= 32 || BinaryPrimitives.ReadUInt32BigEndian(post) == 0x00030000) return post;
+        var n = post.AsSpan(0, 32).ToArray();
+        BinaryPrimitives.WriteUInt32BigEndian(n, 0x00030000);
+        return n;
+    }
+
+    /// <summary>空壳的 name 表：1/2/4/6 四条记录全写 <paramref name="marker"/>（Mac 与 Windows 平台各一份），
+    /// DirectWrite 与 FreeType 取 PostScript 名各读各的平台。</summary>
+    static byte[] MarkerName(string marker)
+    {
+        var mac = System.Text.Encoding.ASCII.GetBytes(marker);
+        var win = System.Text.Encoding.BigEndianUnicode.GetBytes(marker);
+        ushort[] ids = { 1, 2, 4, 6 };
+        int count = ids.Length * 2, header = 6 + 12 * count;
+        var n = new byte[header + ids.Length * (mac.Length + win.Length)];
+        BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(2), (ushort)count);
+        BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(4), (ushort)header);
+        int rec = 6, str = header;
+        foreach (var (plat, enc, lang, bytes) in new (ushort, ushort, ushort, byte[])[] { (1, 0, 0, mac), (3, 1, 0x409, win) })
+            foreach (var id in ids)
+            {
+                BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(rec), plat);
+                BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(rec + 2), enc);
+                BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(rec + 4), lang);
+                BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(rec + 6), id);
+                BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(rec + 8), (ushort)bytes.Length);
+                BinaryPrimitives.WriteUInt16BigEndian(n.AsSpan(rec + 10), (ushort)(str - header));
+                bytes.CopyTo(n, str);
+                rec += 12; str += bytes.Length;
+            }
+        return n;
+    }
+
+    /// <summary>name 表里的 PostScript 名（ID 6），清成 PDF 名字里安全的字符；没有就 null。</summary>
+    static string? ReadPsName(byte[] name)
+    {
+        try
+        {
+            int count = BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(2));
+            int strOff = BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(4));
+            string? best = null;
+            int bestRank = -1;   // 3 = Windows/en-US，2 = Windows 其它语言，1 = 其它平台
+            for (int i = 0; i < count; i++)
+            {
+                int rec = 6 + 12 * i;
+                if (rec + 12 > name.Length) break;
+                if (BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(rec + 6)) != 6) continue;
+                ushort plat = BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(rec));
+                ushort lang = BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(rec + 4));
+                int len = BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(rec + 8));
+                int at = strOff + BinaryPrimitives.ReadUInt16BigEndian(name.AsSpan(rec + 10));
+                if (at + len > name.Length) continue;
+                int rank = plat == 3 ? (lang == 0x409 ? 3 : 2) : 1;
+                if (rank <= bestRank) continue;
+                bestRank = rank;
+                best = plat is 0 or 3
+                    ? System.Text.Encoding.BigEndianUnicode.GetString(name, at, len)
+                    : System.Text.Encoding.Latin1.GetString(name, at, len);
+            }
+            if (best == null) return null;
+            var sb = new System.Text.StringBuilder(best.Length);
+            foreach (char c in best)
+                if (c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '.' or '+') sb.Append(c);
+            return sb.Length == 0 ? null : sb.ToString();
+        }
+        catch { return null; }
     }
 
     /// <summary>

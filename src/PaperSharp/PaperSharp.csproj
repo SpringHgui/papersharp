@@ -27,6 +27,10 @@
     <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PaperSharp.Tests" />
+  </ItemGroup>
+
   <!-- 打包子集字体随 dll 走（EmbeddedResource）：运行时不再依赖「入口程序集旁边有没有
        assets/fonts」。那是 PERF_REPORT §12.6 那条宿主依赖 bug 的根因——字体没进包，消费方
        静默退回系统字体，同一份 HTML 体积差 2.9~12.7 倍，而「PDF 体积 + 跨平台一致」正是
