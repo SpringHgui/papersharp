@@ -83,14 +83,16 @@ public sealed class RenderScope : IDisposable
             return _fonts.TryGetValue(family, out var list) && list.Count > 0 ? list.ToArray() : null;
     }
 
-    /// <summary>factory 返回 null 表示"未命中注册文件"，不缓存（调用方自行回退到进程级解析）。</summary>
-    internal SKTypeface? GetOrAddTypeface(string family, int weight, Func<SKTypeface?> factory)
+    /// <summary>查请求级 typeface 缓存（无分配）。</summary>
+    internal bool TryGetTypeface(string family, int weight, out SKTypeface? tf)
+    {
+        lock (_typefacesLock) return _typefaces.TryGetValue((family, weight), out tf);
+    }
+
+    /// <summary>放进请求级缓存；并发抢先已有同键字面时，传入的这份当场 Dispose 并返回胜者。</summary>
+    internal SKTypeface AddTypeface(string family, int weight, SKTypeface created)
     {
         var key = (family, weight);
-        lock (_typefacesLock)
-            if (_typefaces.TryGetValue(key, out var hit)) return hit;
-        var created = factory();
-        if (created == null) return null;
         lock (_typefacesLock)
         {
             if (_typefaces.TryGetValue(key, out var win)) { created.Dispose(); return win; }

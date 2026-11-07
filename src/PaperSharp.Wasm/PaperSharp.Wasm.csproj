@@ -22,17 +22,14 @@
     <WasmLinkerEnabled>false</WasmLinkerEnabled>
     <!-- 不随 dotnet pack 发布（NuGet 只发 PaperSharp 本体） -->
     <IsPackable>false</IsPackable>
-    <!-- SkiaSharp/HarfBuzz 的 wasm 原生包只提供 Uno/Blazor 接线，这里手动链 .a（net8 对应 emscripten 3.1.34，单线程） -->
-    <SkiaSharpAaDir>$(NuGetPackageRoot)skiasharp.nativeassets.webassembly\2.88.9\build\netstandard1.0\libSkiaSharp.a</SkiaSharpAaDir>
-    <HarfBuzzAaDir>$(NuGetPackageRoot)harfbuzzsharp.nativeassets.webassembly\7.3.0.2\build\netstandard1.0\libHarfBuzzSharp.a</HarfBuzzAaDir>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\PaperSharp\PaperSharp.csproj" />
-    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="2.88.9" />
-    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="7.3.0.2" />
-    <NativeFileReference Include="$(SkiaSharpAaDir)\3.1.34\st\libSkiaSharp.a" />
-    <NativeFileReference Include="$(HarfBuzzAaDir)\3.1.34\st\libHarfBuzzSharp.a" />
+    <!-- SkiaSharp/HarfBuzz 4.x 的 wasm 原生包自带 props/targets：按 TFM/线程/SIMD 自动挑
+         emscripten 3.1.34 的 .a 并接线 NativeFileReference（旧 2.88.9 时代是这里手动链的） -->
+    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="4.154.0" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="14.2.1.400" />
   </ItemGroup>
 
 </Project>

@@ -26,6 +26,12 @@ internal static class FaceIdentity
 
     public static FaceKey Of(SKTypeface tf) => Keys.GetValue(tf, static t => new Box(Compute(t))).Key;
 
+    /// <summary>热路径上的族名/字重读取。<c>SKTypeface.FamilyName</c> 每次调用都新建一个原生 SKString
+    /// 再拷回托管串，度量循环里每字素读一次就是每字素一次分配；这里按字面实例缓存，命中零分配。</summary>
+    public static string FamilyOf(SKTypeface tf) => Of(tf).Family;
+
+    public static int WeightOf(SKTypeface tf) => Of(tf).Weight;
+
     static FaceKey Compute(SKTypeface t)
     {
         uint sum = 0;

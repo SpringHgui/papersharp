@@ -333,12 +333,12 @@ static void MicroBench(string html, string css)
     var (tParse, _) = Time(() => ctx.OpenAsync(r => r.Content(full)).GetAwaiter().GetResult());
     var (tComputed, list) = Time(() => SafeComputed(els));
     var (tComputedProps, _) = Time(() => list.Sum(d => props.Sum(p => (d?.GetPropertyValue(p) ?? "").Length)));
-    var (tDecls, decls) = Time(() => { var sc = window.GetStyleCollection(); return els.Select(e => sc.GetDeclarations(e, null)).ToList(); });
+    var (tDecls, decls) = Time(() => { var sc = window.GetStyleCollection(new AngleSharp.Css.DefaultRenderDevice()); return els.Select(e => sc.GetDeclarations(e, null)).ToList(); });
     var (tDeclProps, _) = Time(() => decls.Sum(d => props.Sum(p => (d?.GetPropertyValue(p) ?? "").Length)));
     var (tBoth, _) = Time(() => els.Select(e =>
     {
         ICssStyleDeclaration? c; try { c = window.GetComputedStyle(e, null); } catch { c = null; }
-        var s = window.GetStyleCollection().GetDeclarations(e, null);
+        var s = window.GetStyleCollection(new AngleSharp.Css.DefaultRenderDevice()).GetDeclarations(e, null);
         return props.Sum(p => (c?.GetPropertyValue(p) ?? "").Length + (s?.GetPropertyValue(p) ?? "").Length);
     }).Sum());
 
@@ -360,10 +360,10 @@ static void MeasureProbe(string text, float size)
     foreach (var family in new[] { "Microsoft YaHei", "Segoe UI", "system-ui" })
     {
         var tf = FontManager.Get(family, 500);
-        using var plain = new SKPaint { Typeface = tf, TextSize = size };
-        using var sub = new SKPaint { Typeface = tf, TextSize = size, SubpixelText = true };
-        using var aa = new SKPaint { Typeface = tf, TextSize = size, IsAntialias = true };
-        using var both = new SKPaint { Typeface = tf, TextSize = size, IsAntialias = true, SubpixelText = true };
+        using var plain = new SKFont(tf, size);
+        using var sub = new SKFont(tf, size) { Subpixel = true };
+        using var aa = new SKFont(tf, size) { Edging = SKFontEdging.Antialias };
+        using var both = new SKFont(tf, size) { Subpixel = true, Edging = SKFontEdging.Antialias };
         Console.WriteLine($"  {family,-16} → {tf.FamilyName,-18} 默认 {plain.MeasureText(text),7:F2}  Subpixel {sub.MeasureText(text),7:F2}  Antialias {aa.MeasureText(text),7:F2}  AA+Subpixel {both.MeasureText(text),7:F2}");
     }
     Console.WriteLine($"  文本「{text}」@ {size}px · 浏览器 canvas 参照：system-ui/YaHei 94.89，Segoe UI 89.84");

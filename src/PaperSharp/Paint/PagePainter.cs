@@ -68,8 +68,8 @@ public static class PagePainter
                 {
                     var dst = new SKRect(cx, cy, cx + it.Box.ContentWidth, cy + it.Box.ContentHeight);
                     byte a = (byte)Math.Round((s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity) * 255);
-                    using var ip = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High, Color = new SKColor(255, 255, 255, a) };
-                    canvas.DrawImage(it.Box.Image, dst, ip);
+                    using var ip = new SKPaint { IsAntialias = true, Color = new SKColor(255, 255, 255, a) };
+                    canvas.DrawImage(it.Box.Image, dst, Painter.Sampling, ip);
                 }
                 else
                 {

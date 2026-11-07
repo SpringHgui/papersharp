@@ -69,8 +69,10 @@ public sealed class KernTable
 
     /// <summary>字距表的缓存键：族名 + 字重 + 倾斜档（三者缺一就会把另一张面的表当自己的用，
     /// 见 <see cref="Cache"/>）。用 <c>FontSlant</c> 而不是 <c>FontStyle.Slant</c>：后者每次新建一个
-    /// SKFontStyle 包装，度量热路径上白掏分配。</summary>
-    static (string, int, SKFontStyleSlant) Key(SKTypeface tf) => (tf.FamilyName, tf.FontWeight, tf.FontSlant);
+    /// SKFontStyle 包装，度量热路径上白掏分配。族名/字重走 <see cref="FaceIdentity"/> 的实例缓存，
+    /// 省掉每次 <c>FamilyName</c> 的原生 SKString 分配。</summary>
+    static (string, int, SKFontStyleSlant) Key(SKTypeface tf)
+        => (FaceIdentity.FamilyOf(tf), FaceIdentity.WeightOf(tf), tf.FontSlant);
 
     /// <summary>度量路径取字距表；未登记（系统字体、@font-face 无 PRKT）返回 null。</summary>
     public static KernTable? For(SKTypeface? tf) => tf == null ? null

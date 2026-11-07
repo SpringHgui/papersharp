@@ -62,7 +62,10 @@ public class PlaceholderTests
         var input = InputBox(Box90);
         float lines = input.WrappedLines!.Length;
         Assert.True(lines > 0);
-        Assert.Equal((input.ContentHeight - lines * input.Style.LineHeightPx()) / 2, input.ValignDY, 2);
+        // 占位符是中文，行盒按回退面（打包 Noto 子集）的度量长到 26/6=32（usWin 1.16/0.288，
+        // Skia 4.x 起 FontMetrics 报 usWin，与 Chrome 行盒同口径——见 subset-font.py 自检：
+        // Noto 22px 浏览器行盒 32），居中余量 (90−32)/2 = 29。旧口径按 hhea 1.0/0.2 得 22/4=26 → 32。
+        Assert.Equal(29, input.ValignDY, 2);
         Assert.True(input.ValignDY > 0, $"90px 盒里的 22px 行应居中，实得 {input.ValignDY}");
     }
 }

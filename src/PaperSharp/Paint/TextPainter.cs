@@ -90,12 +90,13 @@ public static class TextPainter
 
         var typeface = FontManager.Get(s.FontFamily, s.FontWeight, s.FontStyle);
         var color = (fillOverride ?? s.Color).WithAlpha(alpha);
-        using var paint = NewTextPaint(typeface, f.FontSize, s.FontStyle, color, s.FontWeight);
+        using var font = NewTextFont(typeface, f.FontSize, s.FontStyle, s.FontWeight);
+        using var paint = NewTextPaint(color);
         if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         // x/f.Width 已是 padding box；文字要让开元素自己的左 padding（背景与装饰照旧铺满整盒）
         if (s.TextShadow != null)
             DrawTextShadow(canvas, s, f.Text!, x + f.PadLeft, baseline, typeface, f.FontSize, s.LetterSpacing, false);
-        DrawSpaced(canvas, f.Text!, x + f.PadLeft, baseline, paint, s.LetterSpacing, s.FontVariantCaps, s.FontStyle,
+        DrawSpaced(canvas, f.Text!, x + f.PadLeft, baseline, font, paint, s.LetterSpacing, s.FontVariantCaps, s.FontStyle,
             s.FontFamilyList, s.FontWeight);
         DrawDecoration(canvas, s, x, baseline, f.Width, color);
     }
@@ -109,14 +110,15 @@ public static class TextPainter
         var layers = s.TextShadow;
         if (layers == null || text.Length == 0) return;
         float op = Clamp01(s.Opacity);
-        using var paint = NewTextPaint(tf, fontSize, s.FontStyle, weight: s.FontWeight);   // 阴影层与正文同一条文本 paint 口径
+        using var font = NewTextFont(tf, fontSize, s.FontStyle, weight: s.FontWeight);   // 阴影层与正文同一条文本 font 口径
+        using var paint = NewTextPaint();   // 阴影层与正文同一条文本 paint 口径
         for (int i = layers.Count - 1; i >= 0; i--)
         {
             var sh = layers[i];
             float sigma = sh.Blur / 2f;
             paint.Color = sh.Color.WithAlpha((byte)Math.Round(sh.Color.Alpha * op));
             paint.ImageFilter = sigma > 0.01f ? SKImageFilter.CreateBlur(sigma, sigma) : null;
-            DrawVisualLine(canvas, text, x + sh.OffsetX, baseline + sh.OffsetY, paint, ls, rtl, s.FontVariantCaps, s.FontStyle,
+            DrawVisualLine(canvas, text, x + sh.OffsetX, baseline + sh.OffsetY, font, paint, ls, rtl, s.FontVariantCaps, s.FontStyle,
                 s.FontFamilyList, s.FontWeight);
         }
     }
@@ -131,7 +133,8 @@ public static class TextPainter
         byte alpha = (byte)Math.Round(Clamp01(s.Opacity) * 255);
         var color = (fillOverride ?? s.Color).WithAlpha(alpha);
 
-        using var paint = NewTextPaint(typeface, s.FontSize, s.FontStyle, color, s.FontWeight);
+        using var font = NewTextFont(typeface, s.FontSize, s.FontStyle, s.FontWeight);
+        using var paint = NewTextPaint(color);
         if (fillShader != null) { paint.Shader = fillShader; paint.Color = new SKColor(255, 255, 255, alpha); }
         float ls = s.LetterSpacing;
         float lineHeight = s.LineHeightPx();
@@ -144,7 +147,7 @@ public static class TextPainter
             if (idx >= lines.Length) break;
             var line = lines[idx];
             float inset = lefts != null && idx < lefts.Length ? lefts[idx] : 0;
-            float textW = MeasureWidth(line, paint, ls);
+            float textW = MeasureWidth(line, font, ls);
 
             float x = left + inset;
             if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
@@ -152,7 +155,7 @@ public static class TextPainter
 
             int lnSnap = s.Display == "table-cell" ? PaintSnap.BeginLine(canvas, baseline) : -1;
             DrawTextShadow(canvas, s, line, x, baseline, typeface, s.FontSize, ls, s.Direction == "rtl");
-            DrawVisualLine(canvas, line, x, baseline, paint, ls, s.Direction == "rtl", s.FontVariantCaps, s.FontStyle,
+            DrawVisualLine(canvas, line, x, baseline, font, paint, ls, s.Direction == "rtl", s.FontVariantCaps, s.FontStyle,
                 s.FontFamilyList, s.FontWeight);
             DrawDecoration(canvas, s, x, baseline, textW, color);
             PaintSnap.EndLine(canvas, lnSnap);
@@ -165,27 +168,27 @@ public static class TextPainter
     /// <paramref name="style"/> 是本行的 font-style：字素级换面时（一行混多脚本）斜身要跟着重判。
     /// <paramref name="list"/>/<paramref name="weight"/> 是**声明的** font-family 整条列表与字重：
     /// 逐字素回退要沿它走，不能只问主面（见 <see cref="TextShaper.ResolveTypeface(string,SKTypeface,string,int,string)"/>）。</summary>
-    static void DrawVisualLine(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls, bool rtl,
+    static void DrawVisualLine(SKCanvas canvas, string line, float x, float y, SKFont font, SKPaint paint, float ls, bool rtl,
         string caps = "normal", string style = "normal", string list = "", int weight = 400)
     {
         if (line.Length == 0) return;
-        var tf = paint.Typeface ?? SKTypeface.Default;
-        if (!rtl && !TextShaper.NeedsSpecial(line, tf)) { DrawSpaced(canvas, line, x, y, paint, ls, caps, style, list, weight); return; }
+        var tf = font.Typeface ?? SKTypeface.Default;
+        if (!rtl && !TextShaper.NeedsSpecial(line, tf)) { DrawSpaced(canvas, line, x, y, font, paint, ls, caps, style, list, weight); return; }
         var runs = Layout.TextShaper.BidiRuns(line);
         if (rtl) runs.Reverse();
         float cx = x;
         foreach (var (text, _) in runs)
         {
-            DrawSpaced(canvas, text, cx, y, paint, ls, caps, style, list, weight);
-            cx += TextShaper.WidthOf(text, tf, paint.TextSize, ls);
+            DrawSpaced(canvas, text, cx, y, font, paint, ls, caps, style, list, weight);
+            cx += TextShaper.WidthOf(text, tf, font.Size, ls);
         }
     }
 
-    static void DrawSpaced(SKCanvas canvas, string line, float x, float y, SKPaint paint, float ls,
+    static void DrawSpaced(SKCanvas canvas, string line, float x, float y, SKFont font, SKPaint paint, float ls,
         string caps = "normal", string style = "normal", string list = "", int weight = 400)
     {
         if (line.Length == 0) return;
-        var tf = paint.Typeface ?? SKTypeface.Default;
+        var tf = font.Typeface ?? SKTypeface.Default;
         if (TextShaper.NeedsShaping(line))
         {
             // 按字素切「shaping / 普通」交替段：shaping 段整体走 HarfBuzz（阿拉伯连写保持成组），
@@ -197,18 +200,32 @@ public static class TextPainter
             {
                 if (sb.Length == 0) return;
                 string seg = sb.ToString();
-                if (segShaped && TextShaper.DrawShaped(canvas, seg, cx, y, paint))
-                    cx += TextShaper.WidthOf(seg, tf, paint.TextSize, 0); // shaped 段不加 ls（已知限制）
+                if (segShaped && TextShaper.DrawShaped(canvas, seg, cx, y, font, paint))
+                    cx += TextShaper.WidthOf(seg, tf, font.Size, 0); // shaped 段不加 ls（已知限制）
                 else
-                    cx += DrawPlainRun(canvas, seg, cx, y, paint, ls, tf, caps, style, list, weight);
+                    cx += DrawPlainRun(canvas, seg, cx, y, font, paint, ls, tf, caps, style, list, weight);
                 sb.Clear();
             }
-            foreach (var g in TextShaper.Graphemes(line))
+            if (TextShaper.GraphemeKind(line) == 0)
             {
-                bool sh = TextShaper.NeedsShaping(g);
-                if (sb.Length > 0 && sh != segShaped) Flush();
-                if (sb.Length == 0) segShaped = sh;
-                sb.Append(g);
+                // 简单文本：逐字符即逐字素，零分配
+                for (int i = 0; i < line.Length; i++)
+                {
+                    bool sh = TextShaper.NeedsShaping(line[i]);
+                    if (sb.Length > 0 && sh != segShaped) Flush();
+                    if (sb.Length == 0) segShaped = sh;
+                    sb.Append(line[i]);
+                }
+            }
+            else
+            {
+                foreach (var g in TextShaper.Graphemes(line))
+                {
+                    bool sh = TextShaper.NeedsShaping(g);
+                    if (sb.Length > 0 && sh != segShaped) Flush();
+                    if (sb.Length == 0) segShaped = sh;
+                    sb.Append(g);
+                }
             }
             Flush();
             return;
@@ -222,11 +239,11 @@ public static class TextPainter
             // 重影 1.5px（同页 From/Date 无配对、Widget A 的配对为 0，所以只有那一行糊）。
             // 切段与推进的口径单源在 <see cref="Pdf.PdfGlyphUsage.DrawKerned"/>：@page 页眉页脚那条
             // 不走布局的路也吃它，两边不会各写一份字距落笔而漂开。
-            Pdf.PdfGlyphUsage.DrawKerned(canvas, line, x, y, paint);
+            Pdf.PdfGlyphUsage.DrawKerned(canvas, line, x, y, font, paint);
             return;
         }
         // 逐字素排布：缺字形的字素换覆盖字体（一行混多脚本时每字素独立回退），其余情况仅 ls 逐字加距
-        DrawPlainRun(canvas, line, x, y, paint, ls, tf, caps, style, list, weight);
+        DrawPlainRun(canvas, line, x, y, font, paint, ls, tf, caps, style, list, weight);
     }
 
     /// <summary>非 shaping 绘制：逐字素解析覆盖字体并排布，返回占用宽度。
@@ -235,15 +252,15 @@ public static class TextPainter
     /// caps ≠ normal 时小写字母改画**缩到 x-height 的大写**（顶线落在 x 高度、基线不动），
     /// 但推进仍按原来的小写 advance——Chrome 用的是字体自带的 GSUB smcp 字形，那些字形本就与
     /// 小写同宽（实测 "Small Caps 效果" 整串与小写排版只差 1.2px），所以布局一行都不用改。</summary>
-    static float DrawPlainRun(SKCanvas canvas, string seg, float x, float y, SKPaint paint, float ls,
+    static float DrawPlainRun(SKCanvas canvas, string seg, float x, float y, SKFont font, SKPaint paint, float ls,
         SKTypeface tf, string caps = "normal", string style = "normal", string list = "", int weight = 400)
     {
         float cx = x;
-        float size = paint.TextSize;
+        float size = font.Size;
         SKTypeface? cur = tf;
         KernTable? curKt = KernTable.For(tf);
-        float baseSkew = paint.TextSkewX;
-        paint.Typeface = cur;
+        float baseSkew = font.SkewX;
+        font.Typeface = cur;
         try
         {
             int prevCp = -1;
@@ -253,14 +270,14 @@ public static class TextPainter
                 var gt = TextShaper.ResolveTypeface(g, tf, list, weight, style);
                 if (!ReferenceEquals(gt, cur))
                 {
-                    paint.Typeface = cur = gt;
+                    font.Typeface = cur = gt;
                     curKt = KernTable.For(gt);
                     // 换面后重判斜身：真斜体族（Georgia/Arial）里的中文会回退到正立 CJK 面，
                     // 浏览器对那一个字仍是合成斜体，整行沿用主面的「不合成」就会让它站得笔直。
-                    paint.TextSkewX = -FontManager.SkewFor(style, gt);
+                    font.SkewX = -FontManager.SkewFor(style, gt);
                     // 合成粗体同理按字面重判：主面 Consolas 有真粗体、回退到的 NSimSun 没有，
                     // 不换这个旗就会「量 13.586、画 13.328」，行内逐字累积成重影。
-                    paint.FakeBoldText = weight >= 700 && FontManager.LacksRealBold(gt.FamilyName);
+                    font.Embolden = weight >= 700 && FontManager.LacksRealBold(FaceIdentity.FamilyOf(gt));
                 }
                 // 只在「相邻两个字素同属一张字面」时配对：跨字面那一对在度量端被切进不同段，两边都不算
                 if (prevCp >= 0 && ReferenceEquals(gt, prevGt))
@@ -269,18 +286,18 @@ public static class TextPainter
                 // 在度量端走 MonoGridWidth 给 15，绘制端若仍吃字面自己的 hmtx（13.33）就「量得宽、画得窄」——
                 // 右对齐的 .num 格里每个字素都比浏览器往左偏一点、且逐字累积，那几列的重影即此。
                 float grid = TextShaper.MonoGridWidth(g, tf, size, 0f, list, weight);
-                float w = grid >= 0 ? grid : paint.MeasureText(g);
+                float w = grid >= 0 ? grid : Layout.AdvanceTable.Sum(font.Typeface, size, g);
                 char ch = g.Length == 1 ? g[0] : '\0';
                 bool fold = caps != "normal" && (char.IsLower(ch) || (caps == "all-small-caps" && char.IsUpper(ch)));
                 if (fold)
                 {
                     // Chrome 用 GSUB smcp 字形的 advance（与小写/大写都不同），逐字素补这块差
                     w += Layout.SmallCaps.DeltaOf(g, cur ?? tf, size, caps);
-                    paint.TextSize = size * SmallCapsScale(cur ?? tf);
-                    Pdf.PdfGlyphUsage.DrawText(canvas, char.ToUpperInvariant(ch).ToString(), cx, y, paint);
-                    paint.TextSize = size;
+                    font.Size = size * SmallCapsScale(cur ?? tf);
+                    Pdf.PdfGlyphUsage.DrawText(canvas, char.ToUpperInvariant(ch).ToString(), cx, y, font, paint);
+                    font.Size = size;
                 }
-                else Pdf.PdfGlyphUsage.DrawText(canvas, g, cx, y, paint);
+                else Pdf.PdfGlyphUsage.DrawText(canvas, g, cx, y, font, paint);
                 cx += w + ls;
                 prevCp = KernTable.LastCp(g);
                 prevGt = gt;
@@ -288,8 +305,8 @@ public static class TextPainter
         }
         finally
         {
-            paint.Typeface = tf;
-            paint.TextSkewX = baseSkew;
+            font.Typeface = tf;
+            font.SkewX = baseSkew;
         }
         return cx - x - ls; // 末字素后不加间距
     }
@@ -318,56 +335,49 @@ public static class TextPainter
             canvas.DrawRect(x, baseline - s.FontSize * 0.86f, width, thickness, p);
     }
 
-    /// <summary>建一张**落笔与量宽共用**的文本 paint。三样必须一起带上，缺一样就会有第二个表面量出
-    /// 第二个数：<c>IsAntialias</c> + <c>SubpixelText</c>（Skia 只在两旗齐备时才用分数推进，否则把每个
-    /// 字形的推进折成整像素，P2-9：9 个字偏 3px），以及斜体的合成 <c>TextSkewX</c>（错切会进 advance，
-    /// 实测 italic 的「AV To Ty Ta Wa Ye」两表面差 1.08px —— 别信"错切不动 advance"）。字面自带斜身
-    /// （Arial Italic 那种）时 <see cref="FontManager.SkewFor"/> 给 0，交给字面自己。
-    /// 凡要画字/量字的地方一律走这里，不要手抄旗。</summary>
-    public static SKPaint NewTextPaint(SKTypeface typeface, float size, string fontStyle, SKColor? color = null,
-        int weight = 0)
+    /// <summary>
+    /// 建一张**落笔与量宽共用**的文本 font（SkiaSharp 4.x 里字面/字号/斜体/合成粗体都在 font 上）。
+    /// 两样必须一起带上，缺一样就会有第二个表面量出第二个数：<c>Subpixel</c>（Skia 只在开启时
+    /// 才用分数推进，否则把每个字形的推进折成整像素，P2-9：9 个字偏 3px），以及斜体的合成
+    /// <c>SkewX</c>（错切会进 advance，实测 italic 的「AV To Ty Ta Wa Ye」两表面差 1.08px ——
+    /// 别信"错切不动 advance"）。字面自带斜身（Arial Italic 那种）时 <see cref="FontManager.SkewFor"/> 给 0，
+    /// 交给字面自己。凡要画字/量字的地方一律走这里，不要手抄旗。</summary>
+    public static SKFont NewTextFont(SKTypeface typeface, float size, string fontStyle, int weight = 0)
+        => new()
+        {
+            Size = size,
+            Typeface = typeface,
+            Subpixel = true,
+            Edging = SKFontEdging.Antialias,
+            SkewX = -FontManager.SkewFor(fontStyle, typeface),
+            // 没有真粗体面的字族（NSimSun/宋体一类）请求粗体时，浏览器合成粗体并加宽 advance；
+            // Skia 只在 font 上开 Embolden 才加宽，度量与绘制必须同开（见 FontManager.LacksRealBold）。
+            Embolden = weight >= 700 && typeface != null && FontManager.LacksRealBold(FaceIdentity.FamilyOf(typeface)),
+        };
+
+    /// <summary>文本绘制的 paint：只剩颜色/AA/填充风格（字面与字号在 <see cref="NewTextFont"/> 的 font 上）。</summary>
+    public static SKPaint NewTextPaint(SKColor? color = null)
         => new()
         {
             Color = color ?? SKColors.Black,
-            TextSize = size,
-            Typeface = typeface,
             IsAntialias = true,
-            SubpixelText = true,
             Style = SKPaintStyle.Fill,
-            TextSkewX = -FontManager.SkewFor(fontStyle, typeface),
-            // 没有真粗体面的字族（NSimSun/宋体一类）请求粗体时，浏览器合成粗体并加宽 advance；
-            // Skia 只在 paint 上开 FakeBoldText 才加宽，度量与绘制必须同开（见 FontManager.LacksRealBold）。
-            FakeBoldText = weight >= 700 && FontManager.LacksRealBold(typeface?.FamilyName),
         };
 
     /// <summary>整行文本的推进宽度（hmtx + 字距 + letter-spacing），既喂给 text-align 的起笔 x，
     /// 也喂给下划线/删除线的长度。光栅（<see cref="DrawLines"/>）与 SVG（<c>SvgWriter.EmitBlockText</c>）
-    /// 共用这一条公式，且**连度量旗也在这里统一**（见函数体注释）——否则两个表面对同一串给出两个宽，
-    /// 贴右/居中的落点就与光栅不一致（P2-9）。</summary>
-    public static float MeasureWidth(string s, SKPaint paint, float letterSpacing)
+    /// 共用这一条公式——否则两个表面对同一串给出两个宽，贴右/居中的落点就与光栅不一致（P2-9）。</summary>
+    public static float MeasureWidth(string s, SKFont font, float letterSpacing)
     {
         if (string.IsNullOrEmpty(s)) return 0;
-        var tf = paint.Typeface ?? SKTypeface.Default;
+        var tf = font.Typeface ?? SKTypeface.Default;
         if (TextShaper.NeedsSpecial(s, tf))
-            return TextShaper.WidthOf(s, tf, paint.TextSize, letterSpacing);
+            return TextShaper.WidthOf(s, tf, font.Size, letterSpacing);
         // 必须与绘制端 <see cref="DrawSpaced"/> 同一口径（hmtx + 字距）：少了字距就是「量得宽、画得窄」
         // ——右对齐整行往左跑，居中对齐往左跑一半（实测 Segoe UI 20px「AV To Ty Ta Wa Ye」字距合计
         // −9.20px：text-align:right 行首 dx −9.20、:center 行首 dx 正好是它的一半 −4.6 量级）。
-        //
-        // 但**光靠调用方的 paint 未必量得出同一个数**：旗是 paint 上的状态，谁手搓一张就会漏带。
-        // 所以五个构造点一律走 <see cref="NewTextPaint"/>；这里再兜一道——调用方旗不齐就补一张本地的
-        // （两旗齐备 + 沿用调用方的 skew），今后谁新增表面都不会又量出第二个宽。实测同一张字面实例
-        // （Handle 相同）下：AA+subpixel 全开 = 11.318、只开 subpixel = 11、全关 = 11。
-        if (!paint.SubpixelText || !paint.IsAntialias)
-        {
-            using var mp = new SKPaint
-            {
-                Typeface = tf, TextSize = paint.TextSize, Style = SKPaintStyle.Fill,
-                SubpixelText = true, IsAntialias = true, TextSkewX = paint.TextSkewX,
-            };
-            return mp.MeasureText(s) + KernTable.Of(s, tf, paint.TextSize) + letterSpacing * s.Length;
-        }
-        return paint.MeasureText(s) + KernTable.Of(s, tf, paint.TextSize) + letterSpacing * s.Length;
+        // 4.x 里 Subpixel/Embolden/SkewX 对 advance 零影响，量宽不再看 font 上的旗（见 AdvanceTable）。
+        return Layout.AdvanceTable.Sum(tf, font.Size, s) + KernTable.Of(s, tf, font.Size) + letterSpacing * s.Length;
     }
 
     static float Clamp01(float v) => v < 0 ? 0 : v > 1 ? 1 : v;

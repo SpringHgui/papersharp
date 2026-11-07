@@ -63,8 +63,8 @@ if (args.Length >= 4 && args[0] == "wt")
         int skw = w >= 600 ? 600 : w >= 500 ? 500 : 400;
         using var tfx = SKTypeface.FromFamilyName(fam, new SKFontStyle((SKFontStyleWeight)skw, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright));
         if (tfx == null) { Console.WriteLine($"{w}: null"); continue; }
-        using var paint = new SKPaint { Typeface = tfx, TextSize = size };
-        Console.WriteLine($"cssWeight={w} → {tfx.FamilyName}/{tfx.FontWeight} w={paint.MeasureText(text):0.####}");
+        using var font = new SKFont(tfx, size);
+        Console.WriteLine($"cssWeight={w} → {tfx.FamilyName}/{tfx.FontWeight} w={font.MeasureText(text):0.####}");
     }
     return;
 }
@@ -75,8 +75,8 @@ if (args.Length >= 1 && args[0] == "minw")
     var st = new PaperSharp.Css.ComputedStyle { FontFamily = "PingFang SC", FontWeight = 600, FontSize = 20, WhiteSpace = "normal" };
     var tfl = FontManager.Get("PingFang SC", 600);
     Console.WriteLine($"face = {tfl.FamilyName}/{tfl.FontWeight}");
-    using var paint = new SKPaint { Typeface = tfl, TextSize = 20 };
-    Console.WriteLine($"measureText        = {paint.MeasureText("Pro/Pro+/Ultra"):0.###}");
+    using var font = new SKFont(tfl, 20);
+    Console.WriteLine($"measureText        = {font.MeasureText("Pro/Pro+/Ultra"):0.###}");
     Console.WriteLine($"MinContentOfText   = {PaperSharp.Layout.InlineLayout.MinContentOfText("Pro/Pro+/Ultra", st):0.###}");
     var st4 = new PaperSharp.Css.ComputedStyle { FontFamily = "PingFang SC", FontWeight = 400, FontSize = 20, WhiteSpace = "normal" };
     Console.WriteLine($"MinContentOfText400= {PaperSharp.Layout.InlineLayout.MinContentOfText("Pro/Pro+/Ultra", st4):0.###}");
@@ -117,15 +117,15 @@ if (args.Length >= 4 && args[0] == "measure")
     using var tfx = SKTypeface.FromFile(file);
     PaperSharp.Layout.KernTable.Attach(tfx, file);
     Console.WriteLine($"face={tfx.FamilyName}/{tfx.FontWeight} upm={tfx.UnitsPerEm} size={size:0.####} text=\"{text}\"");
-    using (var paint = new SKPaint { Typeface = tfx, TextSize = size })
-        Console.WriteLine($"measureText        = {paint.MeasureText(text):0.####}");
+    using (var font = new SKFont(tfx, size))
+        Console.WriteLine($"measureText        = {font.MeasureText(text):0.####}");
     try
     {
         using var fnt = new SKFont(tfx, size);
         var lm = typeof(SKFont).GetProperty("LinearMetrics");
         Console.WriteLine($"SKFont.LinearMetrics prop: {lm != null}");
         if (lm != null) lm.SetValue(fnt, true);
-        using var p3 = new SKPaint { Typeface = tfx, TextSize = size };
+        using var p3 = new SKPaint();
         ushort[] utf16 = new ushort[text.Length];
         for (int i = 0; i < text.Length; i++) utf16[i] = text[i];
         Console.WriteLine($"skfont measure(lin)  = {fnt.MeasureText(utf16, p3):0.####}");

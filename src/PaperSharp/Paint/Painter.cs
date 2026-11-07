@@ -9,6 +9,9 @@ namespace PaperSharp.Paint;
 /// </summary>
 public static class Painter
 {
+    /// <summary>图像绘制采样口径（= 旧 SKFilterQuality.High：线性滤波 + 线性 mipmap）。</summary>
+    internal static readonly SKSamplingOptions Sampling = new(SKFilterMode.Linear, SKMipmapMode.Linear);
+
     public static void Paint(SKCanvas canvas, BlockBox root, SKSurface? surface = null)
     {
         PaintFlow(canvas, surface, root);
@@ -123,8 +126,8 @@ public static class Painter
         {
             var dst = new SKRect(contentX, contentY, contentX + box.ContentWidth, contentY + box.ContentHeight);
             byte a = (byte)Math.Round((s.Opacity <= 0 ? 0 : s.Opacity >= 1 ? 1 : s.Opacity) * 255);
-            using var ip = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High, Color = new SKColor(255, 255, 255, a) };
-            canvas.DrawImage(box.Image, dst, ip);
+            using var ip = new SKPaint { IsAntialias = true, Color = new SKColor(255, 255, 255, a) };
+            canvas.DrawImage(box.Image, dst, Sampling, ip);
         }
         else if (box.SvgPicture != null)
         {

@@ -667,8 +667,9 @@ public static class InlineLayout
 
     static float TextWidth(string s, ComputedStyle st)
     {
-        using var font = new SKFont(FontManager.Get(st.FontFamily, st.FontWeight, st.FontStyle), st.FontSize);
-        return TextMeasurer.LineWidth(s, font, st.LetterSpacing, st.FontVariantCaps);
+        // 不走 SKFont 中转：LineWidth 只吃 typeface+size，SKFont 白建一个（画像：BreakRaw 热路径 churn）
+        var tf = FontManager.Get(st.FontFamily, st.FontWeight, st.FontStyle);
+        return TextMeasurer.LineWidth(s, tf, st.FontSize, st.LetterSpacing, st.FontVariantCaps);
     }
 
     static string ApplyTransform(string text, string mode)
@@ -693,37 +694,74 @@ public static class InlineLayout
         var tokens = new List<string>();
         var sb = new System.Text.StringBuilder();
         void Flush() { if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); } }
-        static bool IsWs(string g) => g.Length == 1 && g[0] is ' ' or '\n' or '\t' or '\r' or '\f';
 
-        foreach (var g in TextShaper.Graphemes(s)) // 字素簇为单位：surrogate 对（emoji/生僻字）不拆散
+        if (TextShaper.GraphemeKind(s) == 0)
         {
-            if (preserve)
+            // 简单文本：逐字符即逐字素，零分配
+            for (int i = 0; i < s.Length; i++)
             {
-                if (g == "\n") { Flush(); tokens.Add("\n"); }
+                char c = s[i];
+                if (preserve)
+                {
+                    if (c == '\n') { Flush(); tokens.Add("\n"); }
+                    else sb.Append(c);
+                    continue;
+                }
+                if (c is ' ' or '\n' or '\t' or '\r' or '\f')
+                {
+                    Flush();
+                    if (tokens.Count == 0 || tokens[^1] != " ") tokens.Add(" "); // 折叠连续空白为单个空格
+                }
+                else if (wordBreak == "break-all" || (TextMeasurer.IsCjkChar(c) && wordBreak != "keep-all"))
+                {
+                    Flush();
+                    tokens.Add(c.ToString());
+                }
+                else if (wordBreak != "keep-all" && c == '-' && sb.Length > 0
+                         && sb[^1] is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9'))
+                {
+                    // 词内连字符后是断点（UAX#14 的 LD 类，Blink 照它折）："border-radius" → "border-" / "radius"。
+                    // 前面不是词字符的 '-'（"calc(18px - 0.5rem)"）不算，否则会把运算符当断点。
+                    sb.Append(c);
+                    Flush();
+                }
+                else sb.Append(c);
+            }
+        }
+        else
+        {
+            foreach (var g in TextShaper.Graphemes(s)) // 字素簇为单位：surrogate 对（emoji/生僻字）不拆散
+            {
+                if (preserve)
+                {
+                    if (g == "\n") { Flush(); tokens.Add("\n"); }
+                    else sb.Append(g);
+                    continue;
+                }
+                if (IsWs(g))
+                {
+                    Flush();
+                    if (tokens.Count == 0 || tokens[^1] != " ") tokens.Add(" "); // 折叠连续空白为单个空格
+                }
+                else if (wordBreak == "break-all" || (TextMeasurer.IsCjkChar(g[0]) && wordBreak != "keep-all"))
+                {
+                    Flush();
+                    tokens.Add(g);
+                }
+                else if (wordBreak != "keep-all" && g.Length == 1 && g[0] == '-' && sb.Length > 0
+                         && sb[^1] is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9'))
+                {
+                    // 词内连字符后是断点（UAX#14 的 LD 类，Blink 照它折）："border-radius" → "border-" / "radius"。
+                    // 前面不是词字符的 '-'（"calc(18px - 0.5rem)"）不算，否则会把运算符当断点。
+                    sb.Append(g);
+                    Flush();
+                }
                 else sb.Append(g);
-                continue;
             }
-            if (IsWs(g))
-            {
-                Flush();
-                if (tokens.Count == 0 || tokens[^1] != " ") tokens.Add(" "); // 折叠连续空白为单个空格
-            }
-            else if (wordBreak == "break-all" || (TextMeasurer.IsCjkChar(g[0]) && wordBreak != "keep-all"))
-            {
-                Flush();
-                tokens.Add(g);
-            }
-            else if (wordBreak != "keep-all" && g.Length == 1 && g[0] == '-' && sb.Length > 0
-                     && sb[^1] is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9'))
-            {
-                // 词内连字符后是断点（UAX#14 的 LD 类，Blink 照它折）："border-radius" → "border-" / "radius"。
-                // 前面不是词字符的 '-'（"calc(18px - 0.5rem)"）不算，否则会把运算符当断点。
-                sb.Append(g);
-                Flush();
-            }
-            else sb.Append(g);
         }
         Flush();
         return tokens;
     }
+
+    static bool IsWs(string g) => g.Length == 1 && g[0] is ' ' or '\n' or '\t' or '\r' or '\f';
 }

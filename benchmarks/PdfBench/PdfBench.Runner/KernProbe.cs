@@ -62,8 +62,8 @@ public static class KernProbe
             Console.WriteLine($"== {fam}/{w} → '{tf.FamilyName}' w={tf.FontWeight} kernTable={KernTable.HasTable(tf)}");
             foreach (var (s, size) in cases)
             {
-                using var p = new SKPaint { Typeface = tf, TextSize = size };
-                float h = p.MeasureText(s);
+                using var pf = new SKFont(tf, size);
+                float h = pf.MeasureText(s);
                 float k = KernTable.Of(s, tf, size);
                 float wot = TextShaper.WidthOf(s, tf, size, 0);
                 Console.WriteLine($"   {s,-30} hmtx={h,8:F3} kern={k,7:F3} sum={h + k,8:F3} WidthOf={wot,8:F3}");
@@ -86,9 +86,9 @@ public static class KernProbe
             if (!string.IsNullOrEmpty(txt))
             {
                 var tf = FontManager.Get(s.FontFamily, s.FontWeight);
-                using var p = new SKPaint { Typeface = tf, TextSize = s.FontSize };
+                using var pf = new SKFont(tf, s.FontSize);
                 Console.WriteLine($"{s.DomPath} fam='{s.FontFamily}' w={s.FontWeight} → '{tf.FamilyName}'/{tf.FontWeight}" +
-                    $" fs={s.FontSize:F2} txt=[{txt}] hmtx={p.MeasureText(txt):F3} WidthOf={TextShaper.WidthOf(txt, tf, s.FontSize, s.LetterSpacing):F3}");
+                    $" fs={s.FontSize:F2} txt=[{txt}] hmtx={pf.MeasureText(txt):F3} WidthOf={TextShaper.WidthOf(txt, tf, s.FontSize, s.LetterSpacing):F3}");
             }
             foreach (var c in s.Children) Walk(c);
         }
@@ -100,7 +100,6 @@ public static class KernProbe
     {
         var tf = FontManager.Get("Segoe UI", 400);
         const float size = 10.5f;
-        using var p = new SKPaint { Typeface = tf, TextSize = size };
         using var fnt = new SKFont(tf, size);
         var m = fnt.Metrics;
         Console.WriteLine($"face='{tf.FamilyName}' xHeight={m.XHeight:F3} top={m.Top:F3} asc={m.Ascent:F3} desc={m.Descent:F3}");
@@ -114,26 +113,26 @@ public static class KernProbe
             Console.WriteLine($"k(=xHeight/capHeight)={m.XHeight / (capH * size / tf.UnitsPerEm):F4}");
         }
         string[] probes = ["Small Caps", "SMALL CAPS", "SmallCAPS", "small caps", "SmallCaps", "SMALLCAPS", "效果"];
-        foreach (var s in probes) Console.WriteLine($"  {s,-12} w={p.MeasureText(s),8:F3}");
+        foreach (var s in probes) Console.WriteLine($"  {s,-12} w={fnt.MeasureText(s),8:F3}");
         foreach (var ch in "SMALLCAPsmalilcapseff")
-            Console.WriteLine($"   '{ch}' {p.MeasureText(ch.ToString()),7:F3}" +
-                $"  upper {p.MeasureText(char.ToUpper(ch).ToString()),7:F3}" +
-                $"  ratio {(p.MeasureText(ch.ToString()) / p.MeasureText(char.ToUpper(ch).ToString())):F4}");
+            Console.WriteLine($"   '{ch}' {fnt.MeasureText(ch.ToString()),7:F3}" +
+                $"  upper {fnt.MeasureText(char.ToUpper(ch).ToString()),7:F3}" +
+                $"  ratio {(fnt.MeasureText(ch.ToString()) / fnt.MeasureText(char.ToUpper(ch).ToString())):F4}");
         // 候选公式：小写字母换成大写后按 k 缩放
         float k = (float)(m.XHeight / Math.Max(0.001, os2 != null && os2.Length >= 90
             ? (((short)((os2[88] << 8) | os2[89])) * size / tf.UnitsPerEm) : m.XHeight));
-        float SumAdv(SKPaint pp, string s) => pp.MeasureText(s);
+        float SumAdv(SKFont ff, string s) => ff.MeasureText(s);
         float FitA(string s)
         {
             float w = 0;
             foreach (var ch in s)
-                w += char.IsLower(ch) ? SumAdv(p, char.ToUpper(ch).ToString()) * k : SumAdv(p, ch.ToString());
+                w += char.IsLower(ch) ? SumAdv(fnt, char.ToUpper(ch).ToString()) * k : SumAdv(fnt, ch.ToString());
             return w;
         }
         Console.WriteLine($"  fitA('Small Caps')={FitA("Small Caps"):F3}  fitA('SmallCaps')={FitA("SmallCaps"):F3}  (Chrome 75.50 / 48.75 含 效果)");
         float notoY = FontManager.Get("Microsoft YaHei", 400).UnitsPerEm;
-        using var pn = new SKPaint { Typeface = FontManager.Get("Microsoft YaHei", 400), TextSize = size };
-        Console.WriteLine($"  效果@yaheiSub={pn.MeasureText("效果"):F3} plain total={(FitA("Small Caps") + pn.MeasureText("效果")):F3}");
+        using var pnf = new SKFont(FontManager.Get("Microsoft YaHei", 400), size);
+        Console.WriteLine($"  效果@yaheiSub={pnf.MeasureText("效果"):F3} plain total={(FitA("Small Caps") + pnf.MeasureText("效果")):F3}");
         _ = notoY;
     }
 
@@ -270,7 +269,7 @@ public static class KernProbe
     {
         const string s = "TAVoWyA!ToTa";
         ushort[]? glyphs = null;
-        try { tf.GetGlyphs(s, out glyphs); } catch (Exception ex) { Console.WriteLine($"  GetGlyphs throw {ex.GetType().Name}"); return; }
+        try { glyphs = tf.GetGlyphs(s); } catch (Exception ex) { Console.WriteLine($"  GetGlyphs throw {ex.GetType().Name}"); return; }
         if (glyphs == null) { Console.WriteLine("  GetGlyphs null"); return; }
         try
         {
@@ -278,8 +277,8 @@ public static class KernProbe
             Console.WriteLine("  KernAdj(hmtx-order): " + (adj == null ? "null" : string.Join(",", adj)));
         }
         catch (Exception ex) { Console.WriteLine($"  KernAdj throw {ex.GetType().Name} {ex.Message}"); }
-        using var paint = new SKPaint { Typeface = tf, TextSize = 40 };
-        Console.WriteLine($"  MeasureText(\"{s}\")@40 = {paint.MeasureText(s):F3}");
+        using var fnt = new SKFont(tf, 40);
+        Console.WriteLine($"  MeasureText(\"{s}\")@40 = {fnt.MeasureText(s):F3}");
     }
 
     static void HarfBuzzWidth()
@@ -288,12 +287,12 @@ public static class KernProbe
         foreach (var fam in new[] { "Segoe UI", "Arial" })
         {
             var tf = SKTypeface.FromFamilyName(fam, SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
-            using var paint = new SKPaint { Typeface = tf, TextSize = 40 };
+            using var fnt = new SKFont(tf, 40);
             using var shaper = new SKShaper(tf);
-            var res = shaper.Shape(s, paint);
+            var res = shaper.Shape(s, fnt);
             float sum = 0;
             if (res?.Points is { } pos) foreach (var p in pos) sum += p.X;
-            Console.WriteLine($"HB {fam} Bold shaped@40 res.Width={res?.Width ?? -1:F3} sumPos.X={sum:F3} hmtx={paint.MeasureText(s):F3} npts={res?.Points?.Length ?? -1}");
+            Console.WriteLine($"HB {fam} Bold shaped@40 res.Width={res?.Width ?? -1:F3} sumPos.X={sum:F3} hmtx={fnt.MeasureText(s):F3} npts={res?.Points?.Length ?? -1}");
         }
     }
 }

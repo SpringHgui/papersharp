@@ -24,7 +24,8 @@ public static class MarginBoxRenderer
             if (string.IsNullOrEmpty(text)) continue;
 
             var typeface = FontManager.Get(box.FontFamily, box.FontWeight, box.FontStyle);
-            using var paint = TextPainter.NewTextPaint(typeface, box.FontSize, box.FontStyle, box.Color, box.FontWeight);
+            using var font = TextPainter.NewTextFont(typeface, box.FontSize, box.FontStyle, box.FontWeight);
+            using var paint = TextPainter.NewTextPaint(box.Color);
 
             bool isTop = box.Position.StartsWith("top");
             float centerY = isTop ? spec.MarginTop / 2f : spec.PageH - spec.MarginBottom / 2f;
@@ -36,7 +37,7 @@ public static class MarginBoxRenderer
             // 拐进 TextShaper.WidthOf 的按字面切段分支，量出的宽与旧口径不同，m1/pct/report 三张的
             // 页脚位置会跟着动（实测 45 红 vs 41 红）。那一刀要不要落，见台账 P2-9 末段。
             // 与正文同一条宽度公式（MeasureWidth：hmtx + 字距 + 度量旗；复杂/回退串再走 WidthOf 切段）
-            float w = TextPainter.MeasureWidth(text, paint, 0f);
+            float w = TextPainter.MeasureWidth(text, font, 0f);
             float x = box.Position switch
             {
                 var p when p.EndsWith("left") => spanLeft,
@@ -44,7 +45,7 @@ public static class MarginBoxRenderer
                 _ => spanLeft + (spanW - w) / 2f, // center
             };
 
-            Pdf.PdfGlyphUsage.DrawKerned(canvas, text, x, baseline, paint);
+            Pdf.PdfGlyphUsage.DrawKerned(canvas, text, x, baseline, font, paint);
         }
     }
 

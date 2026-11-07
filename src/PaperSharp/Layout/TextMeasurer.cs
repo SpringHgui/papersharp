@@ -214,6 +214,16 @@ public static class TextMeasurer
     static int LongestFit(string word, float width, SKFont font, float ls, string caps)
     {
         int len = 0, best = 0;
+        if (TextShaper.GraphemeKind(word) == 0)
+        {
+            for (int i = 0; i < word.Length; i++)
+            {
+                int n = i + 1;
+                if (best > 0 && TokenWidth(word.Substring(0, n), font, ls, caps) > width) break;
+                best = n;
+            }
+            return best;
+        }
         foreach (var g in TextShaper.Graphemes(word))
         {
             int n = len + g.Length;
@@ -231,33 +241,70 @@ public static class TextMeasurer
         // 词内 '-' 后是断点（UAX#14 的 BA 类，Blink 照做：窄盒实测 "margin-top" → "margin-" / "top"），
         // `word-break: keep-all` 关掉。
         bool hyphBreak = wordBreak != "keep-all";
-        foreach (var g in TextShaper.Graphemes(s)) // 字素簇：break-all 也不拆散 surrogate 对
+        if (TextShaper.GraphemeKind(s) == 0)
         {
-            if (g == " ")
+            // 简单文本：逐字符即逐字素，零分配
+            for (int i = 0; i < s.Length; i++)
             {
-                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-                tokens.Add(" ");
+                char c = s[i];
+                if (c == ' ')
+                {
+                    if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+                    tokens.Add(" ");
+                }
+                else if (wordBreak == "break-all")
+                {
+                    if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+                    tokens.Add(c.ToString());
+                }
+                else if (IsCjkChar(c) && wordBreak != "keep-all")
+                {
+                    if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+                    tokens.Add(c.ToString());
+                }
+                else if (hyphBreak && c == '-' && sb.Length > 0 && IsWordChar(sb[^1]))
+                {
+                    // 词中的 '-'：连同它前面的那段一起收尾，断点落在它之后（"border-radius" → "border-" + "radius"）
+                    sb.Append(c);
+                    tokens.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else
+                {
+                    sb.Append(c);
+                }
             }
-            else if (wordBreak == "break-all")
+        }
+        else
+        {
+            foreach (var g in TextShaper.Graphemes(s)) // 字素簇：break-all 也不拆散 surrogate 对
             {
-                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-                tokens.Add(g);
-            }
-            else if (IsCjkChar(g[0]) && wordBreak != "keep-all")
-            {
-                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
-                tokens.Add(g);
-            }
-            else if (hyphBreak && g.Length == 1 && g[0] == '-' && sb.Length > 0 && IsWordChar(sb[^1]))
-            {
-                // 词中的 '-'：连同它前面的那段一起收尾，断点落在它之后（"border-radius" → "border-" + "radius"）
-                sb.Append(g);
-                tokens.Add(sb.ToString());
-                sb.Clear();
-            }
-            else
-            {
-                sb.Append(g);
+                if (g == " ")
+                {
+                    if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+                    tokens.Add(" ");
+                }
+                else if (wordBreak == "break-all")
+                {
+                    if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+                    tokens.Add(g);
+                }
+                else if (IsCjkChar(g[0]) && wordBreak != "keep-all")
+                {
+                    if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+                    tokens.Add(g);
+                }
+                else if (hyphBreak && g.Length == 1 && g[0] == '-' && sb.Length > 0 && IsWordChar(sb[^1]))
+                {
+                    // 词中的 '-'：连同它前面的那段一起收尾，断点落在它之后（"border-radius" → "border-" + "radius"）
+                    sb.Append(g);
+                    tokens.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else
+                {
+                    sb.Append(g);
+                }
             }
         }
         if (sb.Length > 0) tokens.Add(sb.ToString());
@@ -283,15 +330,18 @@ public static class TextMeasurer
     /// letter-spacing 计**每个字符之后**都加一次（含末字符与词间空格）——Blink 就是把间距加在每个 cluster 上，
     /// 实测 "PDFBENCH X VISUAL CHALLENGE"@13 ls:1px：Chrome 233.05 = 206.04 + 27×1，按 n−1 只给 226.04。</summary>
     public static float LineWidth(string s, SKFont font, float letterSpacing, string caps = "normal")
+        => LineWidth(s, font.Typeface, font.Size, letterSpacing, caps);
+
+    /// <summary>字面+字号口径的整串宽（无分配：走 TextShaper 的池化测量 paint）。</summary>
+    internal static float LineWidth(string s, SKTypeface tf, float size, float letterSpacing, string caps = "normal")
     {
         if (string.IsNullOrEmpty(s)) return 0;
-        float mono = TextShaper.MonoGridWidth(s, font.Typeface, font.Size, letterSpacing);
+        float mono = TextShaper.MonoGridWidth(s, tf, size, letterSpacing);
         if (mono >= 0) return mono;
-        float smcp = SmallCaps.Delta(s, font.Typeface, font.Size, caps);
-        if (TextShaper.NeedsSpecial(s, font.Typeface))
-            return TextShaper.WidthOf(s, font.Typeface, font.Size, letterSpacing) + smcp;
-        using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
-        return paint.MeasureText(s) + KernTable.Of(s, font.Typeface, font.Size)
+        float smcp = SmallCaps.Delta(s, tf, size, caps);
+        if (TextShaper.NeedsSpecial(s, tf))
+            return TextShaper.WidthOf(s, tf, size, letterSpacing) + smcp;
+        return TextShaper.MeasureWith(tf, size, s) + KernTable.Of(s, tf, size)
             + letterSpacing * s.Length + smcp;
     }
 
@@ -301,8 +351,8 @@ public static class TextMeasurer
         if (mono >= 0) return mono;
         if (TextShaper.NeedsSpecial(token, font.Typeface))
             return TextShaper.WidthOf(token, font.Typeface, font.Size, ls) + SmallCaps.Delta(token, font.Typeface, font.Size, caps);
-        using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
-        return paint.MeasureText(token) + KernTable.Of(token, font.Typeface, font.Size) + ls * token.Length
+        return TextShaper.MeasureWith(font.Typeface, font.Size, token) + KernTable.Of(token, font.Typeface, font.Size)
+            + ls * token.Length
             + SmallCaps.Delta(token, font.Typeface, font.Size, caps);
     }
 
@@ -312,7 +362,6 @@ public static class TextMeasurer
         if (string.IsNullOrEmpty(text)) return 0;
         text = Normalize(text, s.WhiteSpace, keepLeadingSpace, keepTrailingSpace);
         float max = 0;
-        using var paint = new SKPaint { Typeface = font.Typeface, TextSize = font.Size };
         foreach (var line in text.Split('\n'))
         {
             if (line.Length == 0) continue;
@@ -320,7 +369,7 @@ public static class TextMeasurer
             float w = mono >= 0 ? mono
                 : TextShaper.NeedsSpecial(line, font.Typeface!)
                 ? TextShaper.WidthOf(line, font.Typeface!, font.Size, s.LetterSpacing)
-                : paint.MeasureText(line) + KernTable.Of(line, font.Typeface, font.Size)
+                : TextShaper.MeasureWith(font.Typeface!, font.Size, line) + KernTable.Of(line, font.Typeface, font.Size)
                     + s.LetterSpacing * line.Length;
             w += SmallCaps.Delta(line, font.Typeface, font.Size, s.FontVariantCaps);
             max = Math.Max(max, w);

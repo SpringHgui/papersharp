@@ -356,9 +356,9 @@ public static class SvgWriter
         {
             var s = box.Style;
             var typeface = box.Typeface;
-            // 与光栅同一张文本 paint（AA+subpixel+斜体 skew 三样旗齐），否则这里量出的行宽与
+            // 与光栅同一张文本 font（subpixel+斜体 skew 旗齐），否则这里量出的行宽与
             // DrawLines 不是一回事，贴右/居中的 <text x> 就会与 PNG/PDF 分叉（P2-9）。
-            using var paint = TextPainter.NewTextPaint(typeface, s.FontSize, s.FontStyle, weight: s.FontWeight);
+            using var font = TextPainter.NewTextFont(typeface, s.FontSize, s.FontStyle, weight: s.FontWeight);
             float lineHeight = s.LineHeightPx();
             var lb = box.LineBoxes;
             float baseline = top + (lb is { Length: > 0 } ? lb[0].Asc : InlineLayout.FirstBaselineOffset(s));
@@ -372,7 +372,7 @@ public static class SvgWriter
                 // 与 PNG/PDF 的 text-align 同一条宽度公式（TextPainter.MeasureWidth：hmtx + 字距对 + ls，
                 // 复杂/回退串走 WidthOf 按字面切段）。自己写 MeasureText + ls 会漏掉字距，
                 // 而 SVG 看图器排 <text> 时是按字体字距排的 —— 居中/贴右就偏半个配对量。
-                float textW = TextPainter.MeasureWidth(line, paint, s.LetterSpacing);
+                float textW = TextPainter.MeasureWidth(line, font, s.LetterSpacing);
                 float x = left + inset;
                 if (s.TextAlignment == CssTextAlign.Center) x = left + inset + (width - inset - textW) / 2;
                 else if (s.TextAlignment == CssTextAlign.Right) x = left + width - textW;

@@ -36,8 +36,9 @@ public static class PdfProbe
                 using (var doc = SKDocument.CreatePdf(ms))
                 {
                     using var c = doc.BeginPage(300, 150);
-                    using var p0 = new SKPaint { Typeface = tf, TextSize = 18 };
-                    c.DrawText(text, 40, 100, p0);
+                    using var p0 = new SKPaint();
+                    using var f0 = new SKFont(tf, 18);
+                    c.DrawText(text, 40, 100, f0, p0);
                     doc.EndPage();
                     doc.Close();
                 }
@@ -134,8 +135,9 @@ public static class PdfProbe
         const string s = "😀👍✔☑";
         using var surface = SKSurface.Create(new SKImageInfo(240, 60, SKColorType.Bgra8888, SKAlphaType.Premul));
         surface.Canvas.Clear(SKColors.White);
-        using var paint = new SKPaint { Typeface = tf, TextSize = 40, IsAntialias = true, Color = SKColors.Black };
-        surface.Canvas.DrawText(s, 4, 46, paint);
+        using var paint = new SKPaint { IsAntialias = true, Color = SKColors.Black };
+        using var font = new SKFont(tf, 40);
+        surface.Canvas.DrawText(s, 4, 46, font, paint);
         using var img = surface.Snapshot();
         using var bmp = new SKBitmap(240, 60, SKColorType.Bgra8888, SKAlphaType.Premul);
         if (!img.ReadPixels(bmp.Info, bmp.GetPixels())) return -1;

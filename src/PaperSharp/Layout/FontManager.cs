@@ -257,7 +257,7 @@ public static class FontManager
     public static bool IsLegacyMonoFace(SKTypeface tf)
     {
         EnsureSubsetLoaded();
-        return tf != null && (ReferenceEquals(tf, _monoRegular) || LegacyMonoFamilies.Contains(tf.FamilyName));
+        return tf != null && (ReferenceEquals(tf, _monoRegular) || LegacyMonoFamilies.Contains(FaceIdentity.FamilyOf(tf)));
     }
 
     /// <summary>实测（CDP 量 span 宽）会被网格化的族：NSimSun/SimSun/MS Gothic 在 8~17px 全部走 ⌈fs/2⌉；
@@ -439,11 +439,13 @@ public static class FontManager
         // 只认 Scope 自己的注册表——GlobalRegistered（RegisterFontDirectory 装的本地字体）**不能**
         // 合并进这条分支：浏览器对安装字体照样吃 legacy kern，用 webfont 口径（仅自身 GPOS、无 PRKT）
         // 加载会把雅黑字面加宽，m4 的 .calc-box 因此多折一行。
+        // 先查缓存、未命中才取候选并加载：工厂闭包与 TryGetFaces 的 ToArray 都只在未命中时发生。
+        if (scope != null && scope.TryGetTypeface(family, weight, out var cached)) return cached;
         var faces = scope?.TryGetFaces(family);
         if (faces != null && scope != null)
         {
-            var cached = scope.GetOrAddTypeface(family, weight, () => LoadRegistered(faces, weight, scope.BaseDir, webfont: true));
-            if (cached != null) return cached;
+            var loaded = LoadRegistered(faces, weight, scope.BaseDir, webfont: true);
+            if (loaded != null) return scope.AddTypeface(family, weight, loaded);
         }
         else if (GlobalRegistered.TryGetValue(family, out var g) && !(weight <= 350 && YaheiSubsetFamilies.Contains(family)))
         {

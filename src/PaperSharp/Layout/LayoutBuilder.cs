@@ -1117,11 +1117,23 @@ public static class LayoutBuilder
         float ellW = TextMeasurer.LineWidth(ell, font, ls);
         var sb = new System.Text.StringBuilder();
         int keep = 0;
-        foreach (var g in TextShaper.Graphemes(line))
+        if (TextShaper.GraphemeKind(line) == 0)
         {
-            sb.Append(g);
-            if (TextMeasurer.LineWidth(sb.ToString(), font, ls) + ellW > maxWidth) break;
-            keep = sb.Length;
+            for (int i = 0; i < line.Length; i++)
+            {
+                sb.Append(line[i]);
+                if (TextMeasurer.LineWidth(sb.ToString(), font, ls) + ellW > maxWidth) break;
+                keep = sb.Length;
+            }
+        }
+        else
+        {
+            foreach (var g in TextShaper.Graphemes(line))
+            {
+                sb.Append(g);
+                if (TextMeasurer.LineWidth(sb.ToString(), font, ls) + ellW > maxWidth) break;
+                keep = sb.Length;
+            }
         }
         return new[] { line[..keep] + ell };
     }

@@ -18,13 +18,14 @@ public static class TextShaper
     {
         for (int i = 0; i < s.Length; i++)
         {
-            char c = s[i];
-            if (IsRtlCodepoint(c)) return true;
-            if (c == '‍') return true; // ZWJ：emoji 家庭序列 / 阿拉伯连写强制符
-            if (c is >= '\u0300' and <= '\u036F') return true; // 拉丁组合变音符
+            if (NeedsShaping(s[i])) return true;
         }
         return false;
     }
+
+    internal static bool NeedsShaping(char c)
+        => IsRtlCodepoint(c) || c == '\u200D' /* ZWJ：emoji 家庭序列 / 阿拉伯连写强制符 */
+        || c is >= '\u0300' and <= '\u036F'; // 拉丁组合变音符
 
     /// <summary>该文本是否需要特殊通路（shaping 或字形回退）。ASCII 恒为 false——保证既有像素路径零改动。</summary>
     public static bool NeedsSpecial(string text, SKTypeface tf)
@@ -49,17 +50,33 @@ public static class TextShaper
 
     static readonly ConcurrentDictionary<(string Family, int Weight, int Cp), SKTypeface?> FallbackCache = new();
 
+    /// <summary>批量码位→字形的租用缓冲区（4.x 单发 unichar_to_glyph 慢，整串一次 text_to_glyphs）。</summary>
+    [ThreadStatic] static SKFont? tGlyphFont;
+    [ThreadStatic] static int[]? tGlyphCps;
+    [ThreadStatic] static ushort[]? tGlyphIds;
+
     /// <summary>文本首处当前字体未覆盖的码位（0=全覆盖）。ASCII 码位跳过；组合符逐个字素内码位检查。</summary>
     public static int FirstUncovered(string text, SKTypeface tf)
     {
-        foreach (var g in Graphemes(text))
-            for (int i = 0; i < g.Length;)
-            {
-                int cp = char.ConvertToUtf32(g, i);
-                i += char.IsHighSurrogate(g[i]) ? 2 : 1;
-                if (cp < 0x80) continue;
-                if (tf.GetGlyph(cp) == 0) return cp;
-            }
+        // 逐码位平扫：覆盖检查只看每个码位有没有字形，字素边界不改变「查哪些码位、什么顺序」，
+        // 逐字素迭代在这里纯属浪费（每字素一个字符串 + 迭代器 + TextElementEnumerator，画像大头）。
+        var f = tGlyphFont ??= new SKFont(tf);
+        if (!ReferenceEquals(f.Typeface, tf)) f.Typeface = tf;
+        int n = 0;
+        var cps = tGlyphCps ??= new int[text.Length];
+        if (cps.Length < text.Length) cps = tGlyphCps = new int[text.Length];
+        for (int i = 0; i < text.Length;)
+        {
+            int cp = char.ConvertToUtf32(text, i);
+            i += char.IsHighSurrogate(text[i]) ? 2 : 1;
+            if (cp >= 0x80) cps[n++] = cp;
+        }
+        if (n == 0) return 0;
+        var ids = tGlyphIds ??= new ushort[text.Length];
+        if (ids.Length < text.Length) ids = tGlyphIds = new ushort[text.Length];
+        f.GetGlyphs(cps.AsSpan(0, n), ids.AsSpan(0, n));
+        for (int k = 0; k < n; k++)
+            if (ids[k] == 0) return cps[k];
         return 0;
     }
 
@@ -71,7 +88,7 @@ public static class TextShaper
     /// 子集派生自同一 cmap，<see cref="FirstUncovered"/> 的覆盖检查看不出这个缺口，必须按 family 显式改写。</summary>
     static int FirstArabicNeedingSystem(string text, SKTypeface tf)
     {
-        if (!FontManager.CjkSubsetFamily(tf.FamilyName)) return 0;
+        if (!FontManager.CjkSubsetFamily(FaceIdentity.FamilyOf(tf))) return 0;
         for (int i = 0; i < text.Length;)
         {
             int cp = char.ConvertToUtf32(text, i);
@@ -93,12 +110,14 @@ public static class TextShaper
     static readonly ConcurrentDictionary<(string Family, int Weight, int Cp), SKTypeface?> CpFaceCache = new();
 
     static SKTypeface? FaceFor(int cp, SKTypeface current)
-        => CpFaceCache.GetOrAdd((current.FamilyName, current.FontWeight, cp),
-            k =>
-            {
-                var f = ResolveTypeface(char.ConvertFromUtf32(k.Cp), current);
-                return ReferenceEquals(f, current) ? null : f;
-            });
+    {
+        var key = (FaceIdentity.FamilyOf(current), FaceIdentity.WeightOf(current), cp);
+        // 不用 GetOrAdd 工厂重载：捕获 current 的闭包会按调用次数分配（画像：批量导出的大头之一），
+        // 改成先查、未命中才算——命中率下只有冷键走 ResolveTypeface。
+        if (CpFaceCache.TryGetValue(key, out var hit)) return hit;
+        var f = ResolveTypeface(char.ConvertFromUtf32(cp), current);
+        return CpFaceCache.GetOrAdd(key, ReferenceEquals(f, current) ? null : f);
+    }
 
     /// <summary>
     /// 一段文字对**行盒**的上下伸出量：除了主字体，逐字回退到的那张 face 也按自己的度量参与撑行盒，
@@ -116,7 +135,7 @@ public static class TextShaper
         string familyList, int weight, string style = "normal")
     {
         var light = weight <= 300 ? FontManager.LightCjkExtents(sizePx) : null;
-        var (a, d) = light != null && FontManager.YaheiFamily(primary.FamilyName)
+        var (a, d) = light != null && FontManager.YaheiFamily(FaceIdentity.FamilyOf(primary))
             ? light.Value
             : FontManager.InlineExtentsAt(primary, sizePx);
         if (text.Length == 0) return (a, d);
@@ -131,7 +150,7 @@ public static class TextShaper
             last = face;
             // 轻字重 + 雅黑族：浏览器用的是「雅黑 Light」那张面，行盒按它的度量长（见 LightCjkExtents），
             // 不是子集 Regular 的——引擎画面仍用子集，度量得换成 Light 那一档。
-            var (x, y) = light != null && FontManager.YaheiFamily(face.FamilyName)
+            var (x, y) = light != null && FontManager.YaheiFamily(FaceIdentity.FamilyOf(face))
                 ? light.Value
                 : FontManager.InlineExtentsAt(face, sizePx);
             if (x > a) a = x;
@@ -210,7 +229,7 @@ public static class TextShaper
         int cp = FirstUncovered(text, current);
         if (cp == 0) cp = FirstArabicNeedingSystem(text, current);
         if (cp == 0) return current;
-        var key = (current.FamilyName, current.FontWeight, cp);
+        var key = (FaceIdentity.FamilyOf(current), FaceIdentity.WeightOf(current), cp);
         var hit = FallbackCache.GetOrAdd(key, k =>
         {
             try
@@ -258,6 +277,16 @@ public static class TextShaper
 
     // ── 度量与绘制 ─────────────────────────────────────────────────────
 
+    /// <summary>量宽统一走托管表（<see cref="AdvanceTable"/>）：4.x 的 MeasureText 每次都要进原生
+    /// strike cache 全局锁，并行渲染下慢 60~92 倍。两条口径按修复前的老语义分流：
+    /// aa=false（布局量宽的主路，历史 Edging=Alias / 2.88 的 Subpixel=false）走
+    /// <see cref="AdvanceTable.SumAliased"/> 的网格对齐整数推进；aa=true（回退面量单字，历史用
+    /// AA 池化 font）走 <see cref="AdvanceTable.Sum"/> 的线性 hmtx。旗位参数保留只为签名稳定——
+    /// 4.x 里 Subpixel/Embolden/SkewX 对 advance 零影响（见 AdvanceTable 类注释）。</summary>
+    internal static float MeasureWith(SKTypeface tf, float size, string text,
+        bool aa = false, bool subpixel = false, bool fakeBold = false)
+        => aa ? AdvanceTable.Sum(tf, size, text) : AdvanceTable.SumAliased(tf, size, text);
+
     // ── 等宽链的整像素 advance 网格 ─────────────────────────────────────
     // 参考浏览器（Blink + DirectWrite）渲染 legacy 等宽 face（NSimSun，Blink 的 generic monospace 落点）时
     // 不对 advance 做线性缩放，而是网格对齐到整「半格」：半宽字形 = ⌈fs/2⌉，全宽（CJK/全角）= 2×⌈fs/2⌉，
@@ -288,8 +317,7 @@ public static class TextShaper
                 int cp = char.ConvertToUtf32(text, i);
                 i += char.IsHighSurrogate(text[i]) ? 2 : 1;
                 if (tf.GetGlyph(cp) == 0) continue;
-                using var paint = new SKPaint { Typeface = tf, TextSize = size };
-                own = paint.MeasureText(char.ConvertFromUtf32(cp));
+                own = MeasureWith(tf, size, char.ConvertFromUtf32(cp));
                 break;
             }
         }
@@ -329,12 +357,8 @@ public static class TextShaper
                     : ResolveTypeface(gs, tf));
             if (fb != null && fb.GetGlyph(cp) != 0)
             {
-                using var fp = new SKPaint
-                {
-                    Typeface = fb, TextSize = size, IsAntialias = true, SubpixelText = true,
-                    FakeBoldText = tf.FontWeight >= 700 && FontManager.LacksRealBold(fb.FamilyName),
-                };
-                w += fp.MeasureText(gs);
+                w += MeasureWith(fb, size, gs, aa: true, subpixel: true,
+                    fakeBold: tf.FontWeight >= 700 && FontManager.LacksRealBold(FaceIdentity.FamilyOf(fb)));
                 continue;
             }
             w += (wide ? half * 2 : half) + fauxBold;
@@ -354,10 +378,10 @@ public static class TextShaper
             var typeface = ResolveTypeface(text, tf);
             var segs = MixedNeutralSegments(text, tf, typeface);
             if (segs != null) return SegWidths(segs, typeface, tf, size).Sum();
-            using var paint = new SKPaint { Typeface = typeface, TextSize = size };
+            using var font = new SKFont(typeface, size);
             using var shaper = new SKShaper(typeface);
-            var res = shaper.Shape(text, paint);
-            return res?.Width ?? paint.MeasureText(text);
+            var res = shaper.Shape(text, font);
+            return res?.Width ?? AdvanceTable.Sum(typeface, size, text);
         }
         // 按「哪个字面覆盖它」切段分别量：整串锁一个回退面会把混合行里的拉丁段也交给 CJK 字体，
         // advance 差 0.1~0.5em（"abc 中文" @9px 多 1.4px → flex 项内在宽、右/中对齐的 textW 一起偏），
@@ -365,8 +389,7 @@ public static class TextShaper
         float w = 0; int units = 0;
         foreach (var (seg, face) in FaceRuns(text, tf))
         {
-            using var p = new SKPaint { Typeface = face, TextSize = size };
-            w += p.MeasureText(seg) + KernTable.Of(seg, face, size);
+            w += MeasureWith(face, size, seg) + KernTable.Of(seg, face, size);
             units += GraphemeCount(seg);
         }
         return w + ls * units;
@@ -382,18 +405,31 @@ public static class TextShaper
         List<(string Seg, bool Primary)>? segs = null;
         var sb = new StringBuilder();
         bool cur = false;
-        foreach (var g in Graphemes(text))
+        if (GraphemeKind(text) == 0)
         {
-            bool ascii = true;
-            for (int i = 0; i < g.Length;)
+            for (int i = 0; i < text.Length; i++)
             {
-                int cp = char.ConvertToUtf32(g, i);
-                i += char.IsHighSurrogate(g[i]) ? 2 : 1;
-                if (cp >= 0x80) { ascii = false; break; }
+                bool ascii = text[i] < 0x80;
+                if (sb.Length > 0 && ascii != cur) { (segs ??= new()).Add((sb.ToString(), cur)); sb.Clear(); }
+                cur = ascii;
+                sb.Append(text[i]);
             }
-            if (sb.Length > 0 && ascii != cur) { (segs ??= new()).Add((sb.ToString(), cur)); sb.Clear(); }
-            cur = ascii;
-            sb.Append(g);
+        }
+        else
+        {
+            foreach (var g in Graphemes(text))
+            {
+                bool ascii = true;
+                for (int i = 0; i < g.Length;)
+                {
+                    int cp = char.ConvertToUtf32(g, i);
+                    i += char.IsHighSurrogate(g[i]) ? 2 : 1;
+                    if (cp >= 0x80) { ascii = false; break; }
+                }
+                if (sb.Length > 0 && ascii != cur) { (segs ??= new()).Add((sb.ToString(), cur)); sb.Clear(); }
+                cur = ascii;
+                sb.Append(g);
+            }
         }
         if (sb.Length > 0) (segs ??= new()).Add((sb.ToString(), cur));
         return segs is { Count: > 1 } ? segs : null;
@@ -407,17 +443,16 @@ public static class TextShaper
     static float[] SegWidths(List<(string Seg, bool Primary)> segs, SKTypeface sys, SKTypeface pri, float size)
     {
         var ws = new float[segs.Count];
-        using var pPri = new SKPaint { Typeface = pri, TextSize = size };
-        using var pSys = new SKPaint { Typeface = sys, TextSize = size };
+        using var fSys = new SKFont(sys, size);
         using var shSys = new SKShaper(sys);
         for (int i = 0; i < segs.Count; i++)
         {
             var (seg, primary) = segs[i];
-            if (primary) ws[i] = pPri.MeasureText(seg) + KernTable.Of(seg, pri, size);
+            if (primary) ws[i] = MeasureWith(pri, size, seg) + KernTable.Of(seg, pri, size);
             else
             {
-                var res = shSys.Shape(seg, pSys);
-                ws[i] = res?.Width ?? pSys.MeasureText(seg);
+                var res = shSys.Shape(seg, fSys);
+                ws[i] = res?.Width ?? AdvanceTable.Sum(sys, size, seg);
             }
         }
         return ws;
@@ -428,35 +463,51 @@ public static class TextShaper
     {
         var sb = new StringBuilder();
         SKTypeface cur = tf;
-        foreach (var g in Graphemes(text))
+        if (GraphemeKind(text) == 0)
         {
-            var gt = ResolveTypeface(g, tf);
-            if (sb.Length > 0 && !ReferenceEquals(gt, cur)) { yield return (sb.ToString(), cur); sb.Clear(); }
-            cur = gt;
-            sb.Append(g);
+            // 简单文本：逐字符与逐字素同界，零分配（不造每字素字符串）。
+            // FaceFor(cp) 与 ResolveTypeface(单字符串) 同一条缓存链，结果相同。
+            for (int i = 0; i < text.Length; i++)
+            {
+                var gt = FaceFor(text[i], tf) ?? tf;
+                if (sb.Length > 0 && !ReferenceEquals(gt, cur)) { yield return (sb.ToString(), cur); sb.Clear(); }
+                cur = gt;
+                sb.Append(text[i]);
+            }
+        }
+        else
+        {
+            foreach (var g in Graphemes(text))
+            {
+                var gt = ResolveTypeface(g, tf);
+                if (sb.Length > 0 && !ReferenceEquals(gt, cur)) { yield return (sb.ToString(), cur); sb.Clear(); }
+                cur = gt;
+                sb.Append(g);
+            }
         }
         if (sb.Length > 0) yield return (sb.ToString(), cur);
     }
 
-    /// <summary>Shaped 整段绘制（连写形式正确）。返回是否消费了该文本。</summary>
-    public static bool DrawShaped(SKCanvas canvas, string text, float x, float y, SKPaint paint)
+    /// <summary>Shaped 整段绘制（连写形式正确）。返回是否消费了该文本。
+    /// font 携带字面/字号（shaping 换面时临时改它的 Typeface），paint 只管颜色等绘制属性。</summary>
+    public static bool DrawShaped(SKCanvas canvas, string text, float x, float y, SKFont font, SKPaint paint)
     {
-        var primary = paint.Typeface!;
+        var primary = font.Typeface!;
         var typeface = ResolveTypeface(text, primary);
         bool swapped = !ReferenceEquals(typeface, primary);
         var segs = swapped ? MixedNeutralSegments(text, primary, typeface) : null;
-        var old = paint.Typeface;
-        if (swapped) paint.Typeface = typeface;
+        var old = font.Typeface;
+        if (swapped) font.Typeface = typeface;
         try
         {
             if (segs == null)
             {
                 using var shaper = new SKShaper(typeface);
-                Pdf.PdfGlyphUsage.DrawShaped(canvas, shaper, text, x, y, paint);
+                Pdf.PdfGlyphUsage.DrawShaped(canvas, shaper, text, x, y, font, paint);
                 return true;
             }
             // 视觉序：RTL run 里逻辑首段贴右 → 从左到右画的是段的倒序（中性字素不连写，段内造型不受切割影响）
-            var ws = SegWidths(segs, typeface, primary, paint.TextSize);
+            var ws = SegWidths(segs, typeface, primary, font.Size);
             float cursor = x;
             for (int k = 0; k < segs.Count; k++)
             {
@@ -464,15 +515,15 @@ public static class TextShaper
                 var (seg, isPrimary) = segs[i];
                 if (isPrimary)
                 {
-                    paint.Typeface = primary;
+                    font.Typeface = primary;
                     // 与 SegWidths 同口径：段内遇非零字距对要切开落笔，否则配对之后的字形整体右偏
-                    Pdf.PdfGlyphUsage.DrawKerned(canvas, seg, cursor, y, paint);
-                    paint.Typeface = typeface;
+                    Pdf.PdfGlyphUsage.DrawKerned(canvas, seg, cursor, y, font, paint);
+                    font.Typeface = typeface;
                 }
                 else
                 {
                     using var shaper = new SKShaper(typeface);
-                    Pdf.PdfGlyphUsage.DrawShaped(canvas, shaper, seg, cursor, y, paint);
+                    Pdf.PdfGlyphUsage.DrawShaped(canvas, shaper, seg, cursor, y, font, paint);
                 }
                 cursor += ws[i];
             }
@@ -484,7 +535,7 @@ public static class TextShaper
         }
         finally
         {
-            paint.Typeface = old;
+            font.Typeface = old;
         }
     }
 
@@ -532,9 +583,12 @@ public static class TextShaper
     /// <summary>文本的首个强方向（1=RTL，-1=LTR，0=全文中性）。供 inline 行盒 RTL 重排用。</summary>
     public static int StrongDir(string text)
     {
-        foreach (var g in Graphemes(text))
+        // 平扫与逐字素扫描同序同结果（DirOfGrapheme 就是逐码位取首个非零），省掉字素迭代的分配。
+        for (int i = 0; i < text.Length;)
         {
-            int d = DirOfGrapheme(g);
+            int cp = char.ConvertToUtf32(text, i);
+            i += char.IsHighSurrogate(text[i]) ? 2 : 1;
+            int d = DirOfCodepoint(cp);
             if (d != 0) return d;
         }
         return 0;
@@ -558,7 +612,7 @@ public static class TextShaper
     public static IEnumerable<string> Graphemes(string s)
     {
         if (s.Length == 0) yield break;
-        if (AllAscii(s)) // 快路径：纯 ASCII 逐字符
+        if (GraphemeKind(s) == 0) // 快路径：每个 UTF-16 码元自成字素（拉丁/CJK 等绝大多数文本）
         {
             foreach (var c in s) yield return c.ToString();
             yield break;
@@ -569,16 +623,32 @@ public static class TextShaper
 
     public static int GraphemeCount(string s)
     {
-        if (AllAscii(s)) return s.Length;
+        if (GraphemeKind(s) == 0) return s.Length;
         int n = 0;
         var en = StringInfo.GetTextElementEnumerator(s);
         while (en.MoveNext()) n++;
         return n;
     }
 
-    static bool AllAscii(string s)
+    /// <summary>0 = 每个 UTF-16 码元自成字素（逐字符迭代与 StringInfo 同界）；1 = 含代理对/组合符/ZWJ 等，
+    /// 字素边界必须按 UAX#29 走 <see cref="StringInfo"/>。CR 单独排除：StringInfo 把 CRLF 合一个字素；
+    /// Hangul Jamo（U+1100–U+115F 等）按 UAX#29 组成音节簇，同样不进快路径。</summary>
+    internal static int GraphemeKind(string s)
     {
-        for (int i = 0; i < s.Length; i++) if (s[i] >= 0x80) return false;
-        return true;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (char.IsSurrogate(c)) return 1;
+            if (c is '\r' or '\u200C' or '\u200D') return 1;
+            if (c is >= '\u1100' and <= '\u115F' or >= '\uA960' and <= '\uA97F' or >= '\uD7B0' and <= '\uD7FF') return 1;
+            if (c >= 0x300)
+            {
+                var cat = char.GetUnicodeCategory(c);
+                if (cat is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark
+                    or UnicodeCategory.EnclosingMark or UnicodeCategory.Format)
+                    return 1;
+            }
+        }
+        return 0;
     }
 }

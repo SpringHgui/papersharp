@@ -466,16 +466,20 @@ public sealed partial class SkiaSharpAdapter : IPdfAdapter
 
     /// <summary>量宽与逐字绘制的草稿画刷：threadstatic —— throughput/threadsafe 用例会 4 线程并发
     /// 跑同一个适配器实例，共享可变 SKPaint 会让彼此的颜色/字面串味（产物字节随之漂移）。</summary>
-    [ThreadStatic] static SKPaint? _mpT, _dpT;
-    static SKPaint Mp => _mpT ??= new SKPaint();
+    [ThreadStatic] static SKFont? _mpT;
+    [ThreadStatic] static SKPaint? _dpT;
+    static SKFont Mp => _mpT ??= new SKFont();
 
-    /// <summary>SKFont 的 MeasureText 只接受已整形的 ushort 字形序列，量宽只能走 SKPaint 的遗留口。</summary>
+    /// <summary>量宽走每线程池化 SKFont（4.x 的 MeasureText 在 font 上）。量完立即松面，
+    /// 池化 font 对 typeface 持原生强引用，不然 LRU 逐出的面数据会被钉住。</summary>
     float Measure(SKTypeface tf, float sizePt, string t)
     {
         var mp = Mp;
         mp.Typeface = tf;
-        mp.TextSize = sizePt;
-        return mp.MeasureText(t);
+        mp.Size = sizePt;
+        var w = mp.MeasureText(t);
+        mp.Typeface = SKTypeface.Default;
+        return w;
     }
 
     static bool IsCjk(char c) =>
@@ -623,8 +627,6 @@ public sealed partial class SkiaSharpAdapter : IPdfAdapter
             var font = Font(tf, sizePt);
             var paint = Dp;
             paint.Color = a.S.Alpha >= 1f ? a.S.Color : A(a.S.Color, a.S.Alpha);
-            paint.Typeface = font.Typeface;        // 落笔用子集面（裁不动的面就是原面）
-            paint.TextSize = sizePt;
             float w = AdvOf(a.S, ch);
             NoteGlyphs(tf, t);
             c.DrawText(t, x + adv, baseline, font, paint);

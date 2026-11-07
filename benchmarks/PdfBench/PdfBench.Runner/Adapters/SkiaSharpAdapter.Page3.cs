@@ -470,8 +470,8 @@ public sealed partial class SkiaSharpAdapter
         var path = Path.Combine(_ctx.AssetsDir, fileName);
         var cached = LoadAsset(path);
         if (cached is null) { Fail(c, dest, "image"); return; }
-        using var paint = new SKPaint { FilterQuality = SKFilterQuality.High };
-        DrawImgDest(c, cached, dest, rad, paint);
+        var sampling = new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear);
+        DrawImgDest(c, cached, dest, rad, sampling);
     }
 
     /// <summary>
@@ -515,7 +515,7 @@ public sealed partial class SkiaSharpAdapter
     }
 
     /// <summary>把 SKImage 画到目标盒（可选圆角裁剪），供 ImgHi 用。</summary>
-    private void DrawImgDest(SKCanvas c, SKImage img, SKRect dest, Radii rad, SKPaint paint)
+    private void DrawImgDest(SKCanvas c, SKImage img, SKRect dest, Radii rad, SKSamplingOptions sampling)
     {
         int save = c.Save();
         if (rad.Max > 0)
@@ -524,7 +524,7 @@ public sealed partial class SkiaSharpAdapter
             clip.AddRoundRect(RRect(dest, rad));
             c.ClipPath(clip, SKClipOperation.Intersect, true);
         }
-        c.DrawImage(img, dest, paint);
+        c.DrawImage(img, dest, sampling);
         c.RestoreToCount(save);
     }
 

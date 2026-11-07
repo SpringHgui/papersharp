@@ -16,15 +16,26 @@ public enum PageSize { A4, Letter }
 /// </summary>
 public static class Renderer
 {
+    // PS_STAGES=1：并发压测阶段计时钩子（stderr 一行 per 份：build/record/subset/paint/close/enhance）
+    static readonly bool StageProbe = Environment.GetEnvironmentVariable("PS_STAGES") == "1";
+    [ThreadStatic] static double? tPaintMs, tCloseMs;
+
     public static byte[] RenderPdf(string html, string css, PageSize pageSize = PageSize.A4, string? baseDir = null, double? animationTime = null, bool precomputed = false)
     {
+        var sw = StageProbe ? System.Diagnostics.Stopwatch.StartNew() : null;
+        long a0 = StageProbe ? GC.GetAllocatedBytesForCurrentThread() : 0;
         using var scope = RenderScope.Begin(baseDir);
         Prepare(css);
+        long aParse = StageProbe ? GC.GetAllocatedBytesForCurrentThread() : 0;
         var (defW, defH) = GetPageSize(pageSize);
         var spec = ParsePage(html, css, defW, defH);   // 有 @page 则覆盖默认尺寸/边距
         var (body, docInfo) = BuildMeasuredBody(html, css, spec.ContentW, animationTime, precomputed);
+        double tBuild = sw?.Elapsed.TotalMilliseconds ?? 0;
+        long aBuild = StageProbe ? GC.GetAllocatedBytesForCurrentThread() : 0;
         var pages = Paginator.Paginate(body, spec);
         var (outlines, links) = Pdf.PdfSemantic.Collect(pages);   // M5：书签 + 链接注释
+        double tPagMs = sw?.Elapsed.TotalMilliseconds ?? 0;
+        long aPag = StageProbe ? GC.GetAllocatedBytesForCurrentThread() : 0;
 
         var meta = new SKDocumentPdfMetadata
         {
@@ -47,6 +58,7 @@ public static class Renderer
         // Skia 写完文件后由 <see cref="Pdf.PdfFontSwap"/> 把空壳字体流换成带轮廓的子集字体——Skia 对带轮廓 face 的
         // 每个新字形都要做一次光栅度量，且要把整张 face 再 deflate 一遍，这两项合计占单份耗时的三成以上。
         using var usage = Pdf.PdfGlyphUsage.Begin();
+        double tRecord0 = sw?.Elapsed.TotalMilliseconds ?? 0;
         // 设备页 = pt，绘制前把画布整体折到 pt（0.75），于是 Painter 与 PNG 路径一样按 CSS px 记账。
         int pw = Math.Max(1, (int)Math.Ceiling(spec.PdfPageW)), ph = Math.Max(1, (int)Math.Ceiling(spec.PdfPageH));
         // 录制趟只要「画过哪些字形」，不要像素：用不落笔的画布，省掉整页位图的分配与光栅。
@@ -60,7 +72,9 @@ public static class Renderer
                 MarginBoxRenderer.Render(scratch, spec, i + 1, pages.Count);
                 scratch.Restore();
             }
+        double tRecord1 = sw?.Elapsed.TotalMilliseconds ?? 0;
         usage.BuildSubsets();
+        double tSubset = sw?.Elapsed.TotalMilliseconds ?? 0;
 
         var (raw, rawLen) = EncodePdfPages(pages, spec, meta);
         if (usage.Violated)
@@ -85,7 +99,21 @@ public static class Renderer
             }
         }
         // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
-        return Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
+        double tEncodeEnd = sw?.Elapsed.TotalMilliseconds ?? 0;
+        long aSubset = StageProbe ? GC.GetAllocatedBytesForCurrentThread() : 0;
+        var pdf = Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
+        if (StageProbe)
+        {
+            double total = sw!.Elapsed.TotalMilliseconds;
+            long aEnd = GC.GetAllocatedBytesForCurrentThread();
+            double enc = tEncodeEnd - tSubset;
+            Console.Error.WriteLine($"PSSTAGE parse={(aParse - a0) / 1024}K build={(aBuild - aParse) / 1024}K pag={(aPag - aBuild) / 1024}K"
+                + $" | build={tBuild:F1} pag={tPagMs:F1} record={tRecord1 - tRecord0:F1} subset={tSubset - tRecord1:F1}"
+                + $" paint={tPaintMs ?? 0:F1} close={tCloseMs ?? 0:F1} swap={enc - (tPaintMs ?? 0) - (tCloseMs ?? 0):F1}"
+                + $" enhance={total - tEncodeEnd:F1} total={total:F1}"
+                + $" | alloc sub={(aSubset - aPag) / 1024}K enh={(aEnd - aSubset) / 1024}K");
+        }
+        return pdf;
     }
 
     /// <summary>
@@ -97,6 +125,7 @@ public static class Renderer
     static (byte[] Buf, int Len) EncodePdfPages(List<Page> pages, PageSpec spec, SKDocumentPdfMetadata meta)
     {
         using var ms = new MemoryStream();
+        var sw = StageProbe ? System.Diagnostics.Stopwatch.StartNew() : null;
         using (var pdfDoc = SKDocument.CreatePdf(ms, meta))
         {
             for (int i = 0; i < pages.Count; i++)
@@ -107,7 +136,9 @@ public static class Renderer
                 MarginBoxRenderer.Render(canvas, spec, i + 1, pages.Count); // 页眉/页脚 + 页码
                 pdfDoc.EndPage();
             }
+            tPaintMs = sw?.Elapsed.TotalMilliseconds;
             pdfDoc.Close();
+            tCloseMs = (sw?.Elapsed.TotalMilliseconds ?? 0) - (tPaintMs ?? 0);
         }
         if (ms.TryGetBuffer(out var seg) && seg.Offset == 0 && seg.Array != null) return (seg.Array, (int)ms.Length);
         return (ms.ToArray(), (int)ms.Length);
@@ -285,8 +316,7 @@ public static class Renderer
             using var full = surface.Snapshot();
             int side = Math.Min(full.Width, full.Height);
             using var target = SKSurface.Create(new SKImageInfo(size, size, SKColorType.Bgra8888, SKAlphaType.Premul));
-            using (var p = new SKPaint { FilterQuality = SKFilterQuality.High })
-                target.Canvas.DrawImage(full, new SKRect(0, 0, side, side), new SKRect(0, 0, size, size), p);
+            target.Canvas.DrawImage(full, new SKRect(0, 0, side, side), new SKRect(0, 0, size, size), Paint.Painter.Sampling);
             using var icon = target.Snapshot();
             using var data = icon.Encode(SKEncodedImageFormat.Png, 100);
             png = data.ToArray();
