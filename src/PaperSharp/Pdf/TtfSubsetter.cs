@@ -72,8 +72,8 @@ public static class TtfSubsetter
 
     /// <summary>
     /// 只要**最终嵌入物**（带轮廓、去排版表的子集字体程序），不建空壳。
-    /// 「常驻空壳」方案（<see cref="BuildHollowShell"/>）下每份文档只需要这一半：
-    /// 画字用的是进程级共享的全量空壳，本方法产出的字节等 Skia 写完 PDF 后由 <see cref="PdfFontSwap"/> 换进去。
+    /// 「共享空壳」方案（<see cref="BuildHollowShell"/>）下每份文档只需要这一半：
+    /// 画字用的是共享壳，本方法产出的字节等 Skia 写完 PDF 后由 <see cref="PdfFontSwap"/> 换进去。
     /// </summary>
     internal static byte[]? SubsetForPdfEmbed(SKTypeface tf, ICollection<int> usedGlyphs)
     {
@@ -87,65 +87,28 @@ public static class TtfSubsetter
         public PdfFontPair? Result;
         /// <summary>只建 <see cref="PdfFontPair.Embed"/>（不建空壳、也不写占位 PS 名）。</summary>
         public bool EmbedOnly;
+        /// <summary>只建 <see cref="PdfFontPair.Hollow"/>（共享壳用；不产出带轮廓的嵌入流）。</summary>
+        public bool HollowOnly;
     }
 
     /// <summary>
-    /// 进程级**全量空壳**：保留源字体的全部 cmap/hmtx/loca（GID 与码位映射与原面逐位一致），
+    /// 进程级**共享空壳**：保留 <paramref name="glyphs"/>（及其复合组件闭包）的 cmap/hmtx 映射，
     /// 但一个轮廓都不留（glyf 4 字节）。它交给 Skia 画字，只需 cmap + 度量，不需要轮廓，
-    /// 于是同一张源字面在**整个进程里只创建一次**，之后每份文档复用同一个原生 typeface——
-    /// 这是「连续出 PDF」降内存的关键：旧做法每份文档按用字集裁一张新空壳（`SubsetForPdf`），
-    /// 一份文档 3~4 张 face、每张都要 `SKData.CreateCopy` + 原生解析 + Skia 侧首次字形分析；
-    /// 内容各异的批量里这些 face 从不复用，白白把原生堆抬高（实测 300 份内容各异：priv 84 MB
-    /// vs 同一模板 44 MB），首字分析也要每份重做一遍。
+    /// 于是同一张源字面在一批文档里可以只创建一次、反复复用——这是「连续出 PDF」降内存的关键：
+    /// 旧做法每份文档按用字集裁一张新空壳（<see cref="SubsetForPdf"/>），每张都要 SKData.CreateCopy +
+    /// 原生解析 + Skia 侧首次字形分析；内容各异的批量里这些 face 从不复用，把原生堆抬高一大截
+    /// （实测 300 份内容各异：priv 84 MB vs 同一模板 44 MB）。
     ///
-    /// 全量空壳只对**不随文档变化的字体**有意义：进程里活着的壳 = 用到的物理字面数（几张），
-    /// 与文档数无关。不适用（CFF/彩色/可变/嵌入受限）返回 null，调用方走整面子集老路径。
+    /// 用字集合取**并集**（调用方维护）：模板反复导出并集收敛，壳不再变；内容确实各异的批量里
+    /// 壳会长大，超过调用方的上限就退回每份文档自裁。空壳始终保 GID，所以长大不影响度量与字形。
+    /// 不适用（CFF/彩色/可变/嵌入受限）返回 null，调用方走整面子集或逐份自裁。
     /// </summary>
-    /// <param name="marker">占位 PostScript 名（每张物理字面一个，跨文档复用）。</param>
-    internal static (byte[] Hollow, string? PsName) ? BuildHollowShell(SKTypeface tf, string marker)
+    /// <param name="marker">占位 PostScript 名（每张壳一个）。Skia 会把它写进 /FontName，换流时据此对号入座。</param>
+    internal static (byte[] Hollow, string? PsName)? BuildHollowShell(SKTypeface tf, string marker, ICollection<int> glyphs)
     {
-        SfntFont? f = null;
-        try
-        {
-            f = SfntFont.Open(tf);
-            if (f == null) return null;
-            if (!f.Has(TagGlyf) || !f.Has(TagLoca) || !f.Has(TagHead) || !f.Has(TagMaxp)) return null;
-            foreach (var t in PdfIneligible) if (f.Has(t)) return null;
-            var os2 = f.Read(Tag("OS/2"));
-            if (os2 != null && os2.Length >= 10)
-            {
-                int fsType = BinaryPrimitives.ReadUInt16BigEndian(os2.AsSpan(8));
-                if ((fsType & 0x0002) != 0 || (fsType & 0x0200) != 0) return null;
-            }
-            int numGlyphs = f.U16(TagMaxp, 4);
-            if (numGlyphs <= 0) return null;
-
-            // 只读「要改写的小表」：cmap 保持全量（空壳必须让每个码位都查到原来的 GID），
-            // name 瘦身 + 换成占位名，post 压到 3.0。glyf 一个字节都不读。
-            var tables = new Dictionary<uint, byte[]>();
-            foreach (var tag in Rewritable)
-            {
-                if (tag == TagHmtx || tag == TagVmtx) continue;   // 全量字形 ⇒ 无需裁剪，直接从源流透传
-                if (!f.Has(tag)) continue;
-                var d = f.Read(tag);
-                if (d == null) return null;
-                tables[tag] = d;
-            }
-            var realName = tables.GetValueOrDefault(TagName);
-            string? ps = realName == null ? null : ReadPsName(realName);
-            if (f.Has(TagPost) && f.Read(TagPost) is { } post) tables[TagPost] = SlimPost(post);
-            PruneName(tables);
-            tables[TagName] = MarkerName(marker);
-
-            // 空壳：keep 全 false（BuildSfnt 内部另置），offs 全零只为签名占位——一个轮廓都不拷。
-            var hollow = BuildSfnt(f, tables, Array.Empty<bool>(), new int[numGlyphs + 1], numGlyphs,
-                BuildOpts.Hollow | BuildOpts.DropLayout);
-            return hollow == null ? null : (hollow, ps);
-        }
-        catch { return null; }
-        finally { f?.Dispose(); }
+        var req = new PdfBuild(marker) { HollowOnly = true };
+        return SubsetCore(tf, glyphs, req) == null ? null : (req.Result!.Hollow, req.Result.PsName);
     }
-
 
     static readonly HashSet<uint> LayoutTables = new()
     {
@@ -263,6 +226,14 @@ public static class TtfSubsetter
                 var realName = tables.GetValueOrDefault(TagName);
                 string? ps = realName == null ? null : ReadPsName(realName);
                 if (f.Has(TagPost) && f.Read(TagPost) is { } post) tables[TagPost] = SlimPost(post);
+                if (pdf.HollowOnly)
+                {
+                    tables[TagName] = MarkerName(pdf.Marker);
+                    var shell = BuildSfnt(f, tables, keep, offs, numGlyphs, BuildOpts.Hollow | BuildOpts.DropLayout);
+                    if (shell == null) return null;
+                    pdf.Result = new PdfFontPair(Array.Empty<byte>(), shell, ps);
+                    return shell;
+                }
                 var embed = BuildSfnt(f, tables, keep, offs, numGlyphs, BuildOpts.DropLayout);
                 if (embed == null) return null;
                 if (pdf.EmbedOnly)

@@ -24,6 +24,10 @@ internal static class PdfFontSwap
         public readonly byte[] Embed = embed;
     }
 
+    /// <summary>换流输出缓冲：线程私有、只增不减。产物紧接着就被 <see cref="PdfEnhancer"/> 拷进交付数组，
+    /// 中间不存在第二次换流，所以复用安全。连续出 PDF 时省掉每份一块「整份 PDF 大小」的 LOH 分配。</summary>
+    [ThreadStatic] static byte[]? tOut;
+
     public static (byte[] Buf, int Len)? Apply(byte[] pdf, int length, IReadOnlyList<Target> targets)
     {
         try { return ApplyCore(pdf, length, targets); }
@@ -138,7 +142,8 @@ internal static class PdfFontSwap
         var xrefBytes = Encoding.Latin1.GetBytes(xref.ToString());
         var tailBytes = Encoding.Latin1.GetBytes("\nstartxref\n" + newXrefOff + "\n%%EOF\n");
 
-        var result = new byte[newXrefOff + xrefBytes.Length + trailerDict.Length + tailBytes.Length];
+        int need = newXrefOff + xrefBytes.Length + trailerDict.Length + tailBytes.Length;
+        var result = tOut != null && tOut.Length >= need ? tOut : (tOut = new byte[need]);
         span[..firstObj].CopyTo(result);
         for (int i = 0; i < order.Length; i++)
         {

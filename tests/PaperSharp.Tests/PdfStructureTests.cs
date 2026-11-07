@@ -54,4 +54,40 @@ public class PdfStructureTests
         // 字体子集化失效（整份雅黑 ~20MB 嵌入）会被这条第一时间抓住；上限留了 m4 多字体的余量
         Assert.True(pdf.Length < 6 * 1024 * 1024, $"{name}.pdf = {pdf.Length / 1024}KB，超过 6MB 预算，疑似子集字体失效");
     }
+
+    /// <summary>
+    /// 连续渲染复用线程私有缓冲（<see cref="PaperSharp.Renderer"/> 的 EncodePdfPages / PdfFontSwap）：
+    /// 交出去的数组必须归调用方独占，后续渲染不能把上一份覆写掉。
+    /// 钉的是「PdfEnhancer 在没有书签/链接可加时会原样返回入参」那条路径——漏了补拷贝，
+    /// 调用方手里的 PDF 会在下一份渲染后悄悄变样（且只在字节数恰好等于缓冲容量时才发作）。
+    /// </summary>
+    [Fact]
+    public void RenderPdf_hands_out_caller_owned_buffer()
+    {
+        var first = PaperSharp.Renderer.RenderPdf("<p>alpha 甲</p>", "");
+        var snapshot = first.ToArray();
+        for (int i = 0; i < 6; i++) PaperSharp.Renderer.RenderPdf($"<p>beta 乙 {i}</p>", "");
+        Assert.Equal(snapshot, first);   // 第一份不能被后来的渲染改写
+
+        var a = PaperSharp.Renderer.RenderPdf("<p>gamma 丙</p>", "");
+        var b = PaperSharp.Renderer.RenderPdf("<p>gamma 丙</p>", "");
+        Assert.Equal(a, b);              // 同输入恒定产物
+        Assert.NotSame(a, b);            // 但两份产物不能共用同一块缓冲
+    }
+
+    /// <summary>复用缓冲的交出口径：Enhance 原样返回入参时必须补拷贝，返回新数组时原样透传（零拷贝）。</summary>
+    [Fact]
+    public void EnsureCallerOwned_copies_only_when_result_aliases_the_pooled_input()
+    {
+        var pooled = new byte[32];
+        pooled[0] = 0x25; pooled[3] = 0x37;   // "%PDF" 的头几个字节，示意
+
+        var owned = PaperSharp.Renderer.EnsureCallerOwned(pooled, pooled, 4);
+        Assert.NotSame(pooled, owned);       // 同一块缓冲 → 必须换一块
+        Assert.Equal(4, owned.Length);       // 且只留有效长度
+        Assert.Equal(new byte[] { 0x25, 0, 0, 0x37 }, owned);
+
+        var fresh = new byte[4];
+        Assert.Same(fresh, PaperSharp.Renderer.EnsureCallerOwned(fresh, pooled, 4));   // 新数组：零拷贝透传
+    }
 }

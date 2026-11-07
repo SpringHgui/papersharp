@@ -18,9 +18,9 @@ namespace PaperSharp.Pdf;
 ///
 /// **空壳 + 换流**（<see cref="UseHollowFaces"/>，默认开）：真绘趟画字的子集 face 不带轮廓，
 /// Skia 写完 PDF 后由 <see cref="PdfFontSwap"/> 把空壳字体流换成带轮廓的子集字体。
-/// 空壳本身是**进程级共享的全量壳**（见 <see cref="TtfSubsetter.BuildHollowShell"/>）：同一张物理字面
-/// 在整个进程里只创建一次、所有文档复用，于是「连续出 PDF」时不再有每份文档的 typeface 创建/销毁；
-/// 每份文档只产出自己那份带轮廓的嵌入子集。
+/// 空壳本身是**进程级共享**的（见 <see cref="TtfSubsetter.BuildHollowShell"/>）：同一张物理字面
+/// 按用字并集建一张壳，之后每份文档复用——「连续出 PDF」不再有每份文档的 typeface 创建/销毁，
+/// 每份只产出自己那份带轮廓的嵌入子集（同模板反复导出时连它都走缓存）。
 /// 只对「朴素文字」生效——凡是要拿轮廓去画的（假粗体、描边、模糊阴影、渐变填充……见 <see cref="NotePaint"/>）、
 /// 走 HarfBuzz 整形的、彩色/可变/CFF/受限的字面，一律保持带轮廓的子集 face；
 /// 换流验证失败则整份文档按带轮廓子集重画（<see cref="RetryWithFullSubsets"/>）。
@@ -35,7 +35,8 @@ public sealed class PdfGlyphUsage : IDisposable
     /// 批量导出内容各异的 2000 份里，每张独有子集只被用一次、永远不会命中，48 张就这么白占 ~172 MB。
     /// 所以：① **第二次命中才准入**（只值一次的子集留在本次渲染的 <see cref="ownedFaces"/> 里当场释放）；
     /// ② LRU 上限 16 张（≈56 MB 封顶），逐出后等最后一个租约归还才 Dispose——并发渲染中直接放掉别人
-    /// 正在用的字面会踩空句柄。同模板反复导出的热子集第二次起常驻，速度收益一点不丢。</summary>
+    /// 正在用的字面会踩空句柄。同模板反复导出的热子集第二次起常驻，速度收益一点不丢。
+    /// 空壳路径不再用这张表：它常驻的是共享壳，嵌入流另有 <see cref="EmbedCache"/>。</summary>
     static readonly List<CachedSubset> Cache = new();
 
     /// <summary>第一趟见过的子集指纹；第二次出现才准进 <see cref="Cache"/>。只存 4 字节，量级 = 批内不同子集数。</summary>
@@ -50,24 +51,45 @@ public sealed class PdfGlyphUsage : IDisposable
     }
 
     /// <summary>
-    /// 进程级共享的**全量空壳**：一张物理字面一个。字段全是只读的，跨线程跨文档复用；
-    /// <see cref="Length"/> 是 Skia 会写进 PDF 的 <c>/Length1</c>，换流时用它核对流，
-    /// <see cref="Embed"/> 则每份文档不同（只含本份用字），由 <see cref="Subsets"/> 里各份自己的条目持有。
+    /// 进程级共享的**空壳**：一张物理字面一个，覆盖「到目前为止见过的用字并集」。
+    /// 模板反复导出时并集收敛、壳不再变；内容确实各异的批量里壳会长大，
+    /// 超过 <see cref="ShellGlyphCap"/> 就退回逐份自裁（见 <see cref="BuildSubsets"/>）。
     /// </summary>
-    sealed class Shell(SKTypeface face, string marker, int length, string? psName)
+    sealed class Shell(SKTypeface face, string marker, int length, string? psName, HashSet<int> covered)
     {
         public readonly SKTypeface Face = face;
         public readonly string Marker = marker;
-        public readonly int Length = length;
+        public readonly int Length = length;      // Skia 写进 PDF 的 /Length1，换流时用它核对流
         public readonly string? PsName = psName;
+        public readonly HashSet<int> Covered = covered;
+        public int Users;                          // 租约：正在用它的渲染数
+        public bool Dying;                         // 已被更大的壳替换，等租约归零再 Dispose
     }
 
-    /// <summary>字面身份 → 常驻空壳。键是物理字面，条目数与**文档数无关**（一张字体一条）。
-    /// 壳的字体流 ~30–80KB（cmap/hmtx/loca 全量、glyf 空），比按用字集裁的小壳略大，但只建一次。</summary>
+    /// <summary>字面身份 → 常驻空壳。键是物理字面，条目数与**文档数无关**（一张字体一条）。</summary>
     static readonly Dictionary<FaceKey, Shell> Shells = new();
     static readonly object ShellLock = new();
     /// <summary>壳表上限：宿主若动态注册成百上千张字体，别让空壳把内存占满——超过即退回每份文档自裁。</summary>
     const int ShellCap = 64;
+    /// <summary>单张壳最多覆盖多少字形：内容完全各异的批量里壳会一路长大，超过它就退回逐份自裁
+    /// （逐份自裁＝旧行为：正确但每份一个原生字面）。2048 ≈ 常见报表/发票用字的上限。</summary>
+    const int ShellGlyphCap = 2048;
+
+    /// <summary>「同模板反复导出」的嵌入子集缓存：键 = 字面身份 + 用字集合，值 = 那份带轮廓的字体程序（几十 KB）。
+    /// 常驻的是**字节**不是 typeface——旧缓存在这里存整张子集 face（≈0.6MB 原生 + 加载开销），
+    /// 现在画字一律用共享壳，缓存只需留下嵌入流，同样省掉重复导出的裁字开销，代价小一个量级。
+    /// 与旧子集缓存同一条准入规则：**第二次命中才准入**。内容各异的批量里每份的用字集合只出现一次，
+    /// 无条件缓存等于把 4MB 预算全换成死条目；同模板反复导出第二次起仍稳定命中，收益不变。</summary>
+    static readonly List<EmbedEntry> EmbedCache = new();
+    static readonly HashSet<uint> EmbedSeen = new();
+    const long EmbedCacheBytes = 4L << 20;
+
+    sealed class EmbedEntry(FaceKey face, int[] kept, byte[] embed)
+    {
+        public readonly FaceKey Face = face;
+        public readonly int[] Kept = kept;
+        public readonly byte[] Embed = embed;
+    }
 
     /// <summary>字面身份的算法与判定见 <see cref="Layout.FaceIdentity"/>：族名+字重+字宽+倾斜档+字形数+head 校验和。</summary>
     static FaceKey KeyOf(SKTypeface tf) => Layout.FaceIdentity.Of(tf);
@@ -79,6 +101,7 @@ public sealed class PdfGlyphUsage : IDisposable
     readonly HashSet<FaceKey> outlineKeys = new();  // 被画成非朴素文字的字面：必须带轮廓，不走空壳
     readonly List<SKTypeface> ownedFaces = new();   // 未进全局缓存的子集 face：本次渲染独占，Dispose 释放
     readonly List<CachedSubset> borrowed = new();   // 从全局缓存取用的字面：Dispose 时归还租约
+    readonly List<Shell> borrowedShells = new();    // 从共享壳表取用的壳：Dispose 时归还租约
     readonly PdfGlyphUsage? outer;
     bool hollowOff;   // 本次渲染放弃空壳方案（换流失败后重画时置位）
 
@@ -86,27 +109,42 @@ public sealed class PdfGlyphUsage : IDisposable
     static int hollowSeq;
     static string NextMarker() => "PSK" + Interlocked.Increment(ref hollowSeq);
 
-    /// <summary>一个字面身份对应的绘制 face。走空壳时 <see cref="Face"/> 是**进程共享**的全量壳
-    /// （不要 Dispose），<see cref="Embed"/> 是本份文档的带轮廓嵌入子集，等 Skia 写完 PDF 后换进流里。</summary>
+    /// <summary>一个字面身份对应的绘制 face。走空壳时 <see cref="Face"/> 是**共享壳或逐份空壳**
+    /// （都没有轮廓），<see cref="Target"/> 记着本份文档该换进去的带轮廓嵌入子集。</summary>
     sealed class SubsetEntry(SKTypeface face, HashSet<int> kept)
     {
         public readonly SKTypeface Face = face;
         public readonly HashSet<int> Kept = kept;
-        public Shell? Shell;              // 非空 = 走空壳路径（Face 是共享壳）
-        public byte[]? Embed;             // 本份文档的嵌入字体程序（带轮廓）；空壳路径才有
+        public Shell? Shell;              // 非空 = 画的是进程共享壳（Dispose 时归还租约）
+        public EmbedTarget? Target;       // 非空 = 画的是空壳，Skia 写完后要换流
         public bool Drawn;                // 真绘趟里确实用这张 face 落过笔
         public SKTypeface? OutlineFace;   // 贴着页/裁剪边的文字改用它（带轮廓，见 NearClipEdge）
+        public bool Hollowed => Target != null;
+        public bool NeedsSwap => Target != null && Drawn;
+    }
 
-        /// <summary>需要换流：画的是空壳，且本份确实落了笔。</summary>
-        public bool NeedsSwap => Shell != null && Drawn && Embed != null;
+    /// <summary>一次换流的全部参数：占位名、Skia 会写下的空壳流长度、真名、以及本份文档的嵌入字节。</summary>
+    sealed class EmbedTarget(string marker, int hollowLength, string? psName, byte[] embed)
+    {
+        public readonly string Marker = marker;
+        public readonly int HollowLength = hollowLength;
+        public readonly string? PsName = psName;
+        public readonly byte[] Embed = embed;
     }
 
     /// <summary>
-    /// 空壳 + 换流方案（见 <see cref="TtfSubsetter.SubsetForPdf"/>）的总开关。默认开：Windows/DirectWrite 上
+    /// 空壳 + 换流方案的总开关。默认开：Windows/DirectWrite 上
     /// Skia 对每个新 typeface 的每个新 CJK 字形要花 ~250µs，批量导出时这一项占单份耗时的三成以上。
     /// 关掉即退回「带轮廓子集 face 直接画」——两条路的页面内容流逐字节相同，只有字体流不同。
     /// </summary>
     public static bool UseHollowFaces { get; set; } = true;
+
+    /// <summary>
+    /// 空壳是否跨文档共享（默认开）。关掉即退回「每份文档按自己的用字集裁一张空壳」的旧行为：
+    /// 产物逐字节相同，但每份文档都要建一张原生 typeface——内容各异的批量里这是内存大头。
+    /// 保留开关是为了 A/B 对照与极端宿主的兜底（`PS_SHELLS=0`）。
+    /// </summary>
+    public static bool UseSharedShells { get; set; } = Environment.GetEnvironmentVariable("PS_SHELLS") != "0";
 
     [ThreadStatic] static bool? hollowOverride;
 
@@ -129,7 +167,7 @@ public sealed class PdfGlyphUsage : IDisposable
     public static PdfGlyphUsage? Current => cur;
 
     [ThreadStatic] internal static long cDrawText, cNearClip, cRecordString;   // 调试计数（PS_COUNTS）
-    [ThreadStatic] internal static double tMeasureMs, tClipMs, tMatrixMs;   // NearClipEdge 内部计时累计
+    // NearClipEdge 是热路径：这里刻意不留任何计时/日志（旧代码每次落笔都 new 一个 Stopwatch）。
 
     /// <summary>本线程正在录制字形（录制趟与带子集的真绘趟都为 true）。</summary>
     public bool Recording { get; private set; } = true;
@@ -162,6 +200,13 @@ public sealed class PdfGlyphUsage : IDisposable
                 if (--c.Users == 0 && c.Dying) c.Subset.Dispose();
         }
         borrowed.Clear();
+        // 共享壳同理：被更大的壳替换掉的那张，等最后一个用户归还才 Dispose。
+        lock (ShellLock)
+        {
+            foreach (var s in borrowedShells)
+                if (--s.Users == 0 && s.Dying) s.Face.Dispose();
+        }
+        borrowedShells.Clear();
     }
 
     /// <summary>录制趟结束 → 按用字集合建子集 face（进程级缓存命中则零成本）。
@@ -177,23 +222,30 @@ public sealed class PdfGlyphUsage : IDisposable
             // 贴边文字与非朴素笔触（录制趟已定论）必须带轮廓，所以只有它们「不想要空壳」。
             bool wantHollow = HollowEnabled && !hollowOff && !outlineKeys.Contains(key) && !shapedKeys.Contains(key);
 
-            // ① 空壳路：画字用进程级共享的全量壳（零 typeface 创建），本份只产出带轮廓的嵌入子集。
+            // ① 空壳路：画字用（进程级共享的）空壳，本份只产出带轮廓的嵌入子集。
             if (wantHollow)
             {
-                var shell = ShellFor(key, tf);
+                var shell = UseSharedShells ? ShellFor(key, tf, set) : null;
                 if (shell != null)
                 {
-                    var embed = TtfSubsetter.SubsetForPdfEmbed(tf, set);
+                    var embed = EmbedFor(key, tf, set, sorted);
                     if (embed != null)
                     {
                         Subsets[key] = new SubsetEntry(shell.Face, new HashSet<int>(sorted))
                         {
-                            Shell = shell, Embed = embed,
+                            Shell = shell,
+                            Target = new EmbedTarget(shell.Marker, shell.Length, shell.PsName, embed),
                         };
                         continue;
                     }
                 }
-                // 壳不适用（CFF/彩色/受限）或嵌入子集裁不出来：落到下面的带轮廓子集路径。
+                // 共享壳不适用/超限，或嵌入子集裁不出来：逐份自裁一张空壳（旧行为，正确但每份一个原生字面）。
+                if (PerDocHollow(tf, set, sorted) is { } perDoc)
+                {
+                    Subsets[key] = perDoc;
+                    continue;
+                }
+                // 连逐份空壳都建不出来（CFF/彩色/受限）：落到下面的带轮廓子集路径。
             }
 
             // ② 带轮廓子集路：每份文档一张 face。只值一次的子集不常驻（见 Cache 注释）。
@@ -252,29 +304,101 @@ public sealed class PdfGlyphUsage : IDisposable
     }
 
     /// <summary>
-    /// 取（或建）这张物理字面的**进程级全量空壳**。建一次、所有文档复用：批量导出时省掉每份文档
-    /// 一个 <c>SKTypeface</c>（原生字体流 + 解析 + Skia 首次字形分析），这是连续出 PDF 时原生堆
-    /// 与单份耗时的主要差别（见 <see cref="TtfSubsetter.BuildHollowShell"/>）。
-    /// 不适用（CFF/彩色/可变/嵌入受限）或壳表已到上限返回 null，调用方走带轮廓子集老路径。
+    /// 取（或建）这张物理字面的共享空壳：覆盖集合必须包含本份的全部用字，否则按**并集**重建一张更大的。
+    /// 模板反复导出时第二次起全命中（零 typeface 创建）；内容各异的批量里并集缓慢长大，
+    /// 到 <see cref="ShellGlyphCap"/> 就放弃共享、退回逐份自裁。
+    /// 旧壳不立刻 Dispose——并发渲染可能还在拿它画字，等租约归零（见 <see cref="Dispose"/>）。
     /// </summary>
-    Shell? ShellFor(FaceKey key, SKTypeface tf)
+    Shell? ShellFor(FaceKey key, SKTypeface tf, HashSet<int> set)
     {
         lock (ShellLock)
         {
-            if (Shells.TryGetValue(key, out var hit)) return hit;
-            if (Shells.Count >= ShellCap) return null;
+            if (Shells.TryGetValue(key, out var cur) && cur.Covered.IsSupersetOf(set))
+            {
+                cur.Users++;
+                borrowedShells.Add(cur);
+                return cur;
+            }
+            if (cur == null && Shells.Count >= ShellCap) return null;
+
+            var union = cur == null ? new HashSet<int>(set) : new HashSet<int>(cur.Covered);
+            union.UnionWith(set);
+            if (union.Count > ShellGlyphCap) return null;
+
             string marker = NextMarker();
-            if (TtfSubsetter.BuildHollowShell(tf, marker) is not { } built) return null;
+            if (TtfSubsetter.BuildHollowShell(tf, marker, union) is not { } built) return null;
             var face = SKTypeface.FromData(SKData.CreateCopy(built.Hollow));
             if (face == null) return null;
-            var shell = new Shell(face, marker, built.Hollow.Length, built.PsName);
+            var shell = new Shell(face, marker, built.Hollow.Length, built.PsName, union) { Users = 1 };
             Shells[key] = shell;
+            borrowedShells.Add(shell);
+            if (cur != null)
+            {
+                cur.Dying = true;
+                if (cur.Users == 0) cur.Face.Dispose();
+            }
             return shell;
         }
     }
 
+    /// <summary>逐份自裁的空壳（共享壳不可用时）：一张 face ＋ 一对 Hollow/Embed 字节，归本次渲染独占。</summary>
+    SubsetEntry? PerDocHollow(SKTypeface tf, HashSet<int> set, int[] sorted)
+    {
+        string marker = NextMarker();
+        var pair = TtfSubsetter.SubsetForPdf(tf, set, marker);
+        if (pair == null) return null;
+        var face = SKTypeface.FromData(SKData.CreateCopy(pair.Hollow));
+        if (face == null) return null;
+        ownedFaces.Add(face);
+        return new SubsetEntry(face, new HashSet<int>(sorted))
+        {
+            Target = new EmbedTarget(marker, pair.Hollow.Length, pair.PsName, pair.Embed),
+        };
+    }
+
+    /// <summary>
+    /// 本份文档的**嵌入字体程序**（带轮廓、去排版表）。同一模板反复导出时用字集合恒定，
+    /// 直接吃进程级缓存（命中率 = 重复率），一次几十 KB 的裁剪、cmap 收口、校验和全部省掉。
+    /// 未命中就现裁并放进缓存；缓存按字节封顶，内容各异的批量里它只是个小 LRU，不会变成常驻负担。
+    /// </summary>
+    static byte[]? EmbedFor(FaceKey key, SKTypeface tf, HashSet<int> set, int[] sorted)
+    {
+        lock (EmbedCache)
+        {
+            for (int i = 0; i < EmbedCache.Count; i++)
+            {
+                var e = EmbedCache[i];
+                if (e.Face != key || e.Kept.Length != sorted.Length) continue;
+                if (!e.Kept.AsSpan().SequenceEqual(sorted)) continue;
+                if (i != EmbedCache.Count - 1)   // LRU：命中的挪到队尾
+                {
+                    EmbedCache.RemoveAt(i);
+                    EmbedCache.Add(e);
+                }
+                return e.Embed;
+            }
+        }
+        var bytes = TtfSubsetter.SubsetForPdfEmbed(tf, set);
+        if (bytes == null) return null;
+        uint sig = Stamp(key, sorted);
+        lock (EmbedCache)
+        {
+            if (EmbedSeen.Count > 65_536) EmbedSeen.Clear();
+            if (EmbedSeen.Add(sig)) return bytes;   // 首次出现：不常驻（内容各异的批量里这就是全部）
+            long total = 0;
+            foreach (var e in EmbedCache) total += e.Embed.Length;
+            while (EmbedCache.Count > 0 && total + bytes.Length > EmbedCacheBytes)
+            {
+                total -= EmbedCache[0].Embed.Length;
+                EmbedCache.RemoveAt(0);
+            }
+            EmbedCache.Add(new EmbedEntry(key, sorted, bytes));
+        }
+        return bytes;
+    }
+
     /// <summary>真绘用到的空壳是否存在（存在才需要换流）。</summary>
-    public bool HasHollow => Subsets.Values.Any(e => e.Shell != null);
+    public bool HasHollow => Subsets.Values.Any(e => e.Hollowed);
 
     /// <summary>
     /// Skia 写完 PDF 后，把空壳字体流换成带轮廓的子集字体。返回 null = 换不成（任何一张用到的空壳没被找到或对不上），
@@ -285,8 +409,8 @@ public sealed class PdfGlyphUsage : IDisposable
         var targets = new List<PdfFontSwap.Target>();
         foreach (var e in Subsets.Values)
             if (e.NeedsSwap)
-                targets.Add(new PdfFontSwap.Target(e.Shell!.Marker, e.Shell.PsName ?? "Font" + e.Shell.Marker,
-                    e.Shell.Length, e.Embed!));
+                targets.Add(new PdfFontSwap.Target(e.Target!.Marker, e.Target.PsName ?? "Font" + e.Target.Marker,
+                    e.Target.HollowLength, e.Target.Embed));
         if (targets.Count == 0) return (pdf, length);
         var swapped = PdfFontSwap.Apply(pdf, length, targets);
         if (swapped != null) { Interlocked.Increment(ref swapOk); threadSwaps++; }
@@ -341,33 +465,32 @@ public sealed class PdfGlyphUsage : IDisposable
     /// <summary>原 face → 子集 face；无子集（CFF/没用到）时原样返回。</summary>
     public SKTypeface Map(SKTypeface tf) => Subsets.TryGetValue(KeyOf(tf), out var e) ? e.Face : tf;
 
-    static readonly Dictionary<SKTypeface, bool> ColorFont = new(ReferenceEqualityComparer.Instance);
+    // 字面 → 是否带位图/外矢量彩表层。用 ConditionalWeakTable 而不是字典：字面被释放/回收时条目
+    // 跟着走，不会把这个进程级表变成钉住原生字体流的根（批量导出里每份文档的字面都不同）。
+    sealed class BoolBox(bool value) { public readonly bool Value = value; }
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SKTypeface, BoolBox> ColorFont = new();
 
     /// <summary>
     /// 带**位图/外矢量**彩色表层的字体（CBDT/sbix/SVG）：裁剪后重建的 face 不再被识别为彩色字体，
     /// 必须整嵌。COLR 不在此列——它的图层字形闭包由 <see cref="TtfSubsetter"/> 的 COLR v1 路处理。
     /// </summary>
-    static bool HasBitmapColorTables(SKTypeface tf)
+    static bool HasBitmapColorTables(SKTypeface tf) => ColorFont.GetValue(tf, static t => new BoolBox(ScanColorTables(t))).Value;
+
+    static bool ScanColorTables(SKTypeface tf)
     {
-        lock (ColorFont)
+        try
         {
-            if (ColorFont.TryGetValue(tf, out var hit)) return hit;
-            bool v = false;
-            try
+            foreach (var tag in tf.GetTableTags())
             {
-                foreach (var tag in tf.GetTableTags())
+                string n = new string(new[]
                 {
-                    string n = new string(new[]
-                    {
-                        (char)((tag >> 24) & 0xFF), (char)((tag >> 16) & 0xFF), (char)((tag >> 8) & 0xFF), (char)(tag & 0xFF),
-                    });
-                    if (n is "CBDT" or "sbix" or "SVG ") { v = true; break; }
-                }
+                    (char)((tag >> 24) & 0xFF), (char)((tag >> 16) & 0xFF), (char)((tag >> 8) & 0xFF), (char)(tag & 0xFF),
+                });
+                if (n is "CBDT" or "sbix" or "SVG ") return true;
             }
-            catch { v = true; }   // 读表失败 → 保守不裁
-            ColorFont[tf] = v;
-            return v;
         }
+        catch { return true; }   // 读表失败 → 保守不裁
+        return false;
     }
 
     // ── 绘制点统一走这两个静态入口（PNG 路径 cur==null，全部直过）──────
@@ -394,9 +517,13 @@ public sealed class PdfGlyphUsage : IDisposable
         if (u.SubsetsBuilt && u.Subsets.TryGetValue(KeyOf(tf), out var e))
         {
             var face = e.Face;
-            if (e.Shell != null)
+            if (e.Hollowed)
             {
-                if (NearClipEdge(canvas, font, paint, text, x, y)) face = u.OutlineFaceOf(e);
+                // 录制趟已定论：这张字面**从没有**贴边文字，真绘趟就不必再逐串判一遍
+                // （绘制调用与录制趟逐字同参，判据必然同结论）。贴边判定含原生裁剪/矩阵读取与
+                // 整串推进量算，是 PDF 绘制段里最贵的一处，正常情况下这一步把它整段省掉。
+                if (u.outlineKeys.Contains(KeyOf(tf)) && NearClipEdge(canvas, font, paint, text, x, y))
+                    face = u.OutlineFaceOf(e);
                 else e.Drawn = true;
             }
             var old = font.Typeface;
@@ -422,16 +549,12 @@ public sealed class PdfGlyphUsage : IDisposable
     static bool NearClipEdge(SKCanvas canvas, SKFont font, SKPaint paint, string text, float x, float y)
     {
         cNearClip++;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
         if (text.AsSpan().Trim().IsEmpty) return false;   // 纯空白不落墨，换不换 face 都一样
         var m = canvas.TotalMatrix;
-        tMatrixMs += sw.Elapsed.TotalMilliseconds; sw.Restart();
         if (m.SkewX != 0 || m.SkewY != 0 || m.Persp0 != 0 || m.Persp1 != 0 || m.Persp2 != 1) return true;
         var clip = canvas.LocalClipBounds;
-        tClipMs += sw.Elapsed.TotalMilliseconds; sw.Restart();
         var tf = font.Typeface ?? SKTypeface.Default;
         float lastOrigin = x + Layout.AdvanceTable.Sum(tf, font.Size, text);   // 末字形原点不会超过整串的推进终点
-        tMeasureMs += sw.Elapsed.TotalMilliseconds; sw.Restart();
         bool insideY = y >= clip.Top + 1 && y <= clip.Bottom - 1;
         if (x >= clip.Left + 1 && lastOrigin <= clip.Right - 1 && insideY) return false;
         // 只从右端溢出：左起文字（DrawText 不走整形，全是 LTR）的原点在外时墨迹继续往右，两条路都会剔。
@@ -439,7 +562,6 @@ public sealed class PdfGlyphUsage : IDisposable
         if (insideY && x >= clip.Left + 1)
         {
             float lastGlyphOrigin = text.Length > 1 ? x + Layout.AdvanceTable.Sum(tf, font.Size, text[..^1]) : x;
-            tMeasureMs += sw.Elapsed.TotalMilliseconds;
             return lastGlyphOrigin > clip.Right - 1 && lastGlyphOrigin < clip.Right + Math.Max(font.Size, 4);
         }
         // 左/上/下溢或横跨整块：墨迹还可能伸回区内就要带轮廓；整串墨迹都在区外则两条路都剔，继续用空壳。
@@ -447,7 +569,6 @@ public sealed class PdfGlyphUsage : IDisposable
         // 差出 0.45px 级，贴边判定会翻面（challenge 一处 marker 3px 光栅差）。该分支只在贴边文字
         // 才走到，原生取度量的次数远低于逐串量宽。
         var fm = font.Metrics;
-        tMeasureMs += sw.Elapsed.TotalMilliseconds;
         float top = y + fm.Ascent - 2, bottom = y + fm.Descent + 2, left = x - 2, right = lastOrigin + 2;
         return !(right < clip.Left || left > clip.Right || bottom < clip.Top || top > clip.Bottom);
     }
@@ -456,7 +577,7 @@ public sealed class PdfGlyphUsage : IDisposable
     SKTypeface OutlineFaceOf(SubsetEntry e)
     {
         if (e.OutlineFace != null) return e.OutlineFace;
-        var f = SKTypeface.FromData(SKData.CreateCopy(e.Embed ?? Array.Empty<byte>()));
+        var f = SKTypeface.FromData(SKData.CreateCopy(e.Target?.Embed ?? Array.Empty<byte>()));
         if (f == null) { Violated = true; return e.Face; }   // 建不出来：整趟作废，调用方退回整面字体重绘
         ownedFaces.Add(f);
         e.OutlineFace = f;

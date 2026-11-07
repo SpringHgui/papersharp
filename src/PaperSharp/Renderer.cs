@@ -54,9 +54,11 @@ public static class Renderer
         //   ①录制趟——同一套 PagePainter 往 scratch 画布空跑，记下每张 face 真正画过的字形；
         //   ②真绘趟——字体换成只含这些字形的子集 face（GID 保持，度量/shaping 零漂移），Skia 只嵌这点字节。
         // 真绘趟逐字继续校验：见到录制趟没见过的字形即整趟作废、退回原始字体重绘（预期永不触发）。
-        // 默认再进一步（<see cref="Pdf.PdfGlyphUsage.UseHollowFaces"/>）：真绘趟用的子集 face 是**无轮廓空壳**，
+        // 默认再进一步（<see cref="Pdf.PdfGlyphUsage.UseHollowFaces"/>）：真绘趟画字用的是**无轮廓空壳**，
         // Skia 写完文件后由 <see cref="Pdf.PdfFontSwap"/> 把空壳字体流换成带轮廓的子集字体——Skia 对带轮廓 face 的
         // 每个新字形都要做一次光栅度量，且要把整张 face 再 deflate 一遍，这两项合计占单份耗时的三成以上。
+        // 空壳本身跨文档共享（<see cref="Pdf.PdfGlyphUsage.UseSharedShells"/>）：连续出 PDF 时同一张物理字面
+        // 只建一次壳，不再每份新建一个原生 typeface（内容各异的批量里这是内存与耗时的大头）。
         using var usage = Pdf.PdfGlyphUsage.Begin();
         double tRecord0 = sw?.Elapsed.TotalMilliseconds ?? 0;
         // 设备页 = pt，绘制前把画布整体折到 pt（0.75），于是 Painter 与 PNG 路径一样按 CSS px 记账。
@@ -101,47 +103,82 @@ public static class Renderer
         // Skia 不出 outline/Annots：用 PDF 增量更新在尾部补书签与链接注释（失败自动原样返回）
         double tEncodeEnd = sw?.Elapsed.TotalMilliseconds ?? 0;
         long aSubset = StageProbe ? GC.GetAllocatedBytesForCurrentThread() : 0;
-        var pdf = Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx);
+        var pdf = EnsureCallerOwned(
+            Pdf.PdfEnhancer.Enhance(raw, rawLen, outlines, links, spec.PdfPageH, PageSpec.PtPerPx), raw, rawLen);
         if (StageProbe)
         {
             double total = sw!.Elapsed.TotalMilliseconds;
             long aEnd = GC.GetAllocatedBytesForCurrentThread();
             double enc = tEncodeEnd - tSubset;
-            Console.Error.WriteLine($"PSSTAGE parse={(aParse - a0) / 1024}K build={(aBuild - aParse) / 1024}K pag={(aPag - aBuild) / 1024}K"
-                + $" | build={tBuild:F1} pag={tPagMs:F1} record={tRecord1 - tRecord0:F1} subset={tSubset - tRecord1:F1}"
+            Console.Error.WriteLine($"PSSTAGE alloc parse={(aParse - a0) / 1024}K build={(aBuild - aParse) / 1024}K pag={(aPag - aBuild) / 1024}K"
+                + $" | build={tBuild:F1} pag={tPagMs - tBuild:F1} record={tRecord1 - tRecord0:F1} subset={tSubset - tRecord1:F1}"
                 + $" paint={tPaintMs ?? 0:F1} close={tCloseMs ?? 0:F1} swap={enc - (tPaintMs ?? 0) - (tCloseMs ?? 0):F1}"
                 + $" enhance={total - tEncodeEnd:F1} total={total:F1}"
-                + $" | alloc sub={(aSubset - aPag) / 1024}K enh={(aEnd - aSubset) / 1024}K");
+                + $" | bytes sub={(aSubset - aPag) / 1024}K enh={(aEnd - aSubset) / 1024}K"
+                + $" | nearclip={Pdf.PdfGlyphUsage.cNearClip}");
         }
         return pdf;
     }
+
+    /// <summary>
+    /// 把「最终 PDF」换成调用方独占的数组：<see cref="Pdf.PdfEnhancer.Enhance"/> 在没有书签/链接可加
+    /// （或找不到可挂载位置）时会**原样返回入参**，而入参现在是线程私有的复用缓冲
+    /// （见 <see cref="EncodePdfPages"/> 与 <see cref="Pdf.PdfFontSwap"/> 的输出缓冲）——
+    /// 直接交出去，同一线程渲染下一份时会把调用方手里的上一份 PDF 覆写掉。只有这一种情况才补拷贝，
+    /// 正常路径（增量段真的写进去了）本来就返回新数组，零成本。
+    /// </summary>
+    internal static byte[] EnsureCallerOwned(byte[] result, byte[] pooledInput, int length)
+        => ReferenceEquals(result, pooledInput) ? pooledInput.AsSpan(0, length).ToArray() : result;
+
+    /// <summary>线程私有的 PDF 编码缓冲：容量只增不减，连续出 PDF 时不再每份都新分配一块「够大」的
+    /// 字节数组（MemoryStream 会按 2× 翻倍，一份 0.3MB 的产物配到 0.5MB 缓冲，全是 LOH 垃圾）。
+    /// 缓冲区在返回后立刻被 <see cref="Pdf.PdfFontSwap"/>/<see cref="Pdf.PdfEnhancer"/> 拷走，
+    /// 而这两个调用与下一次 <c>EncodePdfPages</c> 之间不存在嵌套渲染，故复用安全（重入时另开一块）。</summary>
+    [ThreadStatic] static MemoryStream? tPdfStream;
+    [ThreadStatic] static bool tPdfStreamBusy;
 
     /// <summary>
     /// 返回**装箱器内部缓冲 + 有效长度**（不是 <c>ToArray()</c> 的新数组）：Enhance 会把
     /// 「原文件 + 增量段」一次性分配到位，于是整份 PDF 从编码到交付只复制一次。
     /// 旧路径是 MemoryStream(容量可能翻倍) → ToArray 再复制一份 → Enhance 里 Latin1 再变成 2×字符 → 又一份
     /// 结果数组，一份 2.4MB 的文档在峰值上要同时活着 5 份等价物。
+    /// 现在缓冲再跨文档复用（线程私有、只增不减），LOH 上的每份垃圾降到只剩最终交付的那一份。
     /// </summary>
     static (byte[] Buf, int Len) EncodePdfPages(List<Page> pages, PageSpec spec, SKDocumentPdfMetadata meta)
     {
-        using var ms = new MemoryStream();
-        var sw = StageProbe ? System.Diagnostics.Stopwatch.StartNew() : null;
-        using (var pdfDoc = SKDocument.CreatePdf(ms, meta))
+        bool own = tPdfStream == null || tPdfStreamBusy;
+        var ms = own ? new MemoryStream() : tPdfStream!;
+        bool leased = !tPdfStreamBusy;
+        if (leased) tPdfStreamBusy = true;
+        if (!own) ms.SetLength(0);          // 复用：保留容量，只重置长度
+        try
         {
-            for (int i = 0; i < pages.Count; i++)
+            var sw = StageProbe ? System.Diagnostics.Stopwatch.StartNew() : null;
+            using (var pdfDoc = SKDocument.CreatePdf(ms, meta))
             {
-                using var canvas = pdfDoc.BeginPage(spec.PdfPageW, spec.PdfPageH);
-                canvas.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);   // 布局 px → 纸面 pt
-                PagePainter.PaintPage(canvas, pages[i], spec.PageW, spec.PageH);
-                MarginBoxRenderer.Render(canvas, spec, i + 1, pages.Count); // 页眉/页脚 + 页码
-                pdfDoc.EndPage();
+                for (int i = 0; i < pages.Count; i++)
+                {
+                    using var canvas = pdfDoc.BeginPage(spec.PdfPageW, spec.PdfPageH);
+                    canvas.Scale(PageSpec.PtPerPx, PageSpec.PtPerPx);   // 布局 px → 纸面 pt
+                    PagePainter.PaintPage(canvas, pages[i], spec.PageW, spec.PageH);
+                    MarginBoxRenderer.Render(canvas, spec, i + 1, pages.Count); // 页眉/页脚 + 页码
+                    pdfDoc.EndPage();
+                }
+                tPaintMs = sw?.Elapsed.TotalMilliseconds;
+                pdfDoc.Close();
+                tCloseMs = (sw?.Elapsed.TotalMilliseconds ?? 0) - (tPaintMs ?? 0);
             }
-            tPaintMs = sw?.Elapsed.TotalMilliseconds;
-            pdfDoc.Close();
-            tCloseMs = (sw?.Elapsed.TotalMilliseconds ?? 0) - (tPaintMs ?? 0);
+            if (ms.TryGetBuffer(out var seg) && seg.Offset == 0 && seg.Array != null) return (seg.Array, (int)ms.Length);
+            return (ms.ToArray(), (int)ms.Length);
         }
-        if (ms.TryGetBuffer(out var seg) && seg.Offset == 0 && seg.Array != null) return (seg.Array, (int)ms.Length);
-        return (ms.ToArray(), (int)ms.Length);
+        finally
+        {
+            if (leased)
+            {
+                tPdfStream = ms;            // 只保留一块（重入时那块自生自灭）
+                tPdfStreamBusy = false;
+            }
+        }
     }
 
     /// <summary>
