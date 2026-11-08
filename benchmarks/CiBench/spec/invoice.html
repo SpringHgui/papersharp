@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>CI 基准 · 单页发票</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "Noto Sans SC", "PingFang SC", sans-serif;
+    font-size: 12px; color: #1f2937; margin: 0; line-height: 1.6;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; color: #111827; letter-spacing: 2px; }
+  .sub { color: #6b7280; font-size: 11px; margin-bottom: 18px; }
+  .rule { height: 3px; background: #2563eb; margin-bottom: 20px; }
+  .meta { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  .meta td { padding: 5px 8px; border: 1px solid #e5e7eb; }
+  .meta .k { width: 18%; background: #f3f4f6; color: #374151; }
+  table.items { width: 100%; border-collapse: collapse; }
+  table.items th {
+    background: #1e40af; color: #fff; text-align: left;
+    padding: 8px; font-size: 11px; font-weight: normal;
+  }
+  table.items td { padding: 7px 8px; border-bottom: 1px solid #e5e7eb; }
+  table.items tr:nth-child(even) td { background: #f9fafb; }
+  table.items .num { text-align: right; }
+  table.items tfoot td { border-top: 2px solid #1e40af; font-weight: bold; padding: 10px 8px; }
+  .total { font-size: 16px; color: #b91c1c; }
+  .note { margin-top: 22px; padding: 10px 12px; background: #f3f4f6; color: #4b5563; font-size: 11px; }
+  .foot { margin-top: 26px; text-align: right; color: #9ca3af; font-size: 10px; }
+</style>
+</head>
+<body>
+  <h1>增值税普通发票</h1>
+  <div class="sub">INVOICE · CI 性能测试基准语料 · 单页 A4</div>
+  <div class="rule"></div>
+
+  <table class="meta">
+    <tr><td class="k">发票号码</td><td>INV-2026-000184</td><td class="k">开票日期</td><td>2026 年 11 月 08 日</td></tr>
+    <tr><td class="k">购买方</td><td>示例科技（上海）有限公司</td><td class="k">纳税人识别号</td><td>91310000MA1FL0XX0A</td></tr>
+    <tr><td class="k">销售方</td><td>云枢信息技术服务有限公司</td><td class="k">开户行</td><td>招商银行上海分行营业部</td></tr>
+  </table>
+
+  <table class="items">
+    <thead>
+      <tr><th style="width:6%">序号</th><th style="width:42%">项目名称</th><th style="width:12%">规格</th><th style="width:10%">数量</th><th style="width:15%">单价（元）</th><th style="width:15%">金额（元）</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>01</td><td>企业级文档渲染引擎授权</td><td>标准版</td><td class="num">1</td><td class="num">12,800.00</td><td class="num">12,800.00</td></tr>
+      <tr><td>02</td><td>并发导出模块</td><td>8 核</td><td class="num">2</td><td class="num">3,600.00</td><td class="num">7,200.00</td></tr>
+      <tr><td>03</td><td>中文字体子集化服务</td><td>年度</td><td class="num">1</td><td class="num">2,400.00</td><td class="num">2,400.00</td></tr>
+      <tr><td>04</td><td>技术服务与部署支持</td><td>人日</td><td class="num">6</td><td class="num">1,500.00</td><td class="num">9,000.00</td></tr>
+      <tr><td>05</td><td>模板设计器席位</td><td>5 席</td><td class="num">1</td><td class="num">1,980.00</td><td class="num">1,980.00</td></tr>
+      <tr><td>06</td><td>PDF/A 归档插件</td><td>标准版</td><td class="num">1</td><td class="num">3,200.00</td><td class="num">3,200.00</td></tr>
+      <tr><td>07</td><td>可视化监控看板</td><td>年度</td><td class="num">1</td><td class="num">4,600.00</td><td class="num">4,600.00</td></tr>
+      <tr><td>08</td><td>离线字体包（思源黑体）</td><td>SIL OFL</td><td class="num">2</td><td class="num">380.00</td><td class="num">760.00</td></tr>
+      <tr><td>09</td><td>高可用集群扩展</td><td>节点</td><td class="num">3</td><td class="num">2,200.00</td><td class="num">6,600.00</td></tr>
+      <tr><td>10</td><td>年度维护与版本升级</td><td>12 个月</td><td class="num">1</td><td class="num">5,400.00</td><td class="num">5,400.00</td></tr>
+      <tr><td>11</td><td>安全审计与合规报告</td><td>次</td><td class="num">2</td><td class="num">1,750.00</td><td class="num">3,500.00</td></tr>
+      <tr><td>12</td><td>培训与交付文档</td><td>套</td><td class="num">1</td><td class="num">860.00</td><td class="num">860.00</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td colspan="5" style="text-align:right">合计金额（含税）</td><td class="num"><span class="total">¥ 58,300.00</span></td></tr>
+    </tfoot>
+  </table>
+
+  <div class="note">
+    备注：本单据为自动化性能测试用的确定性语料，不含任何外部图片、网络字体或脚本。
+    各引擎使用同一份 HTML，输出统一按 A4 单页生成；金额大写：伍万捌仟叁佰元整。
+  </div>
+  <div class="foot">开票人：系统自动生成 · 第 1 页 / 共 1 页</div>
+</body>
+</html>

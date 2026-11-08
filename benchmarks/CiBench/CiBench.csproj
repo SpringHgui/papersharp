@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CiBench</AssemblyName>
+    <RootNamespace>CiBench</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <!-- CI 基准需要复现中文排版，不能开 invariant globalization -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <PlaywrightVersion Condition="'$(PlaywrightVersion)' == ''">1.64.1</PlaywrightVersion>
+    <ITextVersion Condition="'$(ITextVersion)' == ''">6.3.4</ITextVersion>
+    <IronPdfVersion Condition="'$(IronPdfVersion)' == ''">2026.11.1</IronPdfVersion>
+    <!-- iText pdfHTML 是 AGPLv3 / 商业双授权：默认参赛（仅用于基准工具），
+         若项目不便引入 AGPL 依赖可用 -p:IncludeIText=false 关闭 -->
+    <IncludeIText Condition="'$(IncludeIText)' == ''">true</IncludeIText>
+    <DefineConstants Condition="'$(IncludeIText)' == 'true'">$(DefineConstants);ITEXT</DefineConstants>
+    <!-- IronPdf 是商业库且原生包很大，已从默认组合移除；显式参赛时才打开编译开关 -->
+    <IncludeIronPdf Condition="'$(IncludeIronPdf)' == ''">false</IncludeIronPdf>
+    <DefineConstants Condition="'$(IncludeIronPdf)' == 'true'">$(DefineConstants);IRONPDF</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PaperSharp\PaperSharp.csproj" />
+    <PackageReference Include="PuppeteerSharp" Version="25.8.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="$(PlaywrightVersion)" />
+    <PackageReference Include="itext7.pdfhtml" Version="$(ITextVersion)" Condition="'$(IncludeIText)' == 'true'" />
+    <PackageReference Include="IronPdf" Version="$(IronPdfVersion)" Condition="'$(IncludeIronPdf)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="spec\invoice.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

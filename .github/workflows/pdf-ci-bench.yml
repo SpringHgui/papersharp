@@ -1,0 +1,119 @@
+name: PDF CI Bench
+
+# PaperSharp / PuppeteerSharp / Microsoft.Playwright / iText 7 pdfHTML 四方性能基准。
+# 四家均无需 license key；其中 iText 为 AGPLv3 / 商业双授权，只作为本基准工具的被测依赖。
+# PR 走 quick 档做冒烟，定时与手动默认走 full 档（冷/热各 20 次 + 100/200/300 并发）。
+# 商业库 IronPdf 已从默认组合移除，仅在显式指定 --engines 且编译时开启开关时才参赛。
+on:
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: '快速档（5 次重复 + 100/200 批次）'
+        type: boolean
+        default: false
+      strict:
+        description: '任一引擎 skipped/failed 即判失败'
+        type: boolean
+        default: false
+      regression_gate:
+        description: '用仓库内 benchmarks/CiBench/baseline.json 做回归门禁'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'src/PaperSharp/**'
+      - 'benchmarks/CiBench/**'
+      - '.github/workflows/pdf-ci-bench.yml'
+  schedule:
+    - cron: '0 3 * * 1' # 每周一 03:00 UTC 跑全量
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DOTNET_NOLOGO: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # PuppeteerSharp 与 Microsoft.Playwright 都复用 runner 预装的 Chrome，
+      # 避免每次下载 150~400MB 的浏览器；找不到时由下方的 fallback 步骤兜底。
+      - name: Locate Chrome
+        id: chrome
+        shell: bash
+        run: |
+          for p in /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do
+            if [ -x "$p" ]; then
+              echo "path=$p" >> "$GITHUB_OUTPUT"
+              echo "using $p"
+              break
+            fi
+          done
+
+      # iText pdfHTML 是解析型引擎，中文靠系统 CJK 字体；runner 上没有中文 font 时补装（幂等）。
+      # 缺字体只会让 iText 产物偏小，但为了让四家在同一语料上真正渲染中文，这里主动补齐。
+      - name: Install CJK fonts (iText)
+        shell: bash
+        run: |
+          if ! (command -v fc-list >/dev/null && fc-list :lang=zh 2>/dev/null | grep -q .); then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq fonts-noto-cjk
+          fi
+
+      - name: Build
+        run: dotnet build benchmarks/CiBench/CiBench.csproj -c Release
+
+      # 两家 Chromium 引擎都走 ExecutablePath 复用系统 Chrome；仅当 runner 上找不到 Chrome
+      # 时才让 Playwright 下载自带 Chromium，避免每次 CI 多下 ~400MB。
+      - name: Playwright Chromium fallback
+        if: steps.chrome.outputs.path == ''
+        shell: bash
+        run: |
+          sh=benchmarks/CiBench/bin/Release/net10.0/playwright.sh
+          if [ -f "$sh" ]; then
+            chmod +x "$sh"
+            "$sh" install chromium
+          else
+            echo "未找到 playwright.sh，跳过浏览器兜底安装（引擎会给出真实错误）"
+          fi
+
+      - name: Run benchmark
+        shell: bash
+        env:
+          # 可选：只有显式测 IronPdf 时才需要这个 secret；默认四家完全不依赖它。
+          IRONPDF_LICENSE_KEY: ${{ secrets.IRONPDF_LICENSE_KEY }}
+          # PuppeteerSharp 与 Microsoft.Playwright 共用同一个系统 Chrome。
+          PUPPETEER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.path }}
+        run: |
+          set -euo pipefail
+          ARGS="--out benchmarks/CiBench/out"
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.quick }}" = "true" ]; then
+            ARGS="$ARGS --quick"
+          fi
+          if [ "${{ inputs.strict }}" = "true" ]; then
+            ARGS="$ARGS --strict"
+          fi
+          if [ "${{ inputs.regression_gate }}" = "true" ] && [ -f benchmarks/CiBench/baseline.json ]; then
+            ARGS="$ARGS --baseline benchmarks/CiBench/baseline.json --max-regression 15"
+          fi
+          echo "ARGS: $ARGS"
+          dotnet benchmarks/CiBench/bin/Release/net10.0/CiBench.dll $ARGS
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibench-${{ github.run_id }}
+          path: benchmarks/CiBench/out/
+          retention-days: 30
+          if-no-files-found: warn
+
+# 回归门禁用法：本地/CI 跑出一份可信基线后提交到仓库
+#   cp benchmarks/CiBench/out/results.json benchmarks/CiBench/baseline.json
+# 之后在手动触发时勾上 regression_gate。门禁默认只约束 papersharp，
+# 第三方库的版本与机器波动不会把 CI 弄红。

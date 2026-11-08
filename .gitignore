@@ -108,6 +108,9 @@ benchmarks/PdfBench/report/charts/
 benchmarks/PdfBench/report/sample/
 benchmarks/PdfBench/sub_p1.png
 
+# CiBench（CI 四方基准）产物：报告/CSV/JSON 每次运行重生成，由 CI artifact 承载，不入库
+benchmarks/CiBench/out/
+
 # 官网站点：dist 与从 papersharp 包拷来的引擎/字体产物（由 js/example/scripts/sync-engine.mjs 生成）
 js/example/dist/
 js/example/public/_framework/
