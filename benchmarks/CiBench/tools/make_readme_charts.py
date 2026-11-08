@@ -35,7 +35,9 @@ LABELS = {
     "ironpdf": "IronPdf",
 }
 
-W, H = 240, 160
+W, H = 240, 160          # logical drawing space (kept for label geometry)
+SCALE = 2                # render at 2x so charts stay legible when shown large
+RW, RH = W * SCALE, H * SCALE
 X0, X1, Y0, Y1 = 36, 232, 34, 118
 
 STYLE = """
@@ -158,12 +160,13 @@ def svg_chart(title: str, unit: str, note: str, engines: list[dict], read) -> st
         f"{n}: {fmt(v) if v is not None else 'N/A'} {unit}" for n, v in zip(names, values)
     )
     out = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {RW} {RH}" width="{RW}" height="{RH}" '
         'role="img" aria-label="' + escape(title) + '">',
         f"<title>{escape(title)} ({escape(unit)})</title>",
         f"<desc>{escape(desc)}</desc>",
         f"<style>{STYLE}</style>",
-        f'<rect class="bg" fill="#ffffff" x="0" y="0" width="{W}" height="{H}" rx="8"/>',
+        f'<rect class="bg" fill="#ffffff" x="0" y="0" width="{RW}" height="{RH}" rx="{8 * SCALE}"/>',
+        '<g transform="scale(2)">',
         txt("ttl", 8, 19, title),
         txt("unit", X1, 19, unit, "end"),
     ]
@@ -190,6 +193,7 @@ def svg_chart(title: str, unit: str, note: str, engines: list[dict], read) -> st
         out.append(txt("cat", round(cx, 1), Y1 + 16, name, "middle"))
 
     out.append(txt("note", 8, H - 7, note))
+    out.append("</g>")
     out.append("</svg>")
     return "\n".join(out) + "\n"
 

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160" role="img" aria-label="Cold start - 1 PDF">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" height="320" role="img" aria-label="Cold start - 1 PDF">
 <title>Cold start - 1 PDF (ms)</title>
-<desc>PaperSharp: 884 ms; Puppeteer: 1,308 ms; Playwright: 1,396 ms; iText: 1,070 ms</desc>
+<desc>PaperSharp: 1,046 ms; Puppeteer: 1,190 ms; Playwright: 1,359 ms; iText: 1,367 ms; IronPdf: 6,353 ms</desc>
 <style>
     text { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif }
     .bg { fill:#ffffff }
@@ -20,30 +20,35 @@
       .grid { stroke:#30363d }
     }
 </style>
-<rect class="bg" fill="#ffffff" x="0" y="0" width="240" height="160" rx="8"/>
+<rect class="bg" fill="#ffffff" x="0" y="0" width="480" height="320" rx="16"/>
+<g transform="scale(2)">
 <text class="ttl" fill="#1f2328" font-size="13" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="8" y="19">Cold start - 1 PDF</text>
 <text class="unit" fill="#656d76" font-size="9" font-family="Arial,Helvetica,sans-serif" x="232" y="19" text-anchor="end">ms</text>
 <line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="118.0" x2="232" y2="118.0"/>
 <text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="121.0" text-anchor="end">0</text>
 <line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="97.0" x2="232" y2="97.0"/>
-<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="100.0" text-anchor="end">500</text>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="100.0" text-anchor="end">2,000</text>
 <line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="76.0" x2="232" y2="76.0"/>
-<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="79.0" text-anchor="end">1,000</text>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="79.0" text-anchor="end">4,000</text>
 <line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="55.0" x2="232" y2="55.0"/>
-<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="58.0" text-anchor="end">1,500</text>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="58.0" text-anchor="end">6,000</text>
 <line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="34.0" x2="232" y2="34.0"/>
-<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="37.0" text-anchor="end">2,000</text>
-<rect x="46.8" y="80.9" width="27.4" height="37.1" rx="2.5" fill="#1f6feb"/>
-<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="60.5" y="75.9" text-anchor="middle">884</text>
-<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="60.5" y="134" text-anchor="middle">PaperSharp</text>
-<rect x="95.8" y="63.1" width="27.4" height="54.9" rx="2.5" fill="#d97706"/>
-<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="109.5" y="58.1" text-anchor="middle">1,308</text>
-<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="109.5" y="134" text-anchor="middle">Puppeteer</text>
-<rect x="144.8" y="59.4" width="27.4" height="58.6" rx="2.5" fill="#2da44e"/>
-<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="158.5" y="54.4" text-anchor="middle">1,396</text>
-<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="158.5" y="134" text-anchor="middle">Playwright</text>
-<rect x="193.8" y="73.1" width="27.4" height="44.9" rx="2.5" fill="#8250df"/>
-<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="207.5" y="68.1" text-anchor="middle">1,070</text>
-<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="207.5" y="134" text-anchor="middle">iText</text>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="37.0" text-anchor="end">8,000</text>
+<rect x="44.6" y="107.0" width="22.0" height="11.0" rx="2.5" fill="#1f6feb"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="55.6" y="102.0" text-anchor="middle">1,046</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="55.6" y="134" text-anchor="middle">PaperSharp</text>
+<rect x="83.8" y="105.5" width="22.0" height="12.5" rx="2.5" fill="#d97706"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="94.8" y="100.5" text-anchor="middle">1,190</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="94.8" y="134" text-anchor="middle">Puppeteer</text>
+<rect x="123.0" y="103.7" width="22.0" height="14.3" rx="2.5" fill="#2da44e"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="134.0" y="98.7" text-anchor="middle">1,359</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="134.0" y="134" text-anchor="middle">Playwright</text>
+<rect x="162.2" y="103.6" width="22.0" height="14.4" rx="2.5" fill="#8250df"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="173.2" y="98.6" text-anchor="middle">1,367</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="173.2" y="134" text-anchor="middle">iText</text>
+<rect x="201.4" y="51.3" width="22.0" height="66.7" rx="2.5" fill="#cf222e"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="212.4" y="46.3" text-anchor="middle">6,353</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="212.4" y="134" text-anchor="middle">IronPdf</text>
 <text class="note" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="8" y="153">lower is better</text>
+</g>
 </svg>
