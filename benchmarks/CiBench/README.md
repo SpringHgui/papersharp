@@ -96,6 +96,64 @@ bash benchmarks/CiBench/run.sh --engines papersharp,puppeteer,playwright,itext,i
 （任一 `skipped`/`failed` 退出码 3）。未打开编译开关就指定 `--engines ironpdf` 会得到明确的
 `skipped` 原因，不会静默少跑。
 
+## 实测结果快照（v1.0.3）
+
+一次性快照，采集于 `2026-11-08T14:42:47Z`（北京时间 22:42）；原始数据
+[`results/v1.0.3.json`](results/v1.0.3.json) / [`.csv`](results/v1.0.3.csv)，
+带图表的对外展示版见 [根 README](../../README.md#性能基准可复现)。重跑只覆盖 `out/`，不改这份快照。
+根 README 的 8 张并排小图由 [`tools/make_readme_charts.py`](tools/make_readme_charts.py) 从该 JSON 生成到
+[`results/charts/`](results/charts/)（`python tools/make_readme_charts.py results/v1.0.3.json results/charts`；
+240×160 SVG、深浅色主题自适应、内联颜色兜底、可点击放大），快照换新后重跑脚本即可同步。
+
+**环境** · Windows 10.0.26300 x64 · `Intel64 Family 6 Model 167 Stepping 1` / 16 逻辑核 · .NET 10.0.10 ·
+Chrome 156.0.8078.81（两家 Chromium 共用）· PaperSharp v1.0.3 / PuppeteerSharp 25.8.0 /
+Microsoft.Playwright 1.64.1 / iText 7 pdfHTML 6.3.4（Core 9.8.0）· 语料 `spec/invoice.html` 4,804B /
+SHA-256 `0F51278375B7182F` · `--repeats 20 --batches 100,200,300 --concurrency 4 --strict` · Release ·
+采集时工作树 `df9dbb7`（到 v1.0.3 之间 `src/` 无改动）。
+
+<details>
+<summary><b>展开：冷/热明细表 + 100/200/300 三档并发全指标（20 行）</b></summary>
+
+**冷启动 · 导出 1 张 PDF（20 次全新子进程）**
+
+| 引擎 | 均值 (ms) | p50 | p95 | σ | 最慢 | RSS 均值 (MB) | 产物 (KB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| PaperSharp | 884.3 | 888.5 | 953.1 | 53.4 | 982.6 | 105.0 | 170.8 |
+| PuppeteerSharp | 1308.3 | 1382.5 | 1484.2 | 156.4 | 1528.7 | 449.8 | 140.3 |
+| Microsoft.Playwright | 1396.1 | 1334.3 | 1541.7 | 224.4 | 2305.5 | 821.6 | 108.9 |
+| iText 7 pdfHTML | 1069.9 | 1055.7 | 1116.9 | 40.5 | 1205.8 | 107.5 | 191.0 |
+
+**热启动 · 导出 1 张 PDF（20 次常驻进程）**
+
+| 引擎 | 均值 (ms) | p50 | p95 | σ | 托管分配/张 (KB) | RSS 峰值 (MB) | GC gen0/1/2 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| PaperSharp | 58.7 | 56.9 | 64.9 | 5.0 | 5734.9 | 130.2 | 15/6/2 |
+| PuppeteerSharp | 114.4 | 111.9 | 129.5 | 7.9 | 1125.0 | 882.1 | 5/5/5 |
+| Microsoft.Playwright | 112.4 | 109.9 | 123.9 | 6.5 | 649.0 | 1487.3 | 3/3/3 |
+| iText 7 pdfHTML | 161.6 | 158.9 | 209.7 | 34.1 | 22426.0 | 138.6 | 53/18/4 |
+
+**热态并发批次（固定 4 worker）**
+
+| 档 | 引擎 | 总墙钟 (s) | 平均/张 (ms) | 吞吐 (docs/s) | P95 (ms) | RSS 峰值 (MB) | 托管分配 (MB) | 成功 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| 100 | PaperSharp | 2.66 | 26.6 | 37.54 | 109.0 | 138.3 | 571.2 | 100/100 |
+| 100 | PuppeteerSharp | 4.78 | 47.8 | 20.92 | 196.0 | 1155.6 | 98.0 | 100/100 |
+| 100 | Microsoft.Playwright | 5.03 | 50.3 | 19.89 | 200.0 | 1677.8 | 54.4 | 100/100 |
+| 100 | iText 7 pdfHTML | 4.92 | 49.2 | 20.33 | 282.5 | 201.4 | 2132.6 | 100/100 |
+| 200 | PaperSharp | 3.58 | 17.9 | 55.89 | 84.0 | 156.2 | 1116.8 | 200/200 |
+| 200 | PuppeteerSharp | 9.52 | 47.6 | 21.02 | 204.5 | 1210.8 | 193.6 | 200/200 |
+| 200 | Microsoft.Playwright | 10.19 | 50.9 | 19.63 | 218.7 | 1842.6 | 104.2 | 200/200 |
+| 200 | iText 7 pdfHTML | 7.54 | 37.7 | 26.53 | 187.7 | 264.4 | 4249.0 | 200/200 |
+| 300 | PaperSharp | 4.60 | 15.3 | 65.29 | 64.4 | 152.1 | 1650.6 | 300/300 |
+| 300 | PuppeteerSharp | 14.21 | 47.4 | 21.12 | 208.8 | 1248.4 | 290.9 | 300/300 |
+| 300 | Microsoft.Playwright | 16.06 | 53.5 | 18.68 | 233.9 | 1814.0 | 156.5 | 300/300 |
+| 300 | iText 7 pdfHTML | 12.23 | 40.8 | 24.54 | 204.8 | 389.8 | 6372.3 | 300/300 |
+
+读这些数字前请先看下一节口径，尤其是**渲染内核不等价**、**RSS 含 Chrome 进程树**、
+**iText 中文依赖系统 CJK 字体**这三条；跨机器比较请用 `--baseline`。
+
+</details>
+
 ## 测量口径（改代码前必读）
 
 | 项 | 定义 |

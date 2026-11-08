@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="240" height="160" role="img" aria-label="300 docs - latency P95">
+<title>300 docs - latency P95 (ms)</title>
+<desc>PaperSharp: 64.4 ms; Puppeteer: 209 ms; Playwright: 234 ms; iText: 205 ms</desc>
+<style>
+    text { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif }
+    .bg { fill:#ffffff }
+    .ttl { fill:#1f2328; font-size:13px; font-weight:600 }
+    .unit { fill:#656d76; font-size:9px }
+    .grid { stroke:#d8dee4; stroke-width:.7 }
+    .axis { fill:#8c959f; font-size:8px }
+    .val  { fill:#1f2328; font-size:10px; font-weight:600 }
+    .cat  { fill:#57606a; font-size:9px }
+    .note { fill:#8c959f; font-size:8px }
+    .na   { fill:#8c959f; font-size:9px }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill:#0d1117 }
+      .ttl, .val { fill:#e6edf3 }
+      .unit, .cat, .note, .na { fill:#8b949e }
+      .axis { fill:#6e7681 }
+      .grid { stroke:#30363d }
+    }
+</style>
+<rect class="bg" fill="#ffffff" x="0" y="0" width="240" height="160" rx="8"/>
+<text class="ttl" fill="#1f2328" font-size="13" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="8" y="19">300 docs - latency P95</text>
+<text class="unit" fill="#656d76" font-size="9" font-family="Arial,Helvetica,sans-serif" x="232" y="19" text-anchor="end">ms</text>
+<line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="118.0" x2="232" y2="118.0"/>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="121.0" text-anchor="end">0</text>
+<line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="97.0" x2="232" y2="97.0"/>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="100.0" text-anchor="end">75.0</text>
+<line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="76.0" x2="232" y2="76.0"/>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="79.0" text-anchor="end">150</text>
+<line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="55.0" x2="232" y2="55.0"/>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="58.0" text-anchor="end">225</text>
+<line class="grid" stroke="#d8dee4" stroke-width=".7" x1="36" y1="34.0" x2="232" y2="34.0"/>
+<text class="axis" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="31" y="37.0" text-anchor="end">300</text>
+<rect x="46.8" y="100.0" width="27.4" height="18.0" rx="2.5" fill="#1f6feb"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="60.5" y="95.0" text-anchor="middle">64.4</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="60.5" y="134" text-anchor="middle">PaperSharp</text>
+<rect x="95.8" y="59.5" width="27.4" height="58.5" rx="2.5" fill="#d97706"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="109.5" y="54.5" text-anchor="middle">209</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="109.5" y="134" text-anchor="middle">Puppeteer</text>
+<rect x="144.8" y="52.5" width="27.4" height="65.5" rx="2.5" fill="#2da44e"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="158.5" y="47.5" text-anchor="middle">234</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="158.5" y="134" text-anchor="middle">Playwright</text>
+<rect x="193.8" y="60.7" width="27.4" height="57.3" rx="2.5" fill="#8250df"/>
+<text class="val" fill="#1f2328" font-size="10" font-weight="600" font-family="Arial,Helvetica,sans-serif" x="207.5" y="55.7" text-anchor="middle">205</text>
+<text class="cat" fill="#57606a" font-size="9" font-family="Arial,Helvetica,sans-serif" x="207.5" y="134" text-anchor="middle">iText</text>
+<text class="note" fill="#8c959f" font-size="8" font-family="Arial,Helvetica,sans-serif" x="8" y="153">lower is better</text>
+</svg>
