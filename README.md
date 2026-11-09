@@ -59,21 +59,26 @@ byte[] png = Renderer.RenderPng(html, css, width: 794, scale: 2);  // 2× 高清
 三档均 100/100、200/200、300/300 全部成功，无跳过、无补零；完整三档明细见 [CSV](benchmarks/CiBench/results/v1.0.4.csv)
 与 [CiBench README 快照](benchmarks/CiBench/README.md)。
 
-**8 张图速览** · 每行 4 张、点击可放大；y 轴均从 0 起，冷/热量级差约 10 倍故各自独立定标。柱色固定：蓝 = PaperSharp，橙 = PuppeteerSharp，绿 = Playwright，紫 = iText 7，红 = IronPdf。图由 [make_readme_charts.py](benchmarks/CiBench/tools/make_readme_charts.py) 从 `v1.0.4.json` 生成（240×160，深浅色主题自适应，内联颜色兜底）；不支持 SVG 的阅读器看上表，或展开下方 Mermaid 大图。
+**8 张图速览** · 每行 2 张、宽度撑满表格单元格、点击可放大；y 轴均从 0 起，冷/热量级差约 10 倍故各自独立定标。柱色固定：蓝 = PaperSharp，橙 = PuppeteerSharp，绿 = Playwright，紫 = iText 7，红 = IronPdf。图由 [make_readme_charts.py](benchmarks/CiBench/tools/make_readme_charts.py) 从 `v1.0.4.json` 生成（240×160，深浅色主题自适应，内联颜色兜底）；不支持 SVG 的阅读器看上表，或展开下方 Mermaid 大图。
 
-<p align="center">
-<a href="benchmarks/CiBench/results/charts/01-cold-start.svg?raw=true"><img src="benchmarks/CiBench/results/charts/01-cold-start.svg" width="210" alt="冷启动平均耗时"></a>
-<a href="benchmarks/CiBench/results/charts/02-warm-start.svg?raw=true"><img src="benchmarks/CiBench/results/charts/02-warm-start.svg" width="210" alt="热启动平均耗时"></a>
-<a href="benchmarks/CiBench/results/charts/03-avg-per-doc.svg?raw=true"><img src="benchmarks/CiBench/results/charts/03-avg-per-doc.svg" width="210" alt="300 张并发平均每张耗时"></a>
-<a href="benchmarks/CiBench/results/charts/04-latency-p95.svg?raw=true"><img src="benchmarks/CiBench/results/charts/04-latency-p95.svg" width="210" alt="300 张并发延迟 P95"></a>
-</p>
-
-<p align="center">
-<a href="benchmarks/CiBench/results/charts/05-throughput.svg?raw=true"><img src="benchmarks/CiBench/results/charts/05-throughput.svg" width="210" alt="300 张并发吞吐"></a>
-<a href="benchmarks/CiBench/results/charts/06-rss-peak.svg?raw=true"><img src="benchmarks/CiBench/results/charts/06-rss-peak.svg" width="210" alt="300 张并发 RSS 峰值"></a>
-<a href="benchmarks/CiBench/results/charts/07-managed-alloc.svg?raw=true"><img src="benchmarks/CiBench/results/charts/07-managed-alloc.svg" width="210" alt="300 张并发托管内存分配"></a>
-<a href="benchmarks/CiBench/results/charts/08-pdf-size.svg?raw=true"><img src="benchmarks/CiBench/results/charts/08-pdf-size.svg" width="210" alt="单张 PDF 产物体积"></a>
-</p>
+<table>
+<tr>
+<td align="center"><a href="benchmarks/CiBench/results/charts/01-cold-start.svg?raw=true"><img src="benchmarks/CiBench/results/charts/01-cold-start.svg" width="100%" alt="冷启动平均耗时"></a></td>
+<td align="center"><a href="benchmarks/CiBench/results/charts/02-warm-start.svg?raw=true"><img src="benchmarks/CiBench/results/charts/02-warm-start.svg" width="100%" alt="热启动平均耗时"></a></td>
+</tr>
+<tr>
+<td align="center"><a href="benchmarks/CiBench/results/charts/03-avg-per-doc.svg?raw=true"><img src="benchmarks/CiBench/results/charts/03-avg-per-doc.svg" width="100%" alt="300 张并发平均每张耗时"></a></td>
+<td align="center"><a href="benchmarks/CiBench/results/charts/04-latency-p95.svg?raw=true"><img src="benchmarks/CiBench/results/charts/04-latency-p95.svg" width="100%" alt="300 张并发延迟 P95"></a></td>
+</tr>
+<tr>
+<td align="center"><a href="benchmarks/CiBench/results/charts/05-throughput.svg?raw=true"><img src="benchmarks/CiBench/results/charts/05-throughput.svg" width="100%" alt="300 张并发吞吐"></a></td>
+<td align="center"><a href="benchmarks/CiBench/results/charts/06-rss-peak.svg?raw=true"><img src="benchmarks/CiBench/results/charts/06-rss-peak.svg" width="100%" alt="300 张并发 RSS 峰值"></a></td>
+</tr>
+<tr>
+<td align="center"><a href="benchmarks/CiBench/results/charts/07-managed-alloc.svg?raw=true"><img src="benchmarks/CiBench/results/charts/07-managed-alloc.svg" width="100%" alt="300 张并发托管内存分配"></a></td>
+<td align="center"><a href="benchmarks/CiBench/results/charts/08-pdf-size.svg?raw=true"><img src="benchmarks/CiBench/results/charts/08-pdf-size.svg" width="100%" alt="单张 PDF 产物体积"></a></td>
+</tr>
+</table>
 
 <details>
 <summary><b>展开：5 张 Mermaid 大图（主题自适应）· 公平性口径 · 边界与复现命令</b></summary>

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate compact, theme-aware SVG charts from a CiBench results snapshot.
 
-The root README lays these out four per row. GitHub renders Mermaid blocks as
+The root README lays these out two per row, each image scaled to fill its
+table cell. GitHub renders Mermaid blocks as
 full-width, fixed-height images that cannot be scaled or placed side by side,
 so the README uses small standalone SVGs instead (click any chart for its
 full-size source). Everything is derived from the checked-in results JSON.
