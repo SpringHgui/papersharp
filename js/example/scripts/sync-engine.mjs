@@ -4,7 +4,7 @@
 // 本地若在改引擎本体、想让站点直接吃仓内副本，设 PAPERSHARP_PKG_DIR=js/papersharp。
 // 可用 PAPERSHARP_ENGINE_DIR 直接指向某个 _framework 目录（跳过包解析）。
 
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,6 +35,7 @@ if (!existsSync(engineSrc)) {
 copyEngine(engineSrc, join(publicDir, "_framework"));
 rmSync(join(publicDir, "fonts"), { recursive: true, force: true });
 copySamples();
+copyCharts();
 
 console.log(`引擎 → public/_framework（${human(sizeOf(join(publicDir, "_framework")))}）`);
 
@@ -50,6 +51,24 @@ function copySamples() {
       process.exit(1);
     }
     cpSync(src, join(to, name));
+  }
+}
+
+/** 性能图表唯一真源在 benchmarks/CiBench/results/charts（README 用同一批 SVG）。
+ *  站点是浅色版式，同步时去掉 prefers-color-scheme 分支，免得深色卡片落在白底上。 */
+function copyCharts() {
+  const src = resolve(siteRoot, "..", "..", "benchmarks", "CiBench", "results", "charts");
+  if (!existsSync(src)) {
+    console.warn(`跳过性能图表：${src} 不存在（站点从 npm 包安装时没有仓内基准）`);
+    return;
+  }
+  const to = join(publicDir, "charts");
+  rmSync(to, { recursive: true, force: true });
+  mkdirSync(to, { recursive: true });
+  const dark = /^ {4}@media \(prefers-color-scheme: dark\) \{[\s\S]*?^ {4}\}\r?\n/m;
+  for (const name of readdirSync(src)) {
+    if (!name.endsWith(".svg")) continue;
+    writeFileSync(join(to, name), readFileSync(join(src, name), "utf8").replace(dark, ""));
   }
 }
 

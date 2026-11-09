@@ -18,12 +18,28 @@ function initialLang(): Lang {
   return typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
+function setMeta(key: string, content: string, attr: "name" | "property" = "name") {
+  let el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${key}"]`);
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute(attr, key);
+    document.head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
 export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(initialLang);
 
   useEffect(() => {
     localStorage.setItem(LANG_KEY, lang);
     document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    const meta = dictionaries[lang].meta;
+    document.title = meta.title;
+    setMeta("description", meta.description);
+    setMeta("og:title", meta.title, "property");
+    setMeta("og:description", meta.description, "property");
+    setMeta("og:locale", lang === "zh" ? "zh_CN" : "en_US", "property");
   }, [lang]);
 
   const value = useMemo(() => ({ lang, setLang, copy: dictionaries[lang] }), [lang]);

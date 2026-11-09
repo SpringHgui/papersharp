@@ -3,12 +3,13 @@
 
 export const zh = {
   meta: {
-    title: "PaperSharp — 把 HTML/CSS 直接编译成 PDF 与高清图片",
+    title: "PaperSharp — C#/.NET 高性能 HTML 转 PDF 与图片引擎（无需浏览器）",
     description:
-      "纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：无需浏览器、无 headless Chrome。同一颗引擎跑在 .NET、Node、Bun 与浏览器 WASM 里。",
+      "纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：把 HTML/CSS 直接编译成矢量 PDF、PNG、SVG 等，无需浏览器、无 headless Chrome。300 张并发 15.6 ms/张、64 docs/s、常驻 148 MB；同一颗引擎跑在 .NET、Node、Bun 与浏览器 WASM 里。",
   },
   nav: {
     playground: "Playground",
+    bench: "性能",
     features: "能力",
     usage: "用法",
     github: "GitHub",
@@ -108,6 +109,31 @@ export const zh = {
       { name: "ICO", desc: "favicon，多尺寸打包" },
     ],
   },
+  bench: {
+    title: "性能实测（可复现）",
+    intro:
+      "五方同机实测：300 张并发中文票据、固定 4 worker、Release 构建。数字取自可核查的 v1.0.4 快照，不是挑出来最好的一次；三档 100/200/300 全部成功，无跳过、无补零。",
+    kpis: [
+      { value: "15.6 ms", label: "平均每张 · 300 张并发" },
+      { value: "64.0 docs/s", label: "吞吐 · 约 Chromium 系 3.3×" },
+      { value: "61.6 ms", label: "P95 延迟" },
+      { value: "148 MB", label: "RSS 峰值 · 约 Chromium 系 1/9" },
+    ],
+    columns: {
+      name: "引擎（300 张并发档）",
+      runtime: "内核",
+      metrics: ["冷启动 ms", "热启动 ms", "冷/热", "平均/张 ms", "吞吐 docs/s", "P95 ms", "RSS 峰值 MB", "产物 KB"],
+    },
+    charts: [
+      { file: "01-cold-start.svg", alt: "冷启动平均耗时（ms，越低越好）" },
+      { file: "03-avg-per-doc.svg", alt: "300 张并发平均每张耗时（ms，越低越好）" },
+      { file: "05-throughput.svg", alt: "300 张并发吞吐（docs/s，越高越好）" },
+      { file: "06-rss-peak.svg", alt: "300 张并发 RSS 峰值（MB，越低越好）" },
+    ],
+    note: "环境：Windows 10 x64 · 16 逻辑核 · .NET 10.0.10 · Chrome 156；语料为 4.8 KB 中文发票，冷/热各 20 次取平均。IronPdf 为 trial 授权（输出含水印），仅作对照。",
+    source: "数字与口径：",
+    allCharts: "全部 8 张图",
+  },
   footer: {
     license: "MIT 授权",
     nuget: "NuGet",
@@ -120,12 +146,13 @@ export type Copy = typeof zh;
 
 export const en: Copy = {
   meta: {
-    title: "PaperSharp — compile HTML/CSS straight into PDF and crisp images",
+    title: "PaperSharp — C#/.NET HTML-to-PDF engine, no browser required",
     description:
-      "A PDF/image engine written in managed C# on Skia: no browser, no headless Chrome. The same engine runs in .NET, Node, Bun and browser WASM.",
+      "A PDF/image engine written in managed C# on Skia: compile HTML/CSS straight into vector PDF, PNG, SVG and more — no browser, no headless Chrome. 15.6 ms per document at 300 concurrent, 64 docs/s, 148 MB RSS; one engine for .NET, Node, Bun and browser WASM.",
   },
   nav: {
     playground: "Playground",
+    bench: "Benchmarks",
     features: "Capabilities",
     usage: "Usage",
     github: "GitHub",
@@ -224,6 +251,31 @@ export const en: Copy = {
       { name: "SVG", desc: "Gradients and clipping mapped to native SVG primitives" },
       { name: "ICO", desc: "Favicons, multi-size packing" },
     ],
+  },
+  bench: {
+    title: "Measured performance, reproducible",
+    intro:
+      "Five engines on one machine: 300 concurrent Chinese invoices, 4 workers, Release builds. Numbers come from the auditable v1.0.4 snapshot — not a best-of run; all three batches (100/200/300) finished with zero skips and zero filler.",
+    kpis: [
+      { value: "15.6 ms", label: "per document · 300 concurrent" },
+      { value: "64.0 docs/s", label: "throughput · ~3.3× the Chromium stack" },
+      { value: "61.6 ms", label: "P95 latency" },
+      { value: "148 MB", label: "RSS peak · ~1/9 of the Chromium stack" },
+    ],
+    columns: {
+      name: "Engine (300 concurrent)",
+      runtime: "Runtime",
+      metrics: ["Cold ms", "Warm ms", "Cold/warm", "ms/doc", "docs/s", "P95 ms", "RSS peak MB", "Output KB"],
+    },
+    charts: [
+      { file: "01-cold-start.svg", alt: "Cold start mean latency (ms, lower is better)" },
+      { file: "03-avg-per-doc.svg", alt: "Average ms per document at 300 concurrent (lower is better)" },
+      { file: "05-throughput.svg", alt: "Throughput in documents per second at 300 concurrent (higher is better)" },
+      { file: "06-rss-peak.svg", alt: "Peak process-tree RSS at 300 concurrent (MB, lower is better)" },
+    ],
+    note: "Environment: Windows 10 x64 · 16 logical cores · .NET 10.0.10 · Chrome 156; a 4.8 KB Chinese invoice, cold and warm each averaged over 20 runs. IronPdf runs under a trial license (watermarked output) and is shown for reference only.",
+    source: "Numbers and methodology:",
+    allCharts: "all eight charts",
   },
   footer: {
     license: "MIT license",

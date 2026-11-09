@@ -3,22 +3,125 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PaperSharp — 把 HTML/CSS 直接编译成 PDF 与高清图片</title>
+    <title>PaperSharp — C#/.NET 高性能 HTML 转 PDF 与图片引擎（无需浏览器）</title>
     <meta
       name="description"
-      content="纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：无需浏览器、无 headless Chrome。同一颗引擎跑在 .NET、Node、Bun 与浏览器 WASM 里。"
+      content="纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：把 HTML/CSS 直接编译成矢量 PDF、PNG、JPEG、WebP、SVG、ICO，无需浏览器、无 headless Chrome。300 张并发出票 15.6 ms/张、64 docs/s、常驻 148 MB；同一颗引擎跑在 .NET、Node、Bun 与浏览器 WASM 里。"
     />
+    <meta
+      name="keywords"
+      content="HTML转PDF, C# PDF, .NET PDF 渲染, 无浏览器 PDF, headless Chrome 替代, PDF 生成, 中文 PDF, CSS 排版, SkiaSharp, WASM PDF, 发票 PDF, Puppeteer 替代方案"
+    />
+    <meta name="author" content="SpringHgui" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="canonical" href="https://papersharp.netlify.app/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="PaperSharp" />
+    <meta property="og:url" content="https://papersharp.netlify.app/" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:title" content="PaperSharp — C# 高性能 HTML 转 PDF 引擎（无需浏览器）" />
+    <meta
+      property="og:description"
+      content="纯托管 C# + Skia 自绘：HTML/CSS → 矢量 PDF / PNG / SVG，不装 Chromium。300 张并发 15.6 ms/张、64 docs/s、RSS 148 MB，.NET / Node / 浏览器 WASM 同一颗引擎。"
+    />
+    <meta property="og:image" content="https://papersharp.netlify.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="PaperSharp：C# 自绘 HTML→PDF 渲染引擎，300 张并发 15.6 ms/张" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PaperSharp — C# 高性能 HTML 转 PDF 引擎" />
+    <meta
+      name="twitter:description"
+      content="HTML/CSS → 矢量 PDF / PNG / SVG，无需 headless Chrome。300 张并发 15.6 ms/张、64 docs/s。"
+    />
+    <meta name="twitter:image" content="https://papersharp.netlify.app/og.png" />
+
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Ctext x='32' y='45' font-family='sans-serif' font-size='38' font-weight='700' fill='white' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E"
     />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://papersharp.netlify.app/#website",
+            "url": "https://papersharp.netlify.app/",
+            "name": "PaperSharp",
+            "description": "把 HTML/CSS 直接编译成矢量 PDF 与高清图片的 .NET 渲染引擎，无需浏览器。",
+            "inLanguage": ["zh-CN", "en"],
+            "publisher": { "@id": "https://papersharp.netlify.app/#org" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://papersharp.netlify.app/#app",
+            "name": "PaperSharp",
+            "url": "https://papersharp.netlify.app/",
+            "description": "纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：HTML/CSS 直接编译为 PDF、PNG、JPEG、WebP、SVG、ICO，无浏览器、无 headless Chrome，同一颗引擎可在 .NET、Node、Bun 与浏览器 WASM 中运行。",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "Windows, Linux, macOS",
+            "programmingLanguage": "C#",
+            "softwareRequirements": ".NET 8.0+ / Node 18+",
+            "downloadUrl": "https://www.nuget.org/packages/PaperSharp",
+            "sameAs": [
+              "https://github.com/SpringHgui/papersharp",
+              "https://www.nuget.org/packages/PaperSharp",
+              "https://www.npmjs.com/package/papersharp"
+            ],
+            "license": "https://opensource.org/license/mit",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "featureList": [
+              "HTML/CSS 直接编译为矢量 PDF 与位图，无需浏览器与 headless Chrome",
+              "打印级分页：@page、页眉页脚 margin box、表格跨页 thead 重放、break-inside/orphans/widows",
+              "CJK 逐字折行与字形级字体子集嵌入",
+              "线程安全，多请求并发进同一进程",
+              "同一引擎运行于 .NET、Node、Bun 和浏览器 WASM"
+            ],
+            "publisher": { "@id": "https://papersharp.netlify.app/#org" }
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://papersharp.netlify.app/#org",
+            "name": "PaperSharp",
+            "url": "https://papersharp.netlify.app/",
+            "sameAs": ["https://github.com/SpringHgui/papersharp"]
+          }
+        ]
+      }
+    </script>
+
     <style>
       html { background: #fff; }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <noscript>这个页面的 Playground 需要 JavaScript：引擎就在浏览器里跑。</noscript>
+    <noscript>
+      <h1>PaperSharp — C# 高性能 HTML 转 PDF 引擎，无需浏览器</h1>
+      <p>
+        PaperSharp 是纯托管 C# + Skia 自绘的 PDF/图片渲染引擎：把 HTML/CSS 直接编译成矢量 PDF、PNG、JPEG、WebP、SVG、ICO，
+        不装 Chromium、不起子进程、不开调试端口。同一颗引擎可跑在 .NET、Node、Bun 与浏览器 WASM 里。
+      </p>
+      <h2>性能实测（300 张并发中文发票，可复现）</h2>
+      <ul>
+        <li>平均每张 15.6 ms，吞吐 64.0 docs/s，P95 61.6 ms</li>
+        <li>进程树 RSS 峰值 148 MB（PuppeteerSharp 1319 MB、Playwright 1823 MB）</li>
+        <li>冷启动 1046 ms，热启动 73.0 ms</li>
+      </ul>
+      <p>安装：<code>dotnet add package PaperSharp</code> / <code>npm i papersharp</code></p>
+      <p>
+        源码与完整基准：<a href="https://github.com/SpringHgui/papersharp">GitHub</a> ·
+        <a href="https://www.nuget.org/packages/PaperSharp">NuGet</a> ·
+        <a href="https://www.npmjs.com/package/papersharp">npm</a>
+      </p>
+      <p>这个页面的 Playground 需要 JavaScript：引擎就在浏览器里跑。</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

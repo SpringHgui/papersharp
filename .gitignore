@@ -116,6 +116,7 @@ js/example/dist/
 js/example/public/_framework/
 js/example/public/fonts/
 js/example/public/samples/
+js/example/public/charts/
 
 # Python 探针脚本的字节码缓存（tools/MemStress）
 __pycache__/

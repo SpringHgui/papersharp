@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Bench } from "./Bench";
 import { Playground } from "./Playground";
 import { useCopy } from "./i18n";
 
@@ -41,6 +42,7 @@ export function App() {
         </a>
         <div className="nav-links">
           <a href="#playground">{copy.nav.playground}</a>
+          <a href="#bench">{copy.nav.bench}</a>
           <a href="#features">{copy.nav.features}</a>
           <a href="#usage">{copy.nav.usage}</a>
         </div>
@@ -79,6 +81,8 @@ export function App() {
       </header>
 
       <Playground />
+
+      <Bench />
 
       <section id="features" className="band">
         <h2>{copy.features.title}</h2>
