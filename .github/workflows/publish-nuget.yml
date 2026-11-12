@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  # 补建入口：只建 GitHub Release，不跑测试、不打包、不重推包。
+  # 用法：Actions → Publish NuGet → Run workflow → 填要补建的 tag（如 v1.0.4）。
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补建 Release 的 tag（如 v1.0.4）'
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -15,18 +23,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
+      # ---- 以下到 nuget.org 推送为止只在推 tag 时执行；手动补建 Release 时全部跳过 ----
+
       - uses: actions/setup-dotnet@v4
+        if: github.event_name == 'push'
         with:
           dotnet-version: '10.0.x'
 
       # 三个视觉对照类依赖本机字体集（golden 在本地 UPDATE_GOLDENS 重生成），
       # CI 字体环境不同必然全红，故发版门禁只跑非视觉用例
       - name: Run tests
+        if: github.event_name == 'push'
         run: dotnet test tests/PaperSharp.Tests/PaperSharp.Tests.csproj -c Release --filter "FullyQualifiedName!~BoxGoldenTests&FullyQualifiedName!~PngGoldenTests&FullyQualifiedName!~PdfRasterTests"
 
       - name: Pack
+        if: github.event_name == 'push'
         shell: bash # Windows 默认 shell 是 pwsh，${VAR#v} 会展开为空
         run: dotnet pack src/PaperSharp/PaperSharp.csproj -c Release -p:Version=${GITHUB_REF_NAME#v} -o ./nupkg
 
@@ -35,6 +49,7 @@ jobs:
       # 放在 nuget.org 之前，避免 nuget.org OIDC 未预配时连带这个展示位也发不出去。
       # owner 用 github.repository_owner，避免写死账号名。
       - name: Push to GitHub Packages
+        if: github.event_name == 'push'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -42,19 +57,32 @@ jobs:
         run: dotnet nuget push nupkg/*.nupkg --api-key "$GITHUB_TOKEN" --source "https://nuget.pkg.github.com/${OWNER}/index.json" --skip-duplicate
 
       - name: NuGet login (OIDC → 1 小时临时 API Key)
+        if: github.event_name == 'push'
         id: login
         uses: NuGet/login@v1
         with:
           user: Gui.H
 
       - name: Push to nuget.org
+        if: github.event_name == 'push'
         shell: bash
         run: dotnet nuget push nupkg/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       # 两个 NuGet 源都发完才建 Release：推 tag 本身只创建 git 引用，GitHub 不会自动生成 Release。
       # 放最后是为了「发布成功」与「展示位齐全」不互相绑死——前面任一推送失败都不会留下一个
-      # 指向不存在版本的 Release。--latest 是为了旧 tag 重推时不会把历史版本顶成「Latest」。
+      # 指向不存在版本的 Release。
+      # 手动补建时目标是历史 tag，只有它恰好是仓库里最大的版本号才标 Latest，避免把旧版本顶上去。
       - name: Create GitHub Release
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --latest
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，跳过"
+            exit 0
+          fi
+          newest=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | sort -V | tail -n 1)
+          latest="--latest=false"
+          if [ "$TAG" = "$newest" ]; then latest="--latest"; fi
+          gh release create "$TAG" --verify-tag --generate-notes "$latest"
