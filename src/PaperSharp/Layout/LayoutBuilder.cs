@@ -370,42 +370,46 @@ public static class LayoutBuilder
             : Math.Max(0, availWidth - s.MarginLeft - s.MarginRight - padBorder - pctDecoX);
 
         // 列宽（单元格 outer 盒宽）；+1px 余量避免「内容宽恰好等于内在宽」触发亚像素折行。
-        // 写了 width（px/%/calc）的列是 CSS 2.1 §17.5.2.2 的 special column：就用声明值，
-        // 内容再长也不参与撑宽（_tbl 实测：40% 列放着 46 个汉字仍是 319.6=40%，剩下 60% 全归 auto 列）。
-        // 此前把声明值当"下限"与内在宽取大，等于让内容反过来吃掉比例列（m3 实测差 337px）。
+        // 每列两类约束：
+        //   min-content：任何列都压不过它（表格比它还窄时停在 min-content，整体溢出）；
+        //   preferred：写了 width（px/%/calc）的列取 max(声明值, min-content)，其余列取 max-content。
+        // 定宽列的 max-content 不参与（CSS 2.1 §17.5.2.2 special column，内容靠折行适配；_tbl 实测
+        // 40% 列放着 46 个汉字仍是 319.6=40%）。逐格先只收集数值、最后统一定型：否则锚点行写了 width、
+        // 正文行没写时，正文的 max-content 会把定宽列反撑开（col-anchor 场景实测差 80px）。
         float[] colW = new float[numCols];
         bool[] colSpec = new bool[numCols];
-        // 可用宽不够时浏览器不是把各列按 max-content 等比压，而是让每列在 [min-content, max-content]
-        // 之间按同一因子收缩（CSS 2.1 §17.5.2.2 / Blink AutoTableLayout::ComputeColumnWidths）。
-        // 等比压会把「一个长词」的列压到折行、把「一堆短词」的列压得比下限还窄，m1 实测每列差 6px、牵连 400 盒。
+        float[] colMaxC = new float[numCols];   // 非定宽格的 max-content
+        float[] colMinC = new float[numCols];   // 所有格的 min-content（定宽列同样受它约束）
+        float[] colSpecW = new float[numCols];  // 定宽格的声明宽
         float[] colMin = new float[numCols];
-        // <colgroup>/<col> 先落列宽。col 的 width 就是列宽本身（含该列单元格的 border/padding），
-        // 与百分比单元格同口径，不再叠 deco；单元格自己再写 width 时取两者较大值（同为「下限」语义）。
+        // <colgroup>/<col> 的 width 就是列宽本身（含该列单元格的 border/padding），与百分比单元格同口径；
+        // 单元格自己再写 width 时取两者较大值（同为 preferred 语义）。
         var colDecl = DeclaredColumnWidths(box, targetGridForPct, numCols);
         for (int j = 0; j < numCols; j++)
-            if (colDecl[j] > 0)
-            {
-                colW[j] = colDecl[j];
-                colMin[j] = colDecl[j];
-                colSpec[j] = true;
-            }
+            if (colDecl[j] > 0) { colSpecW[j] = colDecl[j]; colSpec[j] = true; }
+
         for (int r = 0; r < grid.Count; r++)
         {
             foreach (var info in grid[r])
             {
                 if (info.Span == 1)
                 {
+                    int c = info.Col;
                     float intrinsic = IntrinsicContentWidth(info.Cell) + CellHDeco(info.Cell, collapse);
-                    if (TblDbg) Console.Error.WriteLine($"[cell] r={r} c={info.Col} mx={intrinsic:0.###} t=\"{info.Cell.Style.TextContent}\"");
+                    if (TblDbg) Console.Error.WriteLine($"[cell] r={r} c={c} mx={intrinsic:0.###} t=\"{info.Cell.Style.TextContent}\"");
                     float spec = SpecifiedCellWidth(info.Cell, targetGridForPct, collapse);
-                    if (spec > 0) { colW[info.Col] = Math.Max(colW[info.Col], spec); colMin[info.Col] = colW[info.Col]; colSpec[info.Col] = true; }
-                    else
-                    {
-                        colW[info.Col] = Math.Max(colW[info.Col], intrinsic);
-                        colMin[info.Col] = Math.Max(colMin[info.Col], Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell, collapse)));
-                    }
+                    if (spec > 0) { colSpecW[c] = Math.Max(colSpecW[c], spec); colSpec[c] = true; }
+                    else colMaxC[c] = Math.Max(colMaxC[c], intrinsic);
+                    // 取「内容建议」而不是 MinContentWidth：后者遇到单元格自己写了 width 会直接返回声明值，
+                    // 锚点行每格都定宽，会让列下限等于声明宽、表格变窄时压不下去（Chrome 会压到 min-content）。
+                    colMinC[c] = Math.Max(colMinC[c], MinContentWidthOfContent(info.Cell) + CellHDeco(info.Cell, collapse));
                 }
             }
+        }
+        for (int j = 0; j < numCols; j++)
+        {
+            colMin[j] = colMinC[j];
+            colW[j] = colSpec[j] ? Math.Max(colSpecW[j], colMinC[j]) : colMaxC[j];
         }
         // 多跨：不足则把差额均摊到所跨各列（定宽列不参与，摊给同组的 auto 列）
         foreach (var infos in grid)
@@ -424,7 +428,7 @@ public static class LayoutBuilder
                         foreach (int j in free) colW[j] += add;
                     }
                     // 下限同样要抬：合并格里的长词也是硬底，否则收缩阶段会把所跨各列压到比它还能折。
-                    float needMin = Math.Min(intrinsic, MinContentWidth(info.Cell) + CellHDeco(info.Cell, collapse) + spacingX * (info.Span - 1));
+                    float needMin = Math.Min(intrinsic, MinContentWidthOfContent(info.Cell) + CellHDeco(info.Cell, collapse) + spacingX * (info.Span - 1));
                     float haveMin = 0; for (int j = info.Col; j < info.Col + info.Span; j++) haveMin += colMin[j];
                     if (needMin - haveMin > 0)
                     {
@@ -445,49 +449,66 @@ public static class LayoutBuilder
         if (TblDbg) Console.Error.WriteLine($"[tbl:pre] target={targetGrid:0.###} gridW={gridW:0.###} mx=[{string.Join(",", colW.Select(v => v.ToString("0.###")))}] min=[{string.Join(",", colMin.Select(v => v.ToString("0.###")))}]");
         if (gridW > 0.5f && Math.Abs(targetGrid - gridW) > 0.5f)
         {
-            // 有 special 列时它们钉死不动，差额只由 auto 列吸收（_tbl 实测 case1/case4）。
-            float specSum = 0, autoMx = 0, autoMin = 0;
-            int autoN = 0;
-            for (int j = 0; j < numCols; j++)
+            float minSum = 0; for (int j = 0; j < numCols; j++) minSum += colMin[j];
+            if (targetGrid >= gridW)
             {
-                if (colSpec[j]) specSum += colW[j];
-                else { autoMx += colW[j]; autoMin += colMin[j]; autoN++; }
-            }
-            float left = targetGrid - specSum;
-            if (autoMx > 0.5f && left > 0.5f)
-            {
-                if (left >= autoMx)
+                // 宽裕：富余给 auto 列，权重就是该列 preferred 宽（Blink ColumnWidthWeight）；
+                // 全是定宽列时按 preferred 等比放大（Chrome 实测 60/120/180/240 @800 → 80/160/240/320）。
+                float extra = targetGrid - gridW;
+                float autoSum = 0; int autoN = 0;
+                for (int j = 0; j < numCols; j++) if (!colSpec[j]) { autoSum += colW[j]; autoN++; }
+                if (autoN > 0)
                 {
-                    // 宽裕：按比例撑开。Blink 的列权重就是该列当前的 preferred 宽
-                    // （ColumnWidthWeight 末尾 `return max(1, effective_width)`），
-                    // 等分富余会把窄列喂成宽列（table 样例实测 col2 反多出 87px）。
-                    float k = left / autoMx;
-                    for (int j = 0; j < numCols; j++) if (!colSpec[j]) colW[j] *= k;
-                }
-                else if (left > autoMin)
-                {
-                    float f = (left - autoMin) / (autoMx - autoMin);
-                    for (int j = 0; j < numCols; j++) if (!colSpec[j]) colW[j] = colMin[j] + (colW[j] - colMin[j]) * f;
+                    if (autoSum > 0.5f)
+                    {
+                        for (int j = 0; j < numCols; j++) if (!colSpec[j]) colW[j] += extra * colW[j] / autoSum;
+                    }
+                    else
+                    {
+                        for (int j = 0; j < numCols; j++) if (!colSpec[j]) colW[j] += extra / autoN;
+                    }
                 }
                 else
                 {
-                    // 连 min-content 都喂不满：各列停在下限，表格照例溢出（浏览器同样溢出）。
+                    float k = targetGrid / gridW;
+                    for (int j = 0; j < numCols; j++) colW[j] *= k;
+                }
+            }
+            else if (targetGrid <= minSum)
+            {
+                // 连 min-content 都放不下：各列停在下限，表格溢出（Chrome 实测 300px 表 → 停在 382.2）。
+                for (int j = 0; j < numCols; j++) colW[j] = colMin[j];
+            }
+            else
+            {
+                // 收缩：定宽列先按各自缺口从 min-content 补向声明宽（Chrome 实测 300px 表里 60/120 两列，
+                // 富余先全部给还没到 120 的第二列），补完仍有空间再让 auto 列在 min→max 之间插值。
+                float extra = targetGrid - minSum;
+                float fixedDef = 0;
+                for (int j = 0; j < numCols; j++) if (colSpec[j]) fixedDef += colW[j] - colMin[j];
+                if (fixedDef > 0.5f)
+                {
+                    float take = Math.Min(extra, fixedDef);
+                    for (int j = 0; j < numCols; j++)
+                        if (colSpec[j]) colW[j] = colMin[j] + (colW[j] - colMin[j]) * (take / fixedDef);
+                    extra -= take;
+                }
+                float room = 0;
+                for (int j = 0; j < numCols; j++) if (!colSpec[j]) room += colW[j] - colMin[j];
+                if (extra > 0.5f && room > 0.5f)
+                {
+                    float f = extra / room;
+                    for (int j = 0; j < numCols; j++)
+                        if (!colSpec[j]) colW[j] = colMin[j] + (colW[j] - colMin[j]) * f;
+                }
+                else
+                {
+                    // 富余被定宽列的缺口吃光了：auto 列停在 min-content（Chrome 实测 400px 表里
+                    // 定宽 60/120+长正文 → 后两列仍是 91.8/103.3，不会被撑到 max-content）。
                     for (int j = 0; j < numCols; j++) if (!colSpec[j]) colW[j] = colMin[j];
                 }
-                gridW = 0; for (int j = 0; j < numCols; j++) gridW += colW[j];
             }
-            else if (autoMx <= 0.5f && left > 0.5f)
-            {
-                for (int j = 0; j < numCols; j++) colW[j] = targetGrid / numCols;
-                gridW = targetGrid;
-            }
-            else if (autoMx <= 0.5f)
-            {
-                float scale = targetGrid / gridW;
-                for (int j = 0; j < numCols; j++) colW[j] *= scale;
-                gridW = targetGrid;
-            }
-            // left <= 0：special 列已吃满目标宽，auto 列保持内在宽让表格溢出（浏览器同样溢出）
+            gridW = 0; for (int j = 0; j < numCols; j++) gridW += colW[j];
         }
         if (TblDbg) Console.Error.WriteLine($"[tbl:post] target={targetGrid:0.###} gridW={gridW:0.###} w=[{string.Join(",", colW.Select(v => v.ToString("0.###")))}] min=[{string.Join(",", colMin.Select(v => v.ToString("0.###")))}]");
         box.ContentWidth = gridW + gapW;
@@ -862,10 +883,6 @@ public static class LayoutBuilder
     }
 
     /// <summary>
-    /// 单元格的**声明**宽（border-box 口径，即列 outer 宽）：% 与 calc 相对目标网格宽，px/em 直接用；
-    /// box-sizing:border-box 时声明值本身已含装饰。auto 或非法值返回 0（交回内在宽决定）。
-    /// </summary>
-    /// <summary>
     /// 按文档顺序把 &lt;colgroup&gt;/&lt;col&gt; 的声明宽铺到列上（span 属性按跨列展开）。
     /// 返回 0 表示该列没有声明；值已换成列的外宽，与单元格的百分比口径一致。
     /// </summary>
@@ -900,6 +917,10 @@ public static class LayoutBuilder
         return widths;
     }
 
+    /// <summary>
+    /// 单元格的**声明**宽（border-box 口径，即列 outer 宽）：% 与 calc 相对目标网格宽，px/em 直接用；
+    /// box-sizing:border-box 时声明值本身已含装饰。auto 或非法值返回 0（交回内在宽决定）。
+    /// </summary>
     static float SpecifiedCellWidth(BlockBox cell, float targetGridW, bool collapse)
     {
         var w = cell.Style.Width;

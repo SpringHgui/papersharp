@@ -105,6 +105,65 @@ public class TableSpecifiedColumnTests
                 W("body[1]/table[1]/tbody[1]/tr[1]/td[3]"));
     }
 
+    static float[] ColWidths(string html, int n, float width = 800)
+    {
+        var boxes = Renderer.RenderRasterWithBoxes(html, Css, width).Boxes;
+        return Enumerable.Range(1, n)
+            .Select(i => boxes.Single(b => b.DomPath == $"body[1]/table[1]/tbody[1]/tr[1]/td[{i}]").W)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 全部列都是定宽、表又比声明宽总和更宽时，余量按**各自声明宽**等比放大
+    /// （Blink ColumnWidthWeight）。此前余量在各定宽列间均分，60/120/180/240 会变成 200/200/200/200，
+    /// 列比例整体塌掉——用户看到的「宽度不太准确」有一半来自这里。
+    /// </summary>
+    [Fact]
+    public void All_fixed_columns_scale_in_proportion_to_their_declared_width()
+    {
+        var w = ColWidths(
+            "<table class=t><tr><td style='width:60px'>a</td><td style='width:120px'>b</td>" +
+            "<td style='width:180px'>c</td><td style='width:240px'>d</td></tr></table>", 4);
+
+        // 无头 Edge 实测 @800：80 / 160 / 240 / 320（= 净宽 799 按 1:2:3:4 放大）。
+        Assert.Equal(2f, w[1] / w[0], 1);
+        Assert.Equal(3f, w[2] / w[0], 1);
+        Assert.Equal(4f, w[3] / w[0], 1);
+        Assert.Equal(799, w.Sum(), 2);
+    }
+
+    /// <summary>
+    /// 表比声明宽总和更窄时，Chrome 先把定宽列压向内容 min-content（表格照常铺满容器），
+    /// 而不是抱着声明宽让整表溢出。旧逻辑用声明宽当 min-content 下限，于是永远压不动。
+    /// </summary>
+    [Fact]
+    public void Fixed_columns_shrink_below_declared_width_when_the_table_is_narrow()
+    {
+        var w = ColWidths(
+            "<table><tr><td style='width:200px'>甲</td><td style='width:200px'>乙</td></tr></table>", 2, width: 300);
+
+        Assert.True(w[0] < 200f && w[1] < 200f, $"定宽列没被压缩：{w[0]} / {w[1]}");
+        Assert.Equal(w[0], w[1], 0.5f);
+        Assert.Equal(299, w.Sum(), 2);
+    }
+
+    /// <summary>
+    /// 定宽列的 preferred 宽只看声明值：单元格里塞长文本、自动换行也不该把它顶宽。
+    /// 用户提的「会不会是自动换行撑坏原本的分配」即这条——此前用 max-content 与声明宽取大，
+    /// 长内容列会把 auto 列挤没。
+    /// </summary>
+    [Fact]
+    public void Long_wrapping_content_does_not_widen_a_fixed_column()
+    {
+        var w = ColWidths(
+            $"<table class=t><tr><td style='width:100px'>{Long}</td><td style='width:100px'>b</td>" +
+            "<td style='width:300px'>c</td></tr></table>", 3);
+
+        Assert.True(w[0] < 200f, $"定宽列被长内容顶宽：{w[0]}");
+        Assert.Equal(1f, w[0] / w[1], 1);
+        Assert.Equal(3f, w[2] / w[0], 1);
+    }
+
     static BlockBox? Find(BlockBox box, Func<BlockBox, bool> pred)
     {
         if (pred(box)) return box;
