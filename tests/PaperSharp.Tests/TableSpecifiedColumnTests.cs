@@ -1,3 +1,6 @@
+using PaperSharp.Css;
+using PaperSharp.Layout;
+
 namespace PaperSharp.Tests;
 
 /// <summary>
@@ -46,6 +49,68 @@ public class TableSpecifiedColumnTests
         var (a, b) = TwoCols("<table class=t><tr><td class=w200>px 列内容</td><td>auto 列内容 auto 列内容</td></tr></table>");
         Assert.Equal(200, a, 1);
         Assert.Equal(599, b, 1);
+    }
+
+    /// <summary>
+    /// PDF 路径会把表格量两遍（Renderer 一遍、Paginator 起手一遍）。测量期给单元格设的
+    /// <c>width:auto</c> 若不给回声明值，第二遍就读不到定宽列，PDF 退回按内容分宽——
+    /// 而 raster 只量一遍，金标与单测全绿也发现不了（用户报的「td width 不生效」就是这条）。
+    /// </summary>
+    [Fact]
+    public void Specified_cell_width_survives_the_paginator_second_measure()
+    {
+        var body = LayoutBuilder.ToBoxTree(StyleResolver.BuildDocument(
+            "<table class=t><tr><td class=w200>px 列内容</td><td>auto 列内容 auto 列内容</td></tr></table>", Css));
+        LayoutBuilder.Measure(body, 800);
+        var table = Find(body, b => b.Style.Display == "table")!;
+        float first = table.TColW![0];
+
+        LayoutBuilder.Measure(table, 800);   // Paginator.Paginate 的第二次测量
+        Assert.Equal(first, table.TColW![0], 1);
+        Assert.InRange(table.TColW![0], 199f, 201f);
+        Assert.True(table.TColW![1] > 500f, $"auto 列没拿到余量：{table.TColW[1]}");
+    }
+
+    [Fact]
+    public void Colgroup_column_widths_are_honored()
+    {
+        var (a, b, c) = ThreeCols(
+            "<table class=t><colgroup><col style='width:7mm'><col style='width:20mm'><col></colgroup>" +
+            "<tr><td>A</td><td>B</td><td>C</td></tr></table>");
+
+        // 7mm = 26.46px、20mm = 75.59px：col 的 width 就是列宽本身，不再叠单元格 border/padding。
+        Assert.Equal(26.46f, a, 0.5f);
+        Assert.Equal(75.59f, b, 0.5f);
+        Assert.True(c > 600f, $"第三列没拿到余量：{c}");
+    }
+
+    [Fact]
+    public void Col_span_puts_one_width_on_several_columns()
+    {
+        var (a, b, c) = ThreeCols(
+            "<table class=t><colgroup><col span=2 style='width:100px'><col></colgroup>" +
+            "<tr><td>A</td><td>B</td><td>C</td></tr></table>");
+
+        Assert.Equal(100f, a, 1);
+        Assert.Equal(100f, b, 1);
+        Assert.True(c > 500f, $"第三列没拿到余量：{c}");
+    }
+
+    static (float A, float B, float C) ThreeCols(string html)
+    {
+        var boxes = Renderer.RenderRasterWithBoxes(html, Css, 800).Boxes;
+        float W(string path) => boxes.Single(b => b.DomPath == path).W;
+        return (W("body[1]/table[1]/tbody[1]/tr[1]/td[1]"),
+                W("body[1]/table[1]/tbody[1]/tr[1]/td[2]"),
+                W("body[1]/table[1]/tbody[1]/tr[1]/td[3]"));
+    }
+
+    static BlockBox? Find(BlockBox box, Func<BlockBox, bool> pred)
+    {
+        if (pred(box)) return box;
+        foreach (var ch in box.Children)
+            if (Find(ch, pred) is { } hit) return hit;
+        return null;
     }
 
     [Fact]

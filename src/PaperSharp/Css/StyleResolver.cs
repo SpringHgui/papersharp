@@ -861,11 +861,15 @@ public static class StyleResolver
             return cs;
         }
 
-        // 单元格 colspan（HTML 属性，非 CSS）
+        // 单元格 colspan（HTML 属性，非 CSS）；<col span> 也走同一字段——都是「这一格/这一列跨几列」
         if (cs.Tag == "td" || cs.Tag == "th")
         {
             if (int.TryParse(element.GetAttribute("colspan"), out var span) && span > 1) cs.Colspan = span;
             if (int.TryParse(element.GetAttribute("rowspan"), out var rspan) && rspan > 1) cs.Rowspan = rspan;
+        }
+        else if (cs.Tag == "col")
+        {
+            if (int.TryParse(element.GetAttribute("span"), out var cspan) && cspan > 1) cs.Colspan = cspan;
         }
 
         // 按 DOM 顺序遍历子节点：文本→InlinePiece(文本)；元素→递归 + Children + InlinePiece(子/br)。

@@ -379,6 +379,16 @@ public static class LayoutBuilder
         // 之间按同一因子收缩（CSS 2.1 §17.5.2.2 / Blink AutoTableLayout::ComputeColumnWidths）。
         // 等比压会把「一个长词」的列压到折行、把「一堆短词」的列压得比下限还窄，m1 实测每列差 6px、牵连 400 盒。
         float[] colMin = new float[numCols];
+        // <colgroup>/<col> 先落列宽。col 的 width 就是列宽本身（含该列单元格的 border/padding），
+        // 与百分比单元格同口径，不再叠 deco；单元格自己再写 width 时取两者较大值（同为「下限」语义）。
+        var colDecl = DeclaredColumnWidths(box, targetGridForPct, numCols);
+        for (int j = 0; j < numCols; j++)
+            if (colDecl[j] > 0)
+            {
+                colW[j] = colDecl[j];
+                colMin[j] = colDecl[j];
+                colSpec[j] = true;
+            }
         for (int r = 0; r < grid.Count; r++)
         {
             foreach (var info in grid[r])
@@ -498,10 +508,15 @@ public static class LayoutBuilder
             {
                 var cell = info.Cell;
                 ZeroCellMargins(cell);
-                cell.Style.Width = CssSize.Auto;   // 单元格 width 只是列宽线索，测量期以列宽为准
+                // 单元格 width 只是列宽线索，测量期以列宽为准；但必须量完就还原：
+                // PDF 路径会把表格量两遍（Renderer 一遍、Paginator 一遍），声明值被改成 auto 后
+                // 第二遍 SpecifiedCellWidth 就全读成 0——定宽列在 PDF 里退回按内容分宽（raster 只有一遍，看不出来）。
+                var declaredW = cell.Style.Width;
+                cell.Style.Width = CssSize.Auto;
                 float cellOuterW = spacingX * (info.Span - 1);
                 for (int j = info.Col; j < info.Col + info.Span; j++) cellOuterW += colW[j];
                 Measure(cell, cellOuterW);
+                cell.Style.Width = declaredW;
                 // 跨行格不计入本行高：它自己的上下两条 collapse 边框线（:676 只对未跨到末行的格子清过底边）
                 // 会让它比单行格净高 1px，全记在本行就等于把整行撑高 1px（m1 实测 row6 39.3125 vs 浏览器 38.3125）。
                 if (info.RowSpan > 1) continue;
@@ -850,6 +865,41 @@ public static class LayoutBuilder
     /// 单元格的**声明**宽（border-box 口径，即列 outer 宽）：% 与 calc 相对目标网格宽，px/em 直接用；
     /// box-sizing:border-box 时声明值本身已含装饰。auto 或非法值返回 0（交回内在宽决定）。
     /// </summary>
+    /// <summary>
+    /// 按文档顺序把 &lt;colgroup&gt;/&lt;col&gt; 的声明宽铺到列上（span 属性按跨列展开）。
+    /// 返回 0 表示该列没有声明；值已换成列的外宽，与单元格的百分比口径一致。
+    /// </summary>
+    static float[] DeclaredColumnWidths(BlockBox table, float targetGridW, int numCols)
+    {
+        var widths = new float[numCols];
+        int col = 0;
+
+        void Take(List<ComputedStyle> children)
+        {
+            foreach (var ch in children)
+            {
+                if (ch.Tag.Equals("colgroup", StringComparison.OrdinalIgnoreCase))
+                {
+                    Take(ch.Children);
+                    continue;
+                }
+                if (!ch.Tag.Equals("col", StringComparison.OrdinalIgnoreCase)) continue;
+                int span = Math.Max(1, ch.Colspan);
+                var w = ch.Width;
+                float v = w.IsAuto ? 0
+                    : w.Kind is CssSizeKind.Absolute or CssSizeKind.Calc ? w.Resolve(float.NaN)
+                    : w.Resolve(targetGridW);
+                if (!float.IsNaN(v) && v > 0)
+                    for (int k = 0; k < span && col + k < numCols; k++)
+                        widths[col + k] = Math.Max(widths[col + k], v);
+                col += span;
+            }
+        }
+
+        Take(table.Style.Children);
+        return widths;
+    }
+
     static float SpecifiedCellWidth(BlockBox cell, float targetGridW, bool collapse)
     {
         var w = cell.Style.Width;
